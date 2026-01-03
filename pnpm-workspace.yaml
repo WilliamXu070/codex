@@ -1,5 +1,6 @@
 packages:
   - docs
+  - apps/codex-electron
   - sdk/typescript
   - shell-tool-mcp
 
