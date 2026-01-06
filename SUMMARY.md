@@ -36,6 +36,9 @@ Notes:
    - Display all the possible slash commands
       - /init /agent ...
       - Display these as options for the user to know
+   - Integration within application layer
+      - Like in word, or powerpoint, or excel, on the side ability to converse and prompt
+      - I want to generate the functionality where you can ask the ai to do something in the current word document opened, and the model will be able to edit and save automatically in the file and you can see the changes... something like this if is possible
 
 2) Customize the cli tooling
    - Implement subagents
