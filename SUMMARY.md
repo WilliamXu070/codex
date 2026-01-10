@@ -1,7 +1,9 @@
 # Codex Project Summary
 
 ## Overview
-Codex is a multi-component repo that ships a Rust-based agent core (`codex-rs`) with multiple frontends and servers. This workspace now includes an Electron desktop app (`apps/codex-electron`) that provides a Finder-style file browser and a Codex prompt panel backed by the app-server JSON-RPC API.
+Codex is a personalized AI assistant that never forgets. Built on a Rust-based agent core (`codex-rs`), Codex maintains a continuous, evolving memory through a novel context file system. Unlike traditional AI assistants with isolated conversations, Codex builds a persistent understanding of you, your work, and your interests—all accessible through natural language in a single, continuous conversation.
+
+The Electron desktop app (`apps/codex-electron`) provides a Finder-style file browser and an intelligent prompt panel, enabling seamless interaction with your AI companion that remembers everything and continuously learns from your enabled directories and interactions.
 
 ## Key Components
 - `codex-rs/`: Rust workspace containing the core agent, app-server, and supporting crates.
@@ -27,271 +29,359 @@ Notes:
 - Ensure Rust/Cargo is installed and visible to Electron (PATH includes `~/.cargo/bin`).
 
 ## Current Status
-- App-server binary is built from `codex-rs/` and spawned directly to keep JSON-RPC output clean.
-- App-server initialization handshake is required before `newConversation` and `sendUserMessage`.
-- File list scrolling + chat debug stream are in place.
+- **Core Infrastructure**: App-server binary built from `codex-rs/` with JSON-RPC API
+- **Desktop App**: Electron app with Finder-style file browser and chat interface
+- **Foundation**: Basic agent capabilities, file system access, and conversation handling
+- **Next**: Implementing context file system and tool generation framework
 
 ---
 
-## Next Steps
+## Vision & Core Features
 
-### 1) Core Feature: Workspace → Compile Document Generation System
+### 1) Personalized, Ever-Remembering AI with Context File System
 
 #### Vision
 
-Instead of trying to edit documents live inside Word/PowerPoint/Excel (which requires complex plugins and has file-locking issues), we flip the paradigm:
+Codex is a **single, continuous conversation** with an AI that never forgets. Unlike traditional AI assistants that treat each conversation as isolated, Codex maintains a persistent, evolving memory through a novel context file system that the AI itself generates and refines.
 
-**Users don't edit the final document. They edit structured source content + templates, then compile to output.**
+**Core Principle**: One conversation, infinite memory. The AI builds and maintains its own contextual understanding of you, your work, your interests, and your history—all accessible through natural language queries.
 
-Think of it like software development:
-- **Source** = content backbone, research, bullet points, notes
-- **Config** = template/style/structure rules
-- **Compiler** = builds final document output (.docx, .pptx, .xlsx, Notion)
+#### How It Works: Search Engine-Style Retrieval
 
-This gives users a stable mental model: "I'm editing the plan, not fighting the final formatting."
+The system operates like a search engine with semantic understanding:
 
-#### Why This Approach is Superior
+1. **Bulk Memory Storage**: All conversations, file contents, and user interactions are stored in a structured knowledge base
+2. **Key Concept Extraction**: The AI identifies and maintains high-level concepts (topics, themes, relationships) as searchable indices
+3. **Intelligent Retrieval**: When you ask a question, the AI:
+   - Identifies relevant concepts from your query
+   - Retrieves the full context for those concepts
+   - Synthesizes the information to answer your question
 
-| Problem with Live Editing | How "Workspace → Compile" Solves It |
-|---------------------------|-------------------------------------|
-| File locking when Word is open | We own the source files; Word only sees exports |
-| Complex Word/PPT/Excel APIs | We generate files programmatically, full control |
-| User fears AI "ruining" their doc | Users edit the plan, AI generates from plan |
-| Platform-specific (COM, Add-ins) | Pure Electron + Node.js, cross-platform |
-| Hard to support multiple formats | Same workspace model, different renderers |
+#### Example Use Cases
 
-#### Core Concept: Four-Stage Workflow
+**Simple Query**: "What's my friend Sarah's birthday?"
+- AI identifies concept: `friends` → `sarah`
+- Retrieves full `friends` context file
+- Parses and returns: "Sarah's birthday is March 15th"
 
-The app becomes a "Deliverable IDE" with four tabs/stages:
+**Complex Query**: "Help me develop a resume"
+- AI identifies multiple concepts: `projects`, `research`, `awards`, `work-experience`
+- Retrieves and synthesizes context from:
+  - All relevant project files
+  - Research notes and publications
+  - Awards and achievements
+  - Work history and skills
+- Generates a comprehensive, contextually-aware resume
 
-**Stage 1: Plan**
-- User creates structured outline with AI assistance
-- Sections and subsections with bullet points
-- Each bullet can be tagged: "must include", "optional", "needs citation"
-- AI can: restructure outline, expand bullets, suggest missing sections
-- Key feature: "Lock" sections so AI can't change the backbone
-
-**Stage 2: Research**
-- Drop PDFs, URLs, notes into a sources vault
-- AI extracts key points, quotes, data from sources
-- Link sources to specific bullets ("this claim is backed by source X")
-- Traceability: every claim references a source or is marked "opinion"
-
-**Stage 3: Style**
-- Visual template builder (or pick from presets)
-- Define style tokens: H1, H2, Body, Caption, Quote, TableHeader
-- Layout rules: margins, spacing, TOC, section numbering, citation format
-- Templates are portable JSON, work across output formats
-
-**Stage 4: Build**
-- "Build Draft" (quick preview) or "Build Final" (polished output)
-- Preview shows diff vs previous build
-- Version history for all builds
-- "Open in Word/PPT/Excel" button for final output
-- Key feature: Pin sections before rebuild to prevent AI regeneration
-
-#### Architecture
+#### Context File Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     Electron App                                │
+│                    Context File System                           │
 ├─────────────────────────────────────────────────────────────────┤
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐           │
-│  │  Plan    │ │ Research │ │  Style   │ │  Build   │  ← Tabs   │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘           │
-├─────────────────────────────────────────────────────────────────┤
-│                     Workspace Model (JSON)                      │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐               │
-│  │   Outline   │ │   Sources   │ │  Template   │               │
-│  │  + Bullets  │ │ + Citations │ │  + Styles   │               │
-│  └─────────────┘ └─────────────┘ └─────────────┘               │
-├─────────────────────────────────────────────────────────────────┤
-│                        Compiler                                 │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
-│  │ Content Pass│ →  │ Layout Pass │ →  │  Renderer   │         │
-│  │ (AI expand) │    │(apply style)│    │ (docx/pptx) │         │
-│  └─────────────┘    └─────────────┘    └─────────────┘         │
-├─────────────────────────────────────────────────────────────────┤
-│  Output: Report.docx / Deck.pptx / Model.xlsx / Notion blocks  │
+│                                                                   │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │   hobbies    │  │   projects   │  │   research   │          │
+│  │              │  │              │  │              │          │
+│  │ - coding     │  │ - codex-app  │  │ - ai-memory  │          │
+│  │ - emails     │  │ - web-app    │  │ - context-   │          │
+│  │ - research   │  │ - cli-tool   │  │   systems    │          │
+│  │ - projects   │  │              │  │              │          │
+│  │ - friends    │  │              │  │              │          │
+│  └──────────────┘  └──────────────┘  └──────────────┘          │
+│                                                                   │
+│  Each concept file contains:                                      │
+│  - Structured metadata (dates, relationships, tags)              │
+│  - Full content references (file paths, conversation IDs)         │
+│  - Semantic embeddings for retrieval                              │
+│  - Cross-references to related concepts                           │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-#### Data Model (Workspace Schema)
+#### Directory-Based Context Building
+
+Users control what the AI can access:
+
+1. **Directory Selection**: User enables specific directories on their machine
+   - Example: `~/Documents`, `~/Projects`, `~/Research`, `~/Personal`
+2. **Continuous Indexing**: The AI monitors enabled directories and:
+   - Extracts key information from files
+   - Updates context files with new knowledge
+   - Maintains relationships between concepts
+3. **Privacy Control**: Users have granular control over what's indexed and stored
+
+#### Bidirectional Updates
+
+The system maintains perfect synchronization:
+
+- **User edits in app** → Context files update → AI knowledge refreshes
+- **AI generates content** → Saved to file system → Context files update
+- **File system changes** → Detected and indexed → Context files update
+
+This creates a living, breathing knowledge base that evolves with every interaction.
+
+#### Natural Language Query Processing
+
+The AI uses advanced semantic understanding to:
+
+- **Parse intent**: Understand what you're really asking for
+- **Identify concepts**: Map your query to relevant context topics
+- **Retrieve information**: Pull full context for identified concepts
+- **Synthesize answers**: Combine information from multiple sources
+- **Handle complexity**: Answer both simple questions and complex multi-step requests
+
+#### Data Model
 
 ```typescript
-interface Workspace {
+interface ContextFile {
   id: string;
-  name: string;
-  outline: OutlineSection[];
-  sources: Source[];
-  template: Template;
-  builds: Build[];
-  settings: WorkspaceSettings;
-}
-
-interface OutlineSection {
-  id: string;
-  title: string;
-  level: number;  // 1 = H1, 2 = H2, etc.
-  bullets: Bullet[];
-  children: OutlineSection[];
-  status: 'free' | 'guided' | 'pinned';  // Lock level
-}
-
-interface Bullet {
-  id: string;
-  text: string;
-  sourceRefs: string[];  // Links to Source.id
-  tags: ('must-include' | 'optional' | 'needs-citation')[];
-  expanded?: string;  // AI-generated prose for this bullet
-}
-
-interface Source {
-  id: string;
-  type: 'pdf' | 'url' | 'note' | 'quote';
-  title: string;
-  content: string;
-  metadata: { author?: string; date?: string; url?: string };
-}
-
-interface Template {
-  basePreset: string;  // 'business-report' | 'academic' | 'pitch-deck'
-  styles: {
-    heading1: { fontFamily: string; fontSize: number; color: string; bold: boolean };
-    heading2: { fontFamily: string; fontSize: number; color: string; bold: boolean };
-    body: { fontFamily: string; fontSize: number; lineHeight: number };
-    caption: { fontFamily: string; fontSize: number; italic: boolean };
+  concept: string;  // e.g., "friends", "projects", "research"
+  metadata: {
+    created: string;
+    lastUpdated: string;
+    version: number;
+    relatedConcepts: string[];  // Links to other context files
   };
-  layout: {
-    pageSize: 'letter' | 'a4';
-    margins: { top: number; bottom: number; left: number; right: number };
-    includeCoverPage: boolean;
-    includeTOC: boolean;
-    sectionNumbering: 'none' | 'numeric' | 'roman';
-    citationStyle: 'apa' | 'mla' | 'chicago' | 'numeric';
+  summary: string;  // High-level description (used for retrieval)
+  content: {
+    structured: Record<string, any>;  // Key-value pairs (birthdays, dates, etc.)
+    references: ContentReference[];  // Links to source files/conversations
+    embeddings: number[];  // Semantic vector representation
   };
 }
 
-interface Build {
-  id: string;
-  timestamp: string;
-  outputFormat: 'docx' | 'pptx' | 'xlsx' | 'notion' | 'pdf';
-  outputPath: string;
-  sections: { id: string; wasRegenerated: boolean }[];
+interface ContentReference {
+  type: 'file' | 'conversation' | 'note' | 'external';
+  path: string;
+  excerpt?: string;
+  relevance: number;  // How relevant this reference is to the concept
 }
-```
 
-#### Compiler Design (Two-Pass)
-
-**Pass 1: Content Pass (AI-driven)**
-- Input: Outline + Bullets + Sources
-- AI expands bullets into prose paragraphs
-- Ensures tone consistency across sections
-- Inserts citation markers
-- Respects locked/pinned sections (skips regeneration)
-- Output: Intermediate Representation (IR)
-
-**Pass 2: Layout Pass (Deterministic)**
-- Input: IR + Template
-- Applies style tokens to content
-- Handles page layout, margins, spacing
-- Generates final file using format-specific library
-- Output: .docx / .pptx / .xlsx / .pdf / Notion blocks
-
-#### Technology Stack for Renderers
-
-| Format | Library | Notes |
-|--------|---------|-------|
-| Word (.docx) | `docx` npm package | Full control over styles, paragraphs, tables |
-| PowerPoint (.pptx) | `pptxgenjs` | Slide masters, text boxes, charts |
-| Excel (.xlsx) | `exceljs` | Sheets, cells, formulas, charts |
-| PDF | `pdfkit` or `puppeteer` | Generate from HTML or direct |
-| Notion | Notion API | Block-based, straightforward |
-
-#### Section Lock Mechanism (Control Feature)
-
-Three states for each section:
-- **Pinned**: AI cannot rewrite, only grammar fixes if requested
-- **Guided**: AI can rewrite prose but must keep bullet points intact
-- **Free**: AI has full control, can restructure and rewrite
-
-This solves the "I rebuild and it rewrites everything" fear.
-
-#### UI Integration with Existing App
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Top Bar: [File Browser] [Workspace: Project Report ▼]         │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌─ Sidebar ─┐  ┌─ Main Area ───────────────────────────────┐  │
-│  │           │  │                                           │  │
-│  │ Plan      │  │   [Current Tab Content]                   │  │
-│  │ Research  │  │                                           │  │
-│  │ Style     │  │   - Outline editor (Plan)                 │  │
-│  │ Build     │  │   - Sources list (Research)               │  │
-│  │           │  │   - Template builder (Style)              │  │
-│  │ ───────── │  │   - Preview + export (Build)              │  │
-│  │ Chat      │  │                                           │  │
-│  │           │  │                                           │  │
-│  └───────────┘  └───────────────────────────────────────────┘  │
-│                                                                 │
-│  ┌─ Bottom Panel (collapsible) ─────────────────────────────┐  │
-│  │ AI Chat: Context-aware based on current tab              │  │
-│  │ Plan: "Restructure outline" / "Add section about X"      │  │
-│  │ Research: "Summarize this PDF" / "Find sources for Y"    │  │
-│  │ Build: "Regenerate section 3" / "Make tone more formal"  │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+interface DirectoryConfig {
+  path: string;
+  enabled: boolean;
+  watchMode: 'realtime' | 'scheduled' | 'manual';
+  excludePatterns: string[];  // Files/dirs to ignore
+  priority: number;  // Higher priority = more frequent indexing
+}
 ```
 
 #### Implementation Phases
 
-**Phase 0: Foundation (2-3 weeks)**
-- Define workspace JSON schema with Zod validation
-- Create/save/load workspace files (.codex-workspace.json)
-- Basic Plan tab UI (outline tree + bullet editor)
-- Integrate with existing chat for AI bullet expansion
-- Basic DOCX export (no styling)
-- Deliverable: User can create outline, expand with AI, export basic Word doc
+**Phase 0: Foundation (3-4 weeks)**
+- Context file schema and storage system
+- Basic directory watching and file indexing
+- Simple concept extraction from conversations
+- Basic retrieval for single-concept queries
+- Deliverable: AI can remember and retrieve information from enabled directories
 
-**Phase 1: Templates + Styled Export (2-3 weeks)**
-- Template schema + 5 presets (Business Report, Academic, Pitch Deck, Meeting Notes, Project Proposal)
-- Style tab UI (preset picker + basic tweaks)
-- Styled DOCX export with proper formatting
-- Build versioning and history
-- Deliverable: User can pick template, export styled Word doc
+**Phase 1: Advanced Retrieval (3-4 weeks)**
+- Multi-concept query processing
+- Semantic embedding generation and similarity search
+- Context file refinement (AI updates its own context files)
+- Cross-concept relationship mapping
+- Deliverable: Complex queries work across multiple concepts
 
-**Phase 2: Research + Citations (2-3 weeks)**
-- Research tab UI with drag-drop zone
-- PDF text extraction using pdf-parse
-- Source ↔ bullet linking UI
-- Citation insertion in exports
-- Deliverable: Full Plan → Research → Build workflow
+**Phase 2: Bidirectional Sync (2-3 weeks)**
+- Real-time file system monitoring
+- Automatic context updates on file changes
+- UI edits trigger context updates
+- Conflict resolution for concurrent changes
+- Deliverable: Perfect sync between app, files, and context
 
-**Phase 3: PowerPoint + Excel Renderers (2-3 weeks)**
-- PPT renderer using pptxgenjs
-- Excel renderer using exceljs
-- Format-specific template options
-- Deliverable: Same workspace can export to Word, PPT, or Excel
-
-**Phase 4: Polish + Advanced (ongoing)**
-- Full lock/pin mechanism for sections
-- Diff view between builds
-- Notion export
-- Visual template designer (WYSIWYG)
-- "Deliverable bundles" (report + deck + spreadsheet from same workspace)
-
-#### Competitive Positioning
-
-**vs Microsoft Copilot**: Copilot helps write inside a doc. We help plan + structure + cite + template + generate. We produce consistent outputs across Word/PPT/Excel.
-
-**vs Google Docs AI**: Same limitation - in-doc assistance. We own the full workflow.
-
-**Our product is**: "Deliverable Generator" not "Writing Helper"
+**Phase 3: Natural Language Optimization (ongoing)**
+- Advanced query understanding
+- Context-aware response generation
+- Proactive context suggestions
+- Learning from user corrections
+- Deliverable: Seamless natural language interaction
 
 ---
 
-### 2) UI/UX Improvements
+### 2) Tool Generation & Community Sharing
+
+#### Vision
+
+Codex doesn't just use tools—it creates them, refines them, and shares them. Every tool the AI develops to help you becomes part of a shared ecosystem that improves the experience for all users.
+
+#### Core Concept: Self-Extending Capability
+
+As the AI works with you, it identifies repetitive tasks and creates tools to automate them. These tools are:
+- **Stored locally** in your tools file system
+- **Shared globally** with the community
+- **Continuously improved** through collective use
+
+#### Tool Categories
+
+**1. MCP Server Integrations**
+- Connect to external applications (Slack, Notion, GitHub, etc.)
+- Parse application data into context
+- Enable bidirectional communication with apps
+- Example: "Connect to my Notion workspace and index all my notes"
+
+**2. File Type Handlers**
+- Read and write specialized file formats
+- Extract structured data from files
+- Generate files in specific formats
+- Example: "Parse this Excel file and extract all project deadlines"
+
+**3. Application Integrators**
+- Extract information from running applications
+- Inject data into applications
+- Automate workflows across apps
+- Example: "Read my calendar and add all meetings to my context"
+
+**4. Agentic Loop Tools**
+- Tools created during task execution
+- Reusable automation scripts
+- Custom workflows for specific needs
+- Example: "Create a tool that formats my code and runs tests"
+
+#### Tool Sharing Ecosystem
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Tool Ecosystem                                │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  ┌──────────────┐         ┌──────────────┐                      │
+│  │  User A      │         │  User B      │                      │
+│  │              │         │              │                      │
+│  │ Creates Tool │────────▶│ Discovers    │                      │
+│  │ "notion-     │         │ & Uses Tool  │                      │
+│  │  parser"     │         │              │                      │
+│  └──────────────┘         └──────────────┘                      │
+│         │                        │                               │
+│         │                        │                               │
+│         ▼                        ▼                               │
+│  ┌──────────────────────────────────────────────┐              │
+│  │         Shared Tool Repository                │              │
+│  │                                                │              │
+│  │  - Version control                            │              │
+│  │  - Ratings & reviews                          │              │
+│  │  - Usage statistics                           │              │
+│  │  - Automatic improvements                    │              │
+│  └──────────────────────────────────────────────┘              │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Tool Development Workflow
+
+1. **Identification**: AI recognizes a repetitive task or need
+2. **Creation**: AI generates a tool to solve the problem
+3. **Testing**: Tool is tested in the current context
+4. **Storage**: Tool saved to local tools directory
+5. **Sharing**: User can opt-in to share tool with community
+6. **Evolution**: Tool improves through community usage and feedback
+
+#### Tool Schema
+
+```typescript
+interface Tool {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  author: string;  // User ID or "system"
+  category: 'mcp-server' | 'file-handler' | 'app-integrator' | 'workflow';
+  
+  // Tool definition
+  definition: {
+    type: 'function' | 'mcp-server' | 'script';
+    implementation: string;  // Code or config
+    dependencies: string[];
+    inputs: ToolInput[];
+    outputs: ToolOutput[];
+  };
+  
+  // Metadata
+  metadata: {
+    createdAt: string;
+    lastUpdated: string;
+    usageCount: number;
+    rating?: number;
+    tags: string[];
+    relatedTools: string[];  // Other tools this works with
+  };
+  
+  // Sharing
+  sharing: {
+    isPublic: boolean;
+    shareId?: string;
+    downloadCount?: number;
+    forks?: number;
+  };
+}
+
+interface ToolInput {
+  name: string;
+  type: string;
+  description: string;
+  required: boolean;
+  default?: any;
+}
+
+interface ToolOutput {
+  name: string;
+  type: string;
+  description: string;
+}
+```
+
+#### Tool Discovery & Integration
+
+Users can:
+- **Browse** community tools by category, rating, or popularity
+- **Search** for tools by functionality or use case
+- **Install** tools with one click
+- **Fork** tools to customize for their needs
+- **Rate & Review** tools to help the community
+
+The AI can:
+- **Suggest** relevant tools based on current task
+- **Auto-install** tools when needed
+- **Combine** multiple tools for complex workflows
+- **Generate** new tools when existing ones don't fit
+
+#### Implementation Phases
+
+**Phase 0: Tool Infrastructure (3-4 weeks)**
+- Tool storage system and schema
+- Basic tool execution engine
+- Tool creation API for AI
+- Local tool management UI
+- Deliverable: AI can create and use custom tools
+
+**Phase 1: MCP Server Framework (3-4 weeks)**
+- MCP server integration system
+- Standard MCP tool templates
+- Application connector framework
+- Deliverable: Connect to external apps and extract data
+
+**Phase 2: File Type Handlers (2-3 weeks)**
+- Extensible file handler system
+- Common format handlers (PDF, Excel, Word, etc.)
+- Custom format registration
+- Deliverable: Read/write any file type
+
+**Phase 3: Sharing Platform (4-5 weeks)**
+- Tool sharing backend
+- Community tool browser
+- Version control for shared tools
+- Rating and review system
+- Deliverable: Users can share and discover tools
+
+**Phase 4: Advanced Tool Features (ongoing)**
+- Tool composition and workflows
+- Automatic tool optimization
+- Tool marketplace with monetization
+- AI-powered tool suggestions
+- Deliverable: Self-improving tool ecosystem
+
+---
+
+### 3) UI/UX Improvements
 
 #### Slash Command Discovery
 - Display available slash commands in the UI
@@ -348,3 +438,29 @@ This solves the "I rebuild and it rewrites everything" fear.
 - Better template generation
 - Project-specific agent customization
 - Auto-detection of project type and conventions
+
+---
+
+## Competitive Positioning
+
+### vs Traditional AI Assistants (ChatGPT, Claude, etc.)
+
+**Traditional AI**: Each conversation is isolated. No memory between sessions. Limited context window.
+
+**Codex**: Single continuous conversation with persistent memory. Context grows and improves over time. Never forgets important information.
+
+### vs Memory-Enabled AI (Mem.ai, Notion AI, etc.)
+
+**Other Solutions**: Memory is fragmented. Requires manual organization. Limited to specific platforms.
+
+**Codex**: Self-organizing context system. AI maintains its own memory structure. Works across all your files and applications.
+
+### vs Automation Tools (Zapier, IFTTT, etc.)
+
+**Automation Platforms**: Pre-built integrations only. No AI-driven tool creation. Static workflows.
+
+**Codex**: AI creates custom tools for your needs. Community-shared tool ecosystem. Tools evolve and improve.
+
+### Our Unique Value Proposition
+
+**"Your AI that remembers everything and learns to help you better—one conversation, infinite memory, unlimited tools."**

@@ -1259,6 +1259,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-context-files"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "codex-embeddings",
+ "pretty_assertions",
+ "regex-lite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
 name = "codex-core"
 version = "0.0.0"
 dependencies = [
@@ -1347,6 +1367,42 @@ dependencies = [
  "walkdir",
  "which",
  "wildmatch",
+ "wiremock",
+]
+
+[[package]]
+name = "codex-directory-watcher"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "notify",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
+name = "codex-embeddings"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "ordered-float",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-test",
+ "tracing",
  "wiremock",
 ]
 
@@ -1667,6 +1723,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-retrieval"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "codex-context-files",
+ "codex-directory-watcher",
+ "codex-embeddings",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-test",
+ "tracing",
+]
+
+[[package]]
 name = "codex-rmcp-client"
 version = "0.0.0"
 dependencies = [
@@ -1706,6 +1781,24 @@ dependencies = [
  "pretty_assertions",
  "tempfile",
  "uds_windows",
+]
+
+[[package]]
+name = "codex-tool-gen"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -4762,6 +4855,15 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
+name = "ordered-float"
+version = "4.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "ordered-stream"
