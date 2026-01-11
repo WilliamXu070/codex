@@ -8,6 +8,8 @@
 //! - **Bidirectional Sync**: Perfect synchronization between files, UI, and AI knowledge
 //! - **Context Generation Pipeline**: Automatic extraction of entities, relationships,
 //!   and context files from documents
+//! - **Agentic Context System**: AI-powered hierarchical knowledge tree with automatic
+//!   domain detection, cross-linking, and optimization
 //!
 //! ## Architecture
 //!
@@ -32,6 +34,18 @@
 //! │       ▼                                                         │
 //! │  GeneratedContext ──► ContextFile                              │
 //! └─────────────────────────────────────────────────────────────────┘
+//!
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                  Agentic Context System                         │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │  Folder ──► ContextAgent ──► LlmAnalyzer                       │
+//! │                  │                │                             │
+//! │                  ▼                ▼                             │
+//! │            ContextTree ◄── DomainDetection                     │
+//! │                  │                                              │
+//! │                  ▼                                              │
+//! │  TreeStore ◄── TreeOptimizer ──► CrossLinks                    │
+//! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
 // Core modules
@@ -52,6 +66,14 @@ pub mod generator;
 pub mod pipeline;
 pub mod relationship;
 
+// Agentic context system modules
+pub mod agent;
+pub mod llm;
+pub mod node;
+pub mod optimizer;
+pub mod tree;
+pub mod tree_storage;
+
 // Core re-exports
 pub use concept::{Concept, ConceptRelation, RelationType};
 pub use context_file::{ContentReference, ContextFile, ContextMetadata, ReferenceType};
@@ -70,10 +92,19 @@ pub use generator::{
     ClusterMethod, ContextGenerator, EntityCluster, GeneratedContext, GeneratorConfig,
 };
 pub use pipeline::{
-    ContextPipeline, DocumentResult, PipelineBuilder, PipelineConfig, PipelineResult,
-    PipelineStats,
+    ContextPipeline, DocumentResult, PipelineBuilder, PipelineConfig, PipelineResult, PipelineStats,
 };
 pub use relationship::{
     EvidenceType, Relationship, RelationshipEvidence, RelationshipExtractor,
     RelationshipExtractorConfig, RelationshipType,
 };
+
+// Agentic system re-exports
+pub use agent::{AgentBuilder, AgentConfig, AgentQueryResult, ContextAgent, ProcessingResult};
+pub use llm::{AnalysisContext, LlmAnalyzer, LlmConfig};
+pub use node::{
+    ContextNode, CrossLinkType, DocumentAnalysis, DomainDetection, NodeType, RelatedNode,
+};
+pub use optimizer::{OptimizationAnalysis, OptimizationResult, OptimizerConfig, TreeOptimizer};
+pub use tree::{ContextTree, TreeStats};
+pub use tree_storage::{TreeStore, TreeVisualization};

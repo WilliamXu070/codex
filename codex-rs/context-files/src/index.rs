@@ -214,8 +214,7 @@ impl ConceptIndex {
             }
 
             // Remove relations involving this concept
-            self.relations
-                .retain(|r| r.from != name && r.to != name);
+            self.relations.retain(|r| r.from != name && r.to != name);
 
             debug!("Removed concept from index: {name}");
             Some(concept)

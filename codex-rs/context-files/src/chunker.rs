@@ -356,11 +356,7 @@ impl SemanticChunker {
         trimmed.starts_with("- ")
             || trimmed.starts_with("* ")
             || trimmed.starts_with("+ ")
-            || trimmed
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_digit())
-                && trimmed.contains(". ")
+            || trimmed.chars().next().is_some_and(|c| c.is_ascii_digit()) && trimmed.contains(". ")
     }
 
     /// Extract a code block starting at the current position.
@@ -547,9 +543,7 @@ impl SemanticChunker {
                     chunks,
                 );
                 current_chunk = part.to_string();
-                current_offset = base_offset
-                    + text[..(text.find(part).unwrap_or(0))]
-                        .len();
+                current_offset = base_offset + text[..(text.find(part).unwrap_or(0))].len();
             } else {
                 current_chunk = test_chunk;
             }
@@ -645,7 +639,8 @@ mod tests {
     #[test]
     fn test_chunk_code_block() {
         let chunker = SemanticChunker::new();
-        let text = "Some text.\n\n```rust\nfn main() {\n    println!(\"Hello\");\n}\n```\n\nMore text.";
+        let text =
+            "Some text.\n\n```rust\nfn main() {\n    println!(\"Hello\");\n}\n```\n\nMore text.";
 
         let chunks = chunker.chunk(text);
         let code_chunks: Vec<_> = chunks

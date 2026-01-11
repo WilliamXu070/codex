@@ -91,10 +91,7 @@ impl RetrievalEngine {
 
         // Extract concepts from the query
         let extracted = self.extractor.extract(query_text)?;
-        query.concepts = extracted
-            .iter()
-            .map(|e| e.concept.name.clone())
-            .collect();
+        query.concepts = extracted.iter().map(|e| e.concept.name.clone()).collect();
 
         // Score all context files
         let mut scores: HashMap<String, ScoredResult> = HashMap::new();
@@ -241,10 +238,7 @@ impl RetrievalEngine {
         concepts: &[&str],
         store: &'a ContextStore,
     ) -> Vec<&'a ContextFile> {
-        concepts
-            .iter()
-            .filter_map(|c| store.get(c))
-            .collect()
+        concepts.iter().filter_map(|c| store.get(c)).collect()
     }
 }
 

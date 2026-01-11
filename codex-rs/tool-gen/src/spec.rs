@@ -348,7 +348,10 @@ impl InputConstraints {
         if let Some(s) = value.as_str() {
             if let Some(min) = self.min_length {
                 if s.len() < min {
-                    return Err(format!("{name}: string length {} is less than {min}", s.len()));
+                    return Err(format!(
+                        "{name}: string length {} is less than {min}",
+                        s.len()
+                    ));
                 }
             }
             if let Some(max) = self.max_length {

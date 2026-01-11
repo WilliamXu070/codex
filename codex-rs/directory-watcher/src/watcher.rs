@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
 use crate::config::{DirectoryConfig, WatchMode};
@@ -97,33 +97,36 @@ impl DirectoryWatcher {
         let configs = self.configs.clone();
 
         // Create the notify watcher
-        let watcher = notify::recommended_watcher(move |res: std::result::Result<notify::Event, notify::Error>| {
-            match res {
-                Ok(event) => {
-                    let kind = FileEventKind::from(event.kind);
+        let watcher = notify::recommended_watcher(
+            move |res: std::result::Result<notify::Event, notify::Error>| {
+                match res {
+                    Ok(event) => {
+                        let kind = FileEventKind::from(event.kind);
 
-                    for path in event.paths {
-                        // Check if path should be excluded
-                        let should_process = {
-                            let configs_guard = configs.blocking_read();
-                            !configs_guard.values().any(|c| c.should_exclude(&path))
-                        };
+                        for path in event.paths {
+                            // Check if path should be excluded
+                            let should_process = {
+                                let configs_guard = configs.blocking_read();
+                                !configs_guard.values().any(|c| c.should_exclude(&path))
+                            };
 
-                        if should_process {
-                            let file_event = FileEvent::new(kind, &path)
-                                .with_attributes(FileAttributes::from_path(&path).with_mime_type());
+                            if should_process {
+                                let file_event = FileEvent::new(kind, &path).with_attributes(
+                                    FileAttributes::from_path(&path).with_mime_type(),
+                                );
 
-                            if let Err(e) = event_tx.blocking_send(file_event) {
-                                error!("Failed to send file event: {e}");
+                                if let Err(e) = event_tx.blocking_send(file_event) {
+                                    error!("Failed to send file event: {e}");
+                                }
                             }
                         }
                     }
+                    Err(e) => {
+                        error!("Watch error: {e}");
+                    }
                 }
-                Err(e) => {
-                    error!("Watch error: {e}");
-                }
-            }
-        })?;
+            },
+        )?;
 
         self.watcher = Some(watcher);
 
@@ -203,7 +206,10 @@ impl DirectoryWatcher {
         }
 
         // Update config
-        self.configs.write().await.insert(path.clone(), config.clone());
+        self.configs
+            .write()
+            .await
+            .insert(path.clone(), config.clone());
 
         if was_running && config.enabled && config.watch_mode == WatchMode::Realtime {
             // Re-add to watcher

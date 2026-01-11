@@ -1265,6 +1265,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "codex-embeddings",
+ "dirs",
  "pretty_assertions",
  "regex-lite",
  "serde",
@@ -1274,6 +1275,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+ "tracing-subscriber",
  "uuid",
  "walkdir",
 ]

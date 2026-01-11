@@ -137,9 +137,8 @@ impl TreeStore {
 
         // Serialize tree
         let data = TreeData::from_tree(tree);
-        let json = serde_json::to_string_pretty(&data).map_err(|e| {
-            ContextError::InvalidFormat(format!("Failed to serialize tree: {}", e))
-        })?;
+        let json = serde_json::to_string_pretty(&data)
+            .map_err(|e| ContextError::InvalidFormat(format!("Failed to serialize tree: {}", e)))?;
 
         // Write to file
         fs::write(&tree_path, json).map_err(ContextError::Io)?;
@@ -226,9 +225,8 @@ impl TreeStore {
         }
 
         let node_path = nodes_dir.join(format!("{}.json", node.id));
-        let json = serde_json::to_string_pretty(node).map_err(|e| {
-            ContextError::InvalidFormat(format!("Failed to serialize node: {}", e))
-        })?;
+        let json = serde_json::to_string_pretty(node)
+            .map_err(|e| ContextError::InvalidFormat(format!("Failed to serialize node: {}", e)))?;
 
         fs::write(&node_path, json).map_err(ContextError::Io)?;
 
@@ -256,7 +254,12 @@ impl TreeStore {
     pub fn export_structure(&self, tree: &ContextTree) -> TreeVisualization {
         let mut viz = TreeVisualization::new();
 
-        fn build_viz(tree: &ContextTree, node: &ContextNode, viz: &mut TreeVisualization, depth: usize) {
+        fn build_viz(
+            tree: &ContextTree,
+            node: &ContextNode,
+            viz: &mut TreeVisualization,
+            depth: usize,
+        ) {
             let indent = "  ".repeat(depth);
             let type_label = node.node_type.label();
             let line = format!(

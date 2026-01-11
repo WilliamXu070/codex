@@ -182,7 +182,9 @@ impl ToolGenerator {
     /// Validate a generation request.
     fn validate_request(&self, request: &GenerationRequest) -> Result<()> {
         if request.name.is_empty() {
-            return Err(ToolError::InvalidDefinition("Name cannot be empty".to_string()));
+            return Err(ToolError::InvalidDefinition(
+                "Name cannot be empty".to_string(),
+            ));
         }
 
         if request.description.is_empty() {
@@ -255,7 +257,11 @@ impl ToolGenerator {
     }
 
     /// Generate implementation code for a tool.
-    fn generate_implementation(&self, request: &GenerationRequest, spec: &ToolSpec) -> Result<String> {
+    fn generate_implementation(
+        &self,
+        request: &GenerationRequest,
+        spec: &ToolSpec,
+    ) -> Result<String> {
         match request.tool_type {
             ToolType::Function => self.generate_function_impl(request, spec),
             ToolType::Script => self.generate_script_impl(request, spec),
@@ -265,7 +271,11 @@ impl ToolGenerator {
     }
 
     /// Generate a function implementation.
-    fn generate_function_impl(&self, request: &GenerationRequest, spec: &ToolSpec) -> Result<String> {
+    fn generate_function_impl(
+        &self,
+        request: &GenerationRequest,
+        spec: &ToolSpec,
+    ) -> Result<String> {
         let schema = spec.generate_schema();
         let impl_json = serde_json::json!({
             "type": "function",
@@ -322,7 +332,11 @@ impl ToolGenerator {
     }
 
     /// Generate a workflow implementation.
-    fn generate_workflow_impl(&self, request: &GenerationRequest, spec: &ToolSpec) -> Result<String> {
+    fn generate_workflow_impl(
+        &self,
+        request: &GenerationRequest,
+        spec: &ToolSpec,
+    ) -> Result<String> {
         let workflow = serde_json::json!({
             "name": request.name,
             "description": request.description,

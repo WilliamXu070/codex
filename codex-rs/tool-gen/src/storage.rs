@@ -31,11 +31,17 @@ impl ToolStore {
             .map_err(|e| StorageError::CreateDirectory(format!("{}: {e}", root.display())))?;
 
         // Create category subdirectories
-        for category in &["mcp-servers", "file-handlers", "app-integrators", "workflows", "utilities"] {
+        for category in &[
+            "mcp-servers",
+            "file-handlers",
+            "app-integrators",
+            "workflows",
+            "utilities",
+        ] {
             let category_path = root.join(category);
-            fs::create_dir_all(&category_path)
-                .await
-                .map_err(|e| StorageError::CreateDirectory(format!("{}: {e}", category_path.display())))?;
+            fs::create_dir_all(&category_path).await.map_err(|e| {
+                StorageError::CreateDirectory(format!("{}: {e}", category_path.display()))
+            })?;
         }
 
         let mut store = Self {
@@ -68,7 +74,13 @@ impl ToolStore {
 
     /// Load all tools from disk.
     async fn load_all(&mut self) -> Result<()> {
-        let categories = ["mcp-servers", "file-handlers", "app-integrators", "workflows", "utilities"];
+        let categories = [
+            "mcp-servers",
+            "file-handlers",
+            "app-integrators",
+            "workflows",
+            "utilities",
+        ];
 
         for category in categories {
             let category_path = self.root.join(category);

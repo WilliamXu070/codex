@@ -235,10 +235,8 @@ impl ContextPipeline {
         }
 
         // Aggregate all entities and relationships
-        let mut all_entities: Vec<Entity> = documents
-            .iter()
-            .flat_map(|d| d.entities.clone())
-            .collect();
+        let mut all_entities: Vec<Entity> =
+            documents.iter().flat_map(|d| d.entities.clone()).collect();
         let mut all_relationships: Vec<Relationship> = documents
             .iter()
             .flat_map(|d| d.relationships.clone())
@@ -323,7 +321,11 @@ impl ContextPipeline {
 
             if path.is_dir() {
                 // Skip configured directories
-                if self.config.skip_directories.contains(&file_name.to_string()) {
+                if self
+                    .config
+                    .skip_directories
+                    .contains(&file_name.to_string())
+                {
                     continue;
                 }
                 self.collect_files_recursive(&path, files)?;

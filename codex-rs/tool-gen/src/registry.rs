@@ -180,9 +180,7 @@ impl ToolRegistry {
         let ids = category_index.get(&category).cloned().unwrap_or_default();
 
         let store = self.store.read().await;
-        ids.iter()
-            .filter_map(|id| store.get(id).cloned())
-            .collect()
+        ids.iter().filter_map(|id| store.get(id).cloned()).collect()
     }
 
     /// List tools by tag.
@@ -191,9 +189,7 @@ impl ToolRegistry {
         let ids = tag_index.get(tag).cloned().unwrap_or_default();
 
         let store = self.store.read().await;
-        ids.iter()
-            .filter_map(|id| store.get(id).cloned())
-            .collect()
+        ids.iter().filter_map(|id| store.get(id).cloned()).collect()
     }
 
     /// Search tools by query.

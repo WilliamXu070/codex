@@ -179,7 +179,10 @@ impl ContextStore {
     pub fn search_by_tags(&self, tags: &[&str]) -> Vec<&ContextFile> {
         self.cache
             .values()
-            .filter(|cf| tags.iter().any(|tag| cf.metadata.tags.contains(&tag.to_string())))
+            .filter(|cf| {
+                tags.iter()
+                    .any(|tag| cf.metadata.tags.contains(&tag.to_string()))
+            })
             .collect()
     }
 
@@ -205,7 +208,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let mut store = ContextStore::new(temp_dir.path()).await.unwrap();
 
-        store.create("friends", "Information about friends").await.unwrap();
+        store
+            .create("friends", "Information about friends")
+            .await
+            .unwrap();
 
         let cf = store.get("friends").unwrap();
         assert_eq!(cf.concept, "friends");

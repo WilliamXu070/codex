@@ -175,7 +175,9 @@ impl CommunityHub {
     /// Validate a tool for publishing.
     fn validate_for_publish(&self, tool: &Tool) -> Result<()> {
         if tool.name.is_empty() {
-            return Err(ToolError::InvalidDefinition("Tool name is required".to_string()));
+            return Err(ToolError::InvalidDefinition(
+                "Tool name is required".to_string(),
+            ));
         }
 
         if tool.description.is_empty() {
@@ -319,10 +321,7 @@ impl CommunityHub {
         debug!("Rating tool {} with {}", rating.tool_id, rating.rating);
 
         // Placeholder - would call API
-        info!(
-            "Rated tool {} with {} stars",
-            rating.tool_id, rating.rating
-        );
+        info!("Rated tool {} with {} stars", rating.tool_id, rating.rating);
 
         Ok(())
     }

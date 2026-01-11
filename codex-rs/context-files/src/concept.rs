@@ -27,9 +27,7 @@ impl Concept {
     /// Create a new concept.
     pub fn new(name: impl Into<String>) -> Self {
         let name = name.into();
-        let display_name = name
-            .replace('-', " ")
-            .replace('_', " ");
+        let display_name = name.replace('-', " ").replace('_', " ");
         Self {
             name,
             display_name,
@@ -75,7 +73,11 @@ pub struct ConceptRelation {
 
 impl ConceptRelation {
     /// Create a new concept relation.
-    pub fn new(from: impl Into<String>, to: impl Into<String>, relation_type: RelationType) -> Self {
+    pub fn new(
+        from: impl Into<String>,
+        to: impl Into<String>,
+        relation_type: RelationType,
+    ) -> Self {
         Self {
             from: from.into(),
             to: to.into(),
@@ -132,12 +134,10 @@ mod tests {
 
     #[test]
     fn test_relation_strength_clamping() {
-        let relation = ConceptRelation::new("a", "b", RelationType::RelatedTo)
-            .with_strength(1.5);
+        let relation = ConceptRelation::new("a", "b", RelationType::RelatedTo).with_strength(1.5);
         assert_eq!(relation.strength, 1.0);
 
-        let relation = ConceptRelation::new("a", "b", RelationType::RelatedTo)
-            .with_strength(-0.5);
+        let relation = ConceptRelation::new("a", "b", RelationType::RelatedTo).with_strength(-0.5);
         assert_eq!(relation.strength, 0.0);
     }
 }

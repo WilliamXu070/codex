@@ -250,7 +250,10 @@ impl ToolExecutor {
             debug!("Script execution would run in sandbox");
         }
 
-        warn!("Script execution not yet implemented for tool: {}", tool.name);
+        warn!(
+            "Script execution not yet implemented for tool: {}",
+            tool.name
+        );
 
         Ok(serde_json::json!({
             "status": "script_execution_not_implemented",
@@ -291,8 +294,7 @@ impl ToolExecutor {
         debug!("Workflow tool {} called", tool.name);
 
         // Parse workflow definition
-        let workflow: serde_json::Value =
-            serde_json::from_str(&tool.definition.implementation)?;
+        let workflow: serde_json::Value = serde_json::from_str(&tool.definition.implementation)?;
 
         let steps = workflow
             .get("steps")

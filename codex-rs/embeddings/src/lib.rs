@@ -33,7 +33,7 @@ pub use cache::EmbeddingCache;
 pub use error::{EmbeddingError, Result};
 pub use index::SimilarityIndex;
 pub use provider::{EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, OpenAIProvider};
-pub use similarity::{cosine_similarity, SimilarityResult};
+pub use similarity::{SimilarityResult, cosine_similarity};
 
 /// A dense vector embedding.
 pub type Embedding = Vec<f32>;

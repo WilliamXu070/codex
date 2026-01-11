@@ -103,7 +103,8 @@ impl ConceptExtractor {
         // Phase 2: Extract potential new concepts using heuristics
         let potential = self.extract_potential_concepts(text);
         for (name, confidence) in potential {
-            if !self.config.known_concepts.contains(&name) && confidence >= self.config.min_confidence
+            if !self.config.known_concepts.contains(&name)
+                && confidence >= self.config.min_confidence
             {
                 extracted.push(ExtractedConcept {
                     concept: Concept::new(&name),
@@ -142,7 +143,8 @@ impl ConceptExtractor {
             if let Some(idx) = text.to_lowercase().find(indicator) {
                 let start = idx + indicator.len();
                 let rest = &text[start..];
-                if let Some(end) = rest.find(|c: char| c == '.' || c == ',' || c == '?' || c == '\n')
+                if let Some(end) =
+                    rest.find(|c: char| c == '.' || c == ',' || c == '?' || c == '\n')
                 {
                     let phrase = rest[..end].trim();
                     if phrase.len() >= 2 && phrase.len() <= 50 {
@@ -157,18 +159,10 @@ impl ConceptExtractor {
         let words: Vec<&str> = text.split_whitespace().collect();
         let mut i = 0;
         while i < words.len() {
-            if words[i]
-                .chars()
-                .next()
-                .map_or(false, |c| c.is_uppercase())
-            {
+            if words[i].chars().next().map_or(false, |c| c.is_uppercase()) {
                 let mut phrase = vec![words[i]];
                 let mut j = i + 1;
-                while j < words.len()
-                    && words[j]
-                        .chars()
-                        .next()
-                        .map_or(false, |c| c.is_uppercase())
+                while j < words.len() && words[j].chars().next().map_or(false, |c| c.is_uppercase())
                 {
                     phrase.push(words[j]);
                     j += 1;

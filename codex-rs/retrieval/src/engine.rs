@@ -132,11 +132,7 @@ impl UnifiedRetrieval {
     }
 
     /// Add or update a context file.
-    pub async fn upsert_context(
-        &self,
-        concept: &str,
-        summary: &str,
-    ) -> Result<()> {
+    pub async fn upsert_context(&self, concept: &str, summary: &str) -> Result<()> {
         let cf = codex_context_files::ContextFile::new(concept, summary);
         self.context_store.write().await.upsert(cf).await?;
 
@@ -170,10 +166,7 @@ impl UnifiedRetrieval {
     pub async fn extract_and_store(&self, text: &str, store: bool) -> Result<Vec<String>> {
         let extracted = self.extractor.extract(text)?;
 
-        let concept_names: Vec<String> = extracted
-            .iter()
-            .map(|e| e.concept.name.clone())
-            .collect();
+        let concept_names: Vec<String> = extracted.iter().map(|e| e.concept.name.clone()).collect();
 
         if store {
             for ext in extracted {
@@ -193,7 +186,10 @@ impl UnifiedRetrieval {
 
     /// Process a file event from the directory watcher.
     pub async fn process_file_event(&self, event: FileEvent) -> Result<()> {
-        debug!("Processing file event: {:?} for {:?}", event.kind, event.path);
+        debug!(
+            "Processing file event: {:?} for {:?}",
+            event.kind, event.path
+        );
 
         // Extract concepts from the file path
         let path_str = event.path.to_string_lossy();

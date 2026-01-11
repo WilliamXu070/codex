@@ -9,8 +9,8 @@ use tokio::fs;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::error::{EmbeddingError, Result};
 use crate::Embedding;
+use crate::error::{EmbeddingError, Result};
 
 /// Cache entry for an embedding.
 #[derive(Debug, Clone, Serialize, Deserialize)]

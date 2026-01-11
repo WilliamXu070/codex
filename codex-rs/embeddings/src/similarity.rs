@@ -3,8 +3,8 @@
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{EmbeddingError, Result};
 use crate::Embedding;
+use crate::error::{EmbeddingError, Result};
 
 /// Compute the cosine similarity between two embeddings.
 ///
@@ -40,11 +40,7 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> Result<f32> {
         });
     }
 
-    let sum: f32 = a
-        .iter()
-        .zip(b.iter())
-        .map(|(x, y)| (x - y).powi(2))
-        .sum();
+    let sum: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
 
     Ok(sum.sqrt())
 }
@@ -206,9 +202,9 @@ mod tests {
     fn test_find_top_k() {
         let query = vec![1.0, 0.0, 0.0];
         let candidates = vec![
-            ("a".to_string(), vec![1.0, 0.0, 0.0]),   // similarity 1.0
-            ("b".to_string(), vec![0.0, 1.0, 0.0]),   // similarity 0.0
-            ("c".to_string(), vec![0.7, 0.7, 0.0]),   // similarity ~0.7
+            ("a".to_string(), vec![1.0, 0.0, 0.0]), // similarity 1.0
+            ("b".to_string(), vec![0.0, 1.0, 0.0]), // similarity 0.0
+            ("c".to_string(), vec![0.7, 0.7, 0.0]), // similarity ~0.7
         ];
 
         let results = find_top_k(&query, &candidates, 2, 0.0).unwrap();

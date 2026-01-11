@@ -230,26 +230,104 @@ impl EntityExtractor {
     fn default_technologies() -> HashSet<String> {
         [
             // Languages
-            "rust", "python", "javascript", "typescript", "java", "go", "golang",
-            "c", "c++", "cpp", "csharp", "c#", "ruby", "swift", "kotlin", "scala",
-            "php", "perl", "haskell", "elixir", "clojure", "lua", "r", "julia",
+            "rust",
+            "python",
+            "javascript",
+            "typescript",
+            "java",
+            "go",
+            "golang",
+            "c",
+            "c++",
+            "cpp",
+            "csharp",
+            "c#",
+            "ruby",
+            "swift",
+            "kotlin",
+            "scala",
+            "php",
+            "perl",
+            "haskell",
+            "elixir",
+            "clojure",
+            "lua",
+            "r",
+            "julia",
             // Frameworks
-            "react", "vue", "angular", "svelte", "nextjs", "next.js", "nuxt",
-            "django", "flask", "fastapi", "rails", "spring", "express", "nestjs",
-            "actix", "axum", "rocket", "tokio", "async-std",
+            "react",
+            "vue",
+            "angular",
+            "svelte",
+            "nextjs",
+            "next.js",
+            "nuxt",
+            "django",
+            "flask",
+            "fastapi",
+            "rails",
+            "spring",
+            "express",
+            "nestjs",
+            "actix",
+            "axum",
+            "rocket",
+            "tokio",
+            "async-std",
             // Tools
-            "git", "docker", "kubernetes", "k8s", "terraform", "ansible",
-            "jenkins", "github", "gitlab", "bitbucket", "npm", "yarn", "pnpm",
-            "cargo", "pip", "maven", "gradle", "webpack", "vite", "esbuild",
+            "git",
+            "docker",
+            "kubernetes",
+            "k8s",
+            "terraform",
+            "ansible",
+            "jenkins",
+            "github",
+            "gitlab",
+            "bitbucket",
+            "npm",
+            "yarn",
+            "pnpm",
+            "cargo",
+            "pip",
+            "maven",
+            "gradle",
+            "webpack",
+            "vite",
+            "esbuild",
             // Databases
-            "postgresql", "postgres", "mysql", "mongodb", "redis", "elasticsearch",
-            "sqlite", "dynamodb", "cassandra", "neo4j", "supabase",
+            "postgresql",
+            "postgres",
+            "mysql",
+            "mongodb",
+            "redis",
+            "elasticsearch",
+            "sqlite",
+            "dynamodb",
+            "cassandra",
+            "neo4j",
+            "supabase",
             // Cloud
-            "aws", "azure", "gcp", "google cloud", "heroku", "vercel", "netlify",
-            "cloudflare", "digitalocean",
+            "aws",
+            "azure",
+            "gcp",
+            "google cloud",
+            "heroku",
+            "vercel",
+            "netlify",
+            "cloudflare",
+            "digitalocean",
             // AI/ML
-            "openai", "anthropic", "claude", "gpt", "llama", "pytorch", "tensorflow",
-            "huggingface", "langchain", "llamaindex",
+            "openai",
+            "anthropic",
+            "claude",
+            "gpt",
+            "llama",
+            "pytorch",
+            "tensorflow",
+            "huggingface",
+            "langchain",
+            "llamaindex",
         ]
         .iter()
         .map(|s| s.to_lowercase())
@@ -328,7 +406,7 @@ impl EntityExtractor {
         // Pattern: "by [Name]", "author: [Name]", "created by [Name]"
         let author_patterns = [
             r"(?i)(?:by|author|created by|maintained by|written by)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
-            r"@([a-zA-Z][\w-]+)",  // GitHub mentions
+            r"@([a-zA-Z][\w-]+)", // GitHub mentions
             r"(?i)contributor[s]?:\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
         ];
 
@@ -363,7 +441,7 @@ impl EntityExtractor {
         let project_patterns = [
             r"(?i)(?:project|repo|repository):\s*[`]?([a-zA-Z][\w-]+)[`]?",
             r"(?:github\.com|gitlab\.com)/([a-zA-Z][\w-]+/[a-zA-Z][\w-]+)",
-            r#"name\s*[=:]\s*["']([a-zA-Z][\w-]+)["']"#,  // package.json, Cargo.toml
+            r#"name\s*[=:]\s*["']([a-zA-Z][\w-]+)["']"#, // package.json, Cargo.toml
         ];
 
         for pattern in project_patterns {
@@ -445,8 +523,8 @@ impl EntityExtractor {
         let mut entities = Vec::new();
 
         let date_patterns = [
-            r"\b(\d{4}-\d{2}-\d{2})\b",                    // ISO date
-            r"\b(\d{1,2}/\d{1,2}/\d{4})\b",               // US date
+            r"\b(\d{4}-\d{2}-\d{2})\b",     // ISO date
+            r"\b(\d{1,2}/\d{1,2}/\d{4})\b", // US date
             r"\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})\b",
             r"(?i)(?:deadline|due|by|on)\s+(\w+\s+\d+(?:,?\s+\d{4})?)",
         ];
@@ -521,14 +599,17 @@ impl EntityExtractor {
         let mut entities = Vec::new();
 
         let file_patterns = [
-            r"`([a-zA-Z][\w./\-]+\.[a-zA-Z]+)`",  // Markdown code: `path/file.ext`
-            r"(?:src|lib|bin|tests?)/[\w./\-]+\.[a-zA-Z]+",  // Common source paths
+            r"`([a-zA-Z][\w./\-]+\.[a-zA-Z]+)`", // Markdown code: `path/file.ext`
+            r"(?:src|lib|bin|tests?)/[\w./\-]+\.[a-zA-Z]+", // Common source paths
         ];
 
         for pattern in file_patterns {
             if let Ok(re) = regex_lite::Regex::new(pattern) {
                 for cap in re.captures_iter(text) {
-                    let file = cap.get(1).map(|m| m.as_str()).unwrap_or(cap.get(0).unwrap().as_str());
+                    let file = cap
+                        .get(1)
+                        .map(|m| m.as_str())
+                        .unwrap_or(cap.get(0).unwrap().as_str());
                     if file.len() >= 3 && file.len() <= 100 {
                         let mut entity = Entity::new(file, EntityType::File, 0.85);
                         entity.add_mention(EntityMention {
@@ -551,9 +632,9 @@ impl EntityExtractor {
         let mut entities = Vec::new();
 
         let code_patterns = [
-            r"(?:fn|func|function|def)\s+([a-zA-Z_][a-zA-Z0-9_]*)",  // Function definitions
-            r"(?:struct|class|type|interface)\s+([A-Z][a-zA-Z0-9_]*)",  // Type definitions
-            r"(?:const|let|var)\s+([A-Z_][A-Z0-9_]*)\s*=",  // Constants
+            r"(?:fn|func|function|def)\s+([a-zA-Z_][a-zA-Z0-9_]*)", // Function definitions
+            r"(?:struct|class|type|interface)\s+([A-Z][a-zA-Z0-9_]*)", // Type definitions
+            r"(?:const|let|var)\s+([A-Z_][A-Z0-9_]*)\s*=",          // Constants
         ];
 
         for pattern in code_patterns {
@@ -627,7 +708,9 @@ mod tests {
     #[test]
     fn test_extract_technology() {
         let extractor = EntityExtractor::new();
-        let chunks = vec![make_chunk("Built with Rust and TypeScript. Uses Docker for deployment.")];
+        let chunks = vec![make_chunk(
+            "Built with Rust and TypeScript. Uses Docker for deployment.",
+        )];
 
         let entities = extractor.extract(&chunks);
         let techs: Vec<_> = entities
@@ -658,7 +741,9 @@ mod tests {
     #[test]
     fn test_extract_url() {
         let extractor = EntityExtractor::new();
-        let chunks = vec![make_chunk("See https://github.com/user/repo for more info.")];
+        let chunks = vec![make_chunk(
+            "See https://github.com/user/repo for more info.",
+        )];
 
         let entities = extractor.extract(&chunks);
         let urls: Vec<_> = entities

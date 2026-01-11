@@ -164,8 +164,7 @@ impl ContextTree {
         }
 
         // Insert into tree
-        self.domain_index
-            .insert(domain_lower, domain_id.clone());
+        self.domain_index.insert(domain_lower, domain_id.clone());
         self.nodes.insert(domain_id.clone(), domain_node);
 
         info!("Created new domain: {}", domain);
@@ -182,10 +181,7 @@ impl ContextTree {
 
     /// List all domain names.
     pub fn list_domains(&self) -> Vec<&str> {
-        self.domain_index
-            .keys()
-            .map(|s| s.as_str())
-            .collect()
+        self.domain_index.keys().map(|s| s.as_str()).collect()
     }
 
     /// Get the ancestry (path from root) for a node.
@@ -215,10 +211,7 @@ impl ContextTree {
 
     /// Get all nodes at a specific depth.
     pub fn nodes_at_depth(&self, depth: u32) -> Vec<&ContextNode> {
-        self.nodes
-            .values()
-            .filter(|n| n.depth == depth)
-            .collect()
+        self.nodes.values().filter(|n| n.depth == depth).collect()
     }
 
     /// Get all descendants of a node.
@@ -305,32 +298,18 @@ impl ContextTree {
                         // Don't link nodes in the same branch
                         if !self.are_in_same_branch(id_a, id_b) {
                             // Add bidirectional links
-                            let link_a = RelatedNode::new(
-                                id_b.clone(),
-                                CrossLinkType::SameTechnology,
-                                0.7,
-                            );
-                            let link_b = RelatedNode::new(
-                                id_a.clone(),
-                                CrossLinkType::SameTechnology,
-                                0.7,
-                            );
+                            let link_a =
+                                RelatedNode::new(id_b.clone(), CrossLinkType::SameTechnology, 0.7);
+                            let link_b =
+                                RelatedNode::new(id_a.clone(), CrossLinkType::SameTechnology, 0.7);
 
                             if let Some(node_a) = self.nodes.get_mut(id_a) {
-                                if !node_a
-                                    .related_nodes
-                                    .iter()
-                                    .any(|r| r.node_id == *id_b)
-                                {
+                                if !node_a.related_nodes.iter().any(|r| r.node_id == *id_b) {
                                     node_a.add_related(link_a);
                                 }
                             }
                             if let Some(node_b) = self.nodes.get_mut(id_b) {
-                                if !node_b
-                                    .related_nodes
-                                    .iter()
-                                    .any(|r| r.node_id == *id_a)
-                                {
+                                if !node_b.related_nodes.iter().any(|r| r.node_id == *id_a) {
                                     node_b.add_related(link_b);
                                 }
                             }
@@ -632,8 +611,7 @@ mod tests {
     fn test_apply_domain_detection() {
         let mut tree = ContextTree::new();
 
-        let detection = DomainDetection::new("coding", 0.9)
-            .with_subcategory("rust-projects");
+        let detection = DomainDetection::new("coding", 0.9).with_subcategory("rust-projects");
 
         let project = ContextNode::project("my-rust-app", PathBuf::from("/code/my-rust-app"));
         let project_id = tree.apply_domain_detection(project, &detection).unwrap();

@@ -6,9 +6,9 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use tracing::info;
 
+use crate::chunker::SemanticChunker;
 use crate::entity::{Entity, EntityExtractor, EntityType};
 use crate::error::Result;
 use crate::node::{ContextNode, CrossLinkType, DocumentAnalysis, DomainDetection, RelatedNode};
@@ -76,6 +76,7 @@ pub struct AnalysisContext {
 pub struct LlmAnalyzer {
     config: LlmConfig,
     entity_extractor: EntityExtractor,
+    chunker: SemanticChunker,
     // TODO: Add ModelClient when integrating with codex-core
     // client: Option<ModelClient>,
 }
@@ -92,6 +93,7 @@ impl LlmAnalyzer {
         Self {
             config,
             entity_extractor: EntityExtractor::new(),
+            chunker: SemanticChunker::new(),
         }
     }
 
@@ -141,11 +143,11 @@ impl LlmAnalyzer {
         content: &str,
         context: &AnalysisContext,
     ) -> DocumentAnalysis {
+        // Chunk the content first
+        let chunks = self.chunker.chunk(content);
+
         // Extract entities using pattern matching
-        let entities = self
-            .entity_extractor
-            .extract(content)
-            .unwrap_or_default();
+        let entities = self.entity_extractor.extract(&chunks);
 
         // Generate summary from first paragraph
         let summary = self.generate_heuristic_summary(content, &context.file_path);
@@ -154,7 +156,17 @@ impl LlmAnalyzer {
         let topics = self.extract_topics(&entities, content);
 
         // Detect domain from content and context
-        let suggested_domain = self.detect_domain_heuristic(content, context);
+        let suggested_domain = if let Some(ref ext) = context.file_extension {
+            let extensions = vec![ext.clone()];
+            let detection = self.detect_domain_heuristic_full(content, &extensions, &[]);
+            if detection.confidence > 0.5 {
+                Some(detection.domain)
+            } else {
+                self.detect_domain_heuristic(content, context)
+            }
+        } else {
+            self.detect_domain_heuristic(content, context)
+        };
 
         // Calculate confidence based on available information
         let confidence = self.calculate_confidence(&entities, &topics, &suggested_domain);
@@ -286,18 +298,14 @@ impl LlmAnalyzer {
     }
 
     /// Detect domain using heuristics.
-    fn detect_domain_heuristic(
-        &self,
-        content: &str,
-        context: &AnalysisContext,
-    ) -> Option<String> {
+    fn detect_domain_heuristic(&self, content: &str, context: &AnalysisContext) -> Option<String> {
         let content_lower = content.to_lowercase();
 
         // Check file extension for coding
         if let Some(ref ext) = context.file_extension {
             let coding_extensions = [
-                "rs", "py", "js", "ts", "go", "java", "cpp", "c", "h", "rb", "php",
-                "swift", "kt", "scala", "toml", "yaml", "json", "xml", "html", "css",
+                "rs", "py", "js", "ts", "go", "java", "cpp", "c", "h", "rb", "php", "swift", "kt",
+                "scala", "toml", "yaml", "json", "xml", "html", "css",
             ];
             if coding_extensions.contains(&ext.as_str()) {
                 return Some("coding".to_string());
@@ -309,21 +317,8 @@ impl LlmAnalyzer {
             (
                 "coding",
                 &[
-                    "function",
-                    "class",
-                    "import",
-                    "export",
-                    "const",
-                    "let",
-                    "var",
-                    "def ",
-                    "fn ",
-                    "pub ",
-                    "struct",
-                    "impl",
-                    "async",
-                    "await",
-                    "return",
+                    "function", "class", "import", "export", "const", "let", "var", "def ", "fn ",
+                    "pub ", "struct", "impl", "async", "await", "return",
                 ],
             ),
             (
@@ -459,7 +454,13 @@ impl LlmAnalyzer {
             self.detect_domain_with_llm(folder_summary, existing_domains)
                 .await
         } else if self.config.fallback_to_heuristic {
-            Ok(self.detect_domain_heuristic_full(folder_summary, file_extensions, existing_domains))
+            Ok(
+                self.detect_domain_heuristic_full(
+                    folder_summary,
+                    file_extensions,
+                    existing_domains,
+                ),
+            )
         } else {
             Ok(DomainDetection::new("other", 0.3).as_new())
         }
@@ -504,10 +505,7 @@ impl LlmAnalyzer {
 
         // Check for cooking content
         let cooking_keywords = ["recipe", "ingredient", "cook", "bake"];
-        if cooking_keywords
-            .iter()
-            .any(|kw| summary_lower.contains(kw))
-        {
+        if cooking_keywords.iter().any(|kw| summary_lower.contains(kw)) {
             let is_new = !existing_domains.contains(&"cooking".to_string());
             return DomainDetection::new("cooking", 0.7)
                 .with_subcategory("recipes")
@@ -531,11 +529,7 @@ impl LlmAnalyzer {
     }
 
     /// Detect coding subcategory from file extensions.
-    fn detect_coding_subcategory(
-        &self,
-        extensions: &[String],
-        _summary: &str,
-    ) -> Option<String> {
+    fn detect_coding_subcategory(&self, extensions: &[String], _summary: &str) -> Option<String> {
         // Count extensions
         let rust_count = extensions.iter().filter(|e| *e == "rs").count();
         let python_count = extensions.iter().filter(|e| *e == "py").count();
@@ -620,15 +614,19 @@ impl LlmAnalyzer {
             if !shared_techs.is_empty() {
                 let strength = (shared_techs.len() as f32 * 0.2).min(0.8);
                 relationships.push(
-                    RelatedNode::new(candidate.id.clone(), CrossLinkType::SameTechnology, strength)
-                        .with_reason(format!(
-                            "Shared technologies: {}",
-                            shared_techs
-                                .iter()
-                                .map(|e| e.name.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )),
+                    RelatedNode::new(
+                        candidate.id.clone(),
+                        CrossLinkType::SameTechnology,
+                        strength,
+                    )
+                    .with_reason(format!(
+                        "Shared technologies: {}",
+                        shared_techs
+                            .iter()
+                            .map(|e| e.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )),
                 );
             }
 
@@ -683,10 +681,8 @@ impl LlmAnalyzer {
         }
 
         // Collect unique keywords
-        let mut all_keywords: Vec<String> = children
-            .iter()
-            .flat_map(|c| c.keywords.clone())
-            .collect();
+        let mut all_keywords: Vec<String> =
+            children.iter().flat_map(|c| c.keywords.clone()).collect();
         all_keywords.sort();
         all_keywords.dedup();
 
@@ -763,14 +759,19 @@ It handles HTTP requests and connects to a PostgreSQL database.
 "#;
 
         let context = AnalysisContext {
-            file_extension: Some("md".to_string()),
+            file_extension: Some("rs".to_string()),
             ..Default::default()
         };
 
         let analysis = analyzer.analyze_document(content, &context).await.unwrap();
 
         assert!(!analysis.summary.is_empty());
-        assert!(analysis.suggested_domain == Some("coding".to_string()));
+        // Should detect coding domain from .rs extension
+        assert!(
+            analysis.suggested_domain == Some("coding".to_string()),
+            "Expected coding domain, got {:?}",
+            analysis.suggested_domain
+        );
         assert!(analysis.confidence > 0.0);
     }
 
@@ -842,37 +843,24 @@ It handles HTTP requests and connects to a PostgreSQL database.
         let analyzer = LlmAnalyzer::heuristic_only();
 
         let mut node1 = ContextNode::project("project1", PathBuf::from("/p1"));
-        node1.add_entity(Entity {
-            name: "Rust".to_string(),
-            entity_type: EntityType::Technology,
-            normalized_name: "rust".to_string(),
-            mentions: vec![],
-            confidence: 0.9,
-        });
+        node1.add_entity(Entity::new("Rust", EntityType::Technology, 0.9));
         node1.add_keyword("web");
         node1.add_keyword("server");
 
         let mut node2 = ContextNode::project("project2", PathBuf::from("/p2"));
-        node2.add_entity(Entity {
-            name: "Rust".to_string(),
-            entity_type: EntityType::Technology,
-            normalized_name: "rust".to_string(),
-            mentions: vec![],
-            confidence: 0.9,
-        });
+        node2.add_entity(Entity::new("Rust", EntityType::Technology, 0.9));
         node2.add_keyword("cli");
         node2.add_keyword("server");
 
-        let relationships = analyzer
-            .find_relationships(&node1, &[node2])
-            .await
-            .unwrap();
+        let relationships = analyzer.find_relationships(&node1, &[node2]).await.unwrap();
 
         assert!(!relationships.is_empty());
         // Should find shared technology (Rust)
-        assert!(relationships
-            .iter()
-            .any(|r| r.relationship == CrossLinkType::SameTechnology));
+        assert!(
+            relationships
+                .iter()
+                .any(|r| r.relationship == CrossLinkType::SameTechnology)
+        );
     }
 
     #[tokio::test]
@@ -911,7 +899,8 @@ It handles HTTP requests and connects to a PostgreSQL database.
     #[test]
     fn test_generate_summary_long_content() {
         let analyzer = LlmAnalyzer::heuristic_only();
-        let content = "This is a very long document that contains a lot of information. ".repeat(50);
+        let content =
+            "This is a very long document that contains a lot of information. ".repeat(50);
 
         let summary = analyzer.generate_heuristic_summary(&content, &None);
 

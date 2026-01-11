@@ -38,11 +38,9 @@ impl IndexedFile {
         let path = path.into();
         let metadata = path.metadata().ok();
 
-        let modified = metadata.as_ref().and_then(|m| {
-            m.modified()
-                .ok()
-                .map(|t| DateTime::<Utc>::from(t))
-        });
+        let modified = metadata
+            .as_ref()
+            .and_then(|m| m.modified().ok().map(|t| DateTime::<Utc>::from(t)));
 
         Self {
             attributes: FileAttributes::from_path(&path).with_mime_type(),
@@ -135,7 +133,8 @@ impl FileIndexer {
                 }
             } else {
                 // New file
-                self.files.insert(path.clone(), IndexedFile::from_path(&path));
+                self.files
+                    .insert(path.clone(), IndexedFile::from_path(&path));
                 new_files += 1;
             }
         }
@@ -182,12 +181,7 @@ impl FileIndexer {
     pub fn by_extension(&self, ext: &str) -> Vec<&IndexedFile> {
         self.files
             .values()
-            .filter(|f| {
-                f.attributes
-                    .extension
-                    .as_ref()
-                    .map_or(false, |e| e == ext)
-            })
+            .filter(|f| f.attributes.extension.as_ref().map_or(false, |e| e == ext))
             .collect()
     }
 
@@ -209,7 +203,12 @@ impl FileIndexer {
         let pattern_lower = pattern.to_lowercase();
         self.files
             .values()
-            .filter(|f| f.path.to_string_lossy().to_lowercase().contains(&pattern_lower))
+            .filter(|f| {
+                f.path
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .contains(&pattern_lower)
+            })
             .collect()
     }
 

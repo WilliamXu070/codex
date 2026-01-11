@@ -126,10 +126,7 @@ impl FileAttributes {
             is_file: path.is_file(),
             is_directory: path.is_dir(),
             size: metadata.as_ref().map(|m| m.len()),
-            extension: path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(String::from),
+            extension: path.extension().and_then(|e| e.to_str()).map(String::from),
             mime_type: None,
         }
     }

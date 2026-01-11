@@ -75,9 +75,7 @@ impl ContextFile {
 
     /// Set structured data for a key.
     pub fn set_structured(&mut self, key: impl Into<String>, value: serde_json::Value) {
-        self.content
-            .structured
-            .insert(key.into(), value);
+        self.content.structured.insert(key.into(), value);
         self.touch();
     }
 

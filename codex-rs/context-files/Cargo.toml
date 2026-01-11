@@ -32,6 +32,9 @@ regex-lite.workspace = true
 # Logging
 tracing.workspace = true
 
+# Directory utilities
+dirs.workspace = true
+
 # Internal dependencies
 codex-embeddings = { path = "../embeddings" }
 
@@ -39,6 +42,7 @@ codex-embeddings = { path = "../embeddings" }
 tokio-test.workspace = true
 tempfile.workspace = true
 pretty_assertions.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

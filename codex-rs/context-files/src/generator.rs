@@ -454,17 +454,14 @@ impl ContextGenerator {
 
         // List key entities (up to 5)
         if entities.len() > 1 {
-            let key_entities: Vec<_> = entities
-                .iter()
-                .take(5)
-                .map(|e| e.name.as_str())
-                .collect();
+            let key_entities: Vec<_> = entities.iter().take(5).map(|e| e.name.as_str()).collect();
             parts.push(format!("Key items: {}.", key_entities.join(", ")));
         }
 
         // Describe relationships
         if !relationships.is_empty() {
-            let rel_types: HashSet<_> = relationships.iter().map(|r| &r.relationship_type).collect();
+            let rel_types: HashSet<_> =
+                relationships.iter().map(|r| &r.relationship_type).collect();
             let rel_descriptions: Vec<_> = rel_types
                 .iter()
                 .map(|t| relationship_type_to_name(t))
@@ -636,9 +633,7 @@ mod tests {
         // Should have at least people and technologies clusters
         assert!(contexts.len() >= 2);
 
-        let people_ctx = contexts
-            .iter()
-            .find(|c| c.context_file.concept == "people");
+        let people_ctx = contexts.iter().find(|c| c.context_file.concept == "people");
         assert!(people_ctx.is_some());
         assert_eq!(people_ctx.unwrap().entities.len(), 2);
 

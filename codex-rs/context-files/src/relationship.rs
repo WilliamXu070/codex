@@ -243,7 +243,8 @@ impl RelationshipExtractor {
 
         // Co-occurrence based relationships
         if self.config.use_cooccurrence {
-            relationships.extend(self.extract_cooccurrence_relationships(entities, &chunk_entities));
+            relationships
+                .extend(self.extract_cooccurrence_relationships(entities, &chunk_entities));
         }
 
         // Type-inference based relationships
@@ -284,18 +285,53 @@ impl RelationshipExtractor {
         // Relationship patterns: (pattern, source_group, target_group, relationship_type)
         let patterns: Vec<(&str, usize, usize, RelationshipType)> = vec![
             // Dependency patterns
-            (r"(\S+)\s+depends\s+on\s+(\S+)", 1, 2, RelationshipType::DependsOn),
-            (r"(\S+)\s+requires\s+(\S+)", 1, 2, RelationshipType::DependsOn),
+            (
+                r"(\S+)\s+depends\s+on\s+(\S+)",
+                1,
+                2,
+                RelationshipType::DependsOn,
+            ),
+            (
+                r"(\S+)\s+requires\s+(\S+)",
+                1,
+                2,
+                RelationshipType::DependsOn,
+            ),
             (r"(\S+)\s+uses\s+(\S+)", 1, 2, RelationshipType::Uses),
             (r"built\s+with\s+(\S+)", 0, 1, RelationshipType::Uses),
             // Authorship patterns
-            (r"(\S+)\s+(?:created|wrote|authored)\s+by\s+(\S+)", 1, 2, RelationshipType::CreatedBy),
-            (r"(\S+)\s+maintains?\s+(\S+)", 1, 2, RelationshipType::Maintains),
+            (
+                r"(\S+)\s+(?:created|wrote|authored)\s+by\s+(\S+)",
+                1,
+                2,
+                RelationshipType::CreatedBy,
+            ),
+            (
+                r"(\S+)\s+maintains?\s+(\S+)",
+                1,
+                2,
+                RelationshipType::Maintains,
+            ),
             // Containment patterns
-            (r"(\S+)\s+contains?\s+(\S+)", 1, 2, RelationshipType::Contains),
-            (r"(\S+)\s+includes?\s+(\S+)", 1, 2, RelationshipType::Contains),
+            (
+                r"(\S+)\s+contains?\s+(\S+)",
+                1,
+                2,
+                RelationshipType::Contains,
+            ),
+            (
+                r"(\S+)\s+includes?\s+(\S+)",
+                1,
+                2,
+                RelationshipType::Contains,
+            ),
             // Implementation patterns
-            (r"(\S+)\s+implements?\s+(\S+)", 1, 2, RelationshipType::Implements),
+            (
+                r"(\S+)\s+implements?\s+(\S+)",
+                1,
+                2,
+                RelationshipType::Implements,
+            ),
             (r"(\S+)\s+extends?\s+(\S+)", 1, 2, RelationshipType::Extends),
         ];
 
@@ -385,10 +421,7 @@ impl RelationshipExtractor {
                     let score = 1.0 / (1.0 + (n as f32).ln());
 
                     *pair_scores.entry(key.clone()).or_insert(0.0) += score;
-                    pair_chunks
-                        .entry(key)
-                        .or_default()
-                        .push(chunk_id.clone());
+                    pair_chunks.entry(key).or_default().push(chunk_id.clone());
                 }
             }
         }
@@ -402,12 +435,8 @@ impl RelationshipExtractor {
                 if let (Some(e1), Some(e2)) = (entity_map.get(&id1), entity_map.get(&id2)) {
                     let normalized_score = (score / 2.0).min(1.0);
 
-                    let mut rel = Relationship::new(
-                        e1,
-                        e2,
-                        RelationshipType::RelatedTo,
-                        normalized_score,
-                    );
+                    let mut rel =
+                        Relationship::new(e1, e2, RelationshipType::RelatedTo, normalized_score);
 
                     if let Some(chunk_ids) = pair_chunks.get(&(id1.clone(), id2.clone())) {
                         rel.add_evidence(RelationshipEvidence {
@@ -449,12 +478,8 @@ impl RelationshipExtractor {
 
             for person in &people {
                 for project in &projects {
-                    let mut rel = Relationship::new(
-                        person,
-                        project,
-                        RelationshipType::Maintains,
-                        0.5,
-                    );
+                    let mut rel =
+                        Relationship::new(person, project, RelationshipType::Maintains, 0.5);
                     rel.add_evidence(RelationshipEvidence {
                         evidence_type: EvidenceType::TypeInference,
                         text: "Person mentioned with project".to_string(),
@@ -473,12 +498,7 @@ impl RelationshipExtractor {
 
             for project in &projects {
                 for tech in &technologies {
-                    let mut rel = Relationship::new(
-                        project,
-                        tech,
-                        RelationshipType::Uses,
-                        0.6,
-                    );
+                    let mut rel = Relationship::new(project, tech, RelationshipType::Uses, 0.6);
                     rel.add_evidence(RelationshipEvidence {
                         evidence_type: EvidenceType::TypeInference,
                         text: "Technology mentioned with project".to_string(),
@@ -530,8 +550,7 @@ impl RelationshipExtractor {
                     for evidence in &rel.evidence {
                         existing.add_evidence(evidence.clone());
                     }
-                    existing.confidence =
-                        (existing.confidence + rel.confidence * 0.5).min(1.0);
+                    existing.confidence = (existing.confidence + rel.confidence * 0.5).min(1.0);
                 })
                 .or_insert(rel);
         }

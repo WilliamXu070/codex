@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::error::{EmbeddingError, Result};
-use crate::similarity::{cosine_similarity, find_top_k, normalize, SimilarityResult};
 use crate::Embedding;
+use crate::error::{EmbeddingError, Result};
+use crate::similarity::{SimilarityResult, cosine_similarity, find_top_k, normalize};
 
 /// An entry in the similarity index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,7 +111,12 @@ impl SimilarityIndex {
     }
 
     /// Search for similar embeddings.
-    pub fn search(&self, query: &Embedding, k: usize, min_score: f32) -> Result<Vec<SimilarityResult>> {
+    pub fn search(
+        &self,
+        query: &Embedding,
+        k: usize,
+        min_score: f32,
+    ) -> Result<Vec<SimilarityResult>> {
         if query.len() != self.dimension {
             return Err(EmbeddingError::DimensionMismatch {
                 expected: self.dimension,
@@ -143,7 +148,11 @@ impl SimilarityIndex {
     }
 
     /// Search for the single most similar embedding.
-    pub fn search_one(&self, query: &Embedding, min_score: f32) -> Result<Option<SimilarityResult>> {
+    pub fn search_one(
+        &self,
+        query: &Embedding,
+        min_score: f32,
+    ) -> Result<Option<SimilarityResult>> {
         let results = self.search(query, 1, min_score)?;
         Ok(results.into_iter().next())
     }
@@ -225,9 +234,7 @@ mod tests {
     #[test]
     fn test_index_add_and_get() {
         let mut index = SimilarityIndex::new(3);
-        index
-            .add("item1", vec![1.0, 0.0, 0.0], None)
-            .unwrap();
+        index.add("item1", vec![1.0, 0.0, 0.0], None).unwrap();
 
         assert!(index.contains("item1"));
         assert!(!index.contains("item2"));
@@ -236,15 +243,9 @@ mod tests {
     #[test]
     fn test_index_search() {
         let mut index = SimilarityIndex::new(3);
-        index
-            .add("a", vec![1.0, 0.0, 0.0], None)
-            .unwrap();
-        index
-            .add("b", vec![0.0, 1.0, 0.0], None)
-            .unwrap();
-        index
-            .add("c", vec![0.7, 0.7, 0.0], None)
-            .unwrap();
+        index.add("a", vec![1.0, 0.0, 0.0], None).unwrap();
+        index.add("b", vec![0.0, 1.0, 0.0], None).unwrap();
+        index.add("c", vec![0.7, 0.7, 0.0], None).unwrap();
 
         let query = vec![1.0, 0.0, 0.0];
         let results = index.search(&query, 2, 0.0).unwrap();

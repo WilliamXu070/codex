@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, info, warn};
 
 use crate::context_file::ContextFile;
@@ -150,10 +150,7 @@ impl SyncManager {
             last_change_source: ChangeSource::Initial,
         };
 
-        self.states
-            .write()
-            .await
-            .insert(cf.concept.clone(), state);
+        self.states.write().await.insert(cf.concept.clone(), state);
 
         debug!("Initialized sync state for concept: {}", cf.concept);
     }
@@ -178,11 +175,7 @@ impl SyncManager {
     }
 
     /// Process a sync event.
-    pub async fn process_event(
-        &self,
-        event: SyncEvent,
-        store: &mut ContextStore,
-    ) -> Result<()> {
+    pub async fn process_event(&self, event: SyncEvent, store: &mut ContextStore) -> Result<()> {
         match event {
             SyncEvent::FileCreated { path } => {
                 info!("Processing file created: {}", path.display());
@@ -223,7 +216,10 @@ impl SyncManager {
     /// Handle a newly created file.
     async fn handle_file_created(&self, path: &PathBuf, _store: &mut ContextStore) -> Result<()> {
         // TODO: Extract concept from file, create context file if needed
-        info!("File created handler not yet implemented: {}", path.display());
+        info!(
+            "File created handler not yet implemented: {}",
+            path.display()
+        );
         Ok(())
     }
 
@@ -248,11 +244,7 @@ impl SyncManager {
     }
 
     /// Handle AI-generated context update.
-    async fn handle_context_updated(
-        &self,
-        concept: &str,
-        store: &mut ContextStore,
-    ) -> Result<()> {
+    async fn handle_context_updated(&self, concept: &str, store: &mut ContextStore) -> Result<()> {
         if let Some(cf) = store.get(concept) {
             let hash = Self::compute_hash(cf);
             let mut states = self.states.write().await;

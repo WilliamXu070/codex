@@ -221,8 +221,9 @@ impl TreeOptimizer {
             // Merge file references if there are many
             if let Some(file_refs) = by_type.get(&NodeType::FileReference) {
                 if file_refs.len() >= self.config.min_siblings_for_merge {
-                    let (merged, removed) =
-                        self.merge_file_refs(tree, &parent_id, file_refs, analyzer).await;
+                    let (merged, removed) = self
+                        .merge_file_refs(tree, &parent_id, file_refs, analyzer)
+                        .await;
                     if let Some(merged_node) = merged {
                         created_ids.push(merged_node.id.clone());
                         tree.add_child(&parent_id, merged_node).ok();
@@ -255,7 +256,10 @@ impl TreeOptimizer {
         let removed_ids: Vec<String> = file_refs.iter().map(|n| n.id.clone()).collect();
 
         // Create summary node
-        let summary = analyzer.summarize_children(file_refs).await.unwrap_or_default();
+        let summary = analyzer
+            .summarize_children(file_refs)
+            .await
+            .unwrap_or_default();
 
         let mut merged_node = ContextNode::new(NodeType::Document, "Files Summary");
         merged_node.summary = if summary.is_empty() {
@@ -320,12 +324,16 @@ impl TreeOptimizer {
             }
 
             // Compress descendants into the node's summary
-            let summary = analyzer.summarize_children(&descendants).await.unwrap_or_default();
+            let summary = analyzer
+                .summarize_children(&descendants)
+                .await
+                .unwrap_or_default();
 
             if let Some(target_node) = tree.get_mut(&node.id) {
                 // Append compressed summary
                 if !summary.is_empty() {
-                    target_node.summary = format!("{}\n\nCompressed: {}", target_node.summary, summary);
+                    target_node.summary =
+                        format!("{}\n\nCompressed: {}", target_node.summary, summary);
                 }
 
                 // Collect keywords and entities from descendants
@@ -404,9 +412,8 @@ impl TreeOptimizer {
         }
 
         // Set recommendation
-        analysis.should_optimize = analysis.stale_nodes > 0
-            || analysis.excessive_depth
-            || analysis.mergeable_groups > 0;
+        analysis.should_optimize =
+            analysis.stale_nodes > 0 || analysis.excessive_depth || analysis.mergeable_groups > 0;
 
         analysis
     }
@@ -579,7 +586,11 @@ mod tests {
         let result = optimizer.optimize(&mut tree, &analyzer).await.unwrap();
 
         // Should have merged some nodes
-        assert!(result.nodes_merged > 0 || result.nodes_pruned > 0 || tree.node_count() <= initial_count);
+        assert!(
+            result.nodes_merged > 0
+                || result.nodes_pruned > 0
+                || tree.node_count() <= initial_count
+        );
     }
 
     #[test]

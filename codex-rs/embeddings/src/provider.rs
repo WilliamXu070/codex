@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::error::{EmbeddingError, Result};
 use crate::Embedding;
+use crate::error::{EmbeddingError, Result};
 
 /// Request for generating embeddings.
 #[derive(Debug, Clone, Serialize, Deserialize)]

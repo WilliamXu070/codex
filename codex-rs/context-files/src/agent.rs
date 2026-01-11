@@ -223,14 +223,22 @@ impl ContextAgent {
         let (folder_summary, file_extensions) = self.analyze_folder_contents(&files).await;
 
         // Detect domain
-        let existing_domains = self.tree.list_domains().iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let existing_domains = self
+            .tree
+            .list_domains()
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
         let detection = self
             .analyzer
             .detect_domain(&folder_summary, &file_extensions, &existing_domains)
             .await?;
 
         result.domain = detection.domain.clone();
-        info!("Detected domain: {} (confidence: {})", detection.domain, detection.confidence);
+        info!(
+            "Detected domain: {} (confidence: {})",
+            detection.domain, detection.confidence
+        );
 
         // Create project node
         let folder_name = path
@@ -256,7 +264,9 @@ impl ContextAgent {
                     result.entities_extracted += entities;
                 }
                 Err(e) => {
-                    result.errors.push(format!("{}: {}", file_path.display(), e));
+                    result
+                        .errors
+                        .push(format!("{}: {}", file_path.display(), e));
                     warn!("Error processing file {}: {}", file_path.display(), e);
                 }
             }
@@ -350,11 +360,7 @@ impl ContextAgent {
     }
 
     /// Process a single file and add nodes to the tree.
-    async fn process_file(
-        &mut self,
-        file_path: &Path,
-        parent_id: &str,
-    ) -> Result<(usize, usize)> {
+    async fn process_file(&mut self, file_path: &Path, parent_id: &str) -> Result<(usize, usize)> {
         let content = std::fs::read_to_string(file_path).map_err(ContextError::Io)?;
 
         let file_name = file_path
@@ -415,10 +421,7 @@ impl ContextAgent {
 
     /// Count total cross-links in the tree.
     fn count_cross_links(&self) -> usize {
-        self.tree
-            .all_nodes()
-            .map(|n| n.related_nodes.len())
-            .sum()
+        self.tree.all_nodes().map(|n| n.related_nodes.len()).sum()
     }
 
     /// Update the root node summary based on domains.
@@ -477,11 +480,7 @@ impl ContextAgent {
     pub fn get_domain_context(&self, domain: &str) -> Option<Vec<&ContextNode>> {
         let domain_node = self.tree.get_domain(domain)?;
         let descendants = self.tree.get_descendants(&domain_node.id);
-        Some(
-            std::iter::once(domain_node)
-                .chain(descendants)
-                .collect(),
-        )
+        Some(std::iter::once(domain_node).chain(descendants).collect())
     }
 
     /// Get the ancestry path for a file.
