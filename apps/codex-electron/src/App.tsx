@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { FileEntry } from "./types";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import type { FileEntry, ContextNode } from "./types";
+import ContextSidebar from "./ContextSidebar";
 
 const DEFAULT_COMMAND = "";
 const DEFAULT_ARGS = "";
@@ -76,6 +77,8 @@ export default function App() {
   const [statusText, setStatusText] = useState("Idle");
   const [approval, setApproval] = useState<ApprovalState | null>(null);
   const [statusItems, setStatusItems] = useState<StatusItem[]>([]);
+  const [showContextSidebar, setShowContextSidebar] = useState(false);
+  const [contextNodes, setContextNodes] = useState<ContextNode[]>([]);
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const idCounter = useRef(0);
@@ -255,16 +258,63 @@ export default function App() {
       }
     });
 
+    // Listen for codex ready event (from context operations that start the server)
+    const unsubReady = window.codexApi.codex.onReady(() => {
+      setCodexReady(true);
+      setStatusText("Ready");
+    });
+
     return () => {
       unsubEvent();
       unsubApproval();
       unsubStatus();
+      unsubReady();
     };
   }, []);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Keyboard shortcut for context sidebar (Cmd+K / Ctrl+K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setShowContextSidebar((prev) => !prev);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Handler for when context nodes are selected
+  const handleContextNodesSelected = useCallback((nodes: ContextNode[]) => {
+    setContextNodes(nodes);
+
+    // Format context for prompt
+    const contextText = nodes.map((node) => {
+      let text = `## ${node.name} (${node.node_type})\n`;
+      text += `${node.summary}\n`;
+      if (node.path) text += `Path: ${node.path}\n`;
+      if (node.keywords.length > 0) text += `Keywords: ${node.keywords.join(", ")}\n`;
+      return text;
+    }).join("\n---\n");
+
+    // Add system message about context
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: nextId("system"),
+        role: "system",
+        text: `Added ${nodes.length} context nodes:\n${contextText}`
+      }
+    ]);
+
+    // Optionally close sidebar
+    setShowContextSidebar(false);
+  }, []);
 
   const activeEntries = searchQuery.trim() ? searchResults : entries;
   const breadcrumb = useMemo(() => currentPath.split("/").filter(Boolean), [currentPath]);
@@ -313,15 +363,55 @@ export default function App() {
   }
 
   async function handleSend() {
-    const text = prompt.trim();
-    if (!text) {
+    const userText = prompt.trim(); // Original text to display in chat
+    let textToSend = userText; // Text with context to send to AI
+    if (!userText) {
       return;
     }
     setPrompt("");
+
+    // Inject manually selected context if any
+    if (contextNodes.length > 0) {
+      const contextText = contextNodes.map((node) => {
+        let nodeText = `## ${node.name} (${node.node_type})\n`;
+        nodeText += `${node.summary}\n`;
+        if (node.path) nodeText += `Path: ${node.path}\n`;
+        if (node.keywords.length > 0) nodeText += `Keywords: ${node.keywords.join(", ")}\n`;
+        return nodeText;
+      }).join("\n---\n");
+
+      textToSend = `<context>\n${contextText}\n</context>\n\n${userText}`;
+      setContextNodes([]); // Clear context after using
+    } else {
+      // Auto-query context based on user's message (if no manual selection)
+      try {
+        pushStatus(`Querying context for: "${userText.slice(0, 50)}..."`);
+        const result = await window.codexApi.context.queryContext(userText, 10);
+        pushStatus(`Context query returned ${result.nodes?.length ?? 0} nodes`);
+
+        if (result.nodes && result.nodes.length > 0) {
+          const autoContext = result.nodes.map((node: ContextNode) => {
+            let nodeText = `## ${node.name} (${node.node_type})\n`;
+            nodeText += `${node.summary}\n`;
+            if (node.path) nodeText += `Path: ${node.path}\n`;
+            return nodeText;
+          }).join("\n---\n");
+
+          textToSend = `<relevant_context>\n${autoContext}\n</relevant_context>\n\n${userText}`;
+          pushStatus(`Auto-injected ${result.nodes.length} context nodes`);
+        } else {
+          pushStatus("No matching context nodes found");
+        }
+      } catch (err) {
+        // Context query failed - log the error
+        pushStatus(`Context query error: ${err}`);
+        console.error("Context query failed:", err);
+      }
+    }
     
     // Handle slash commands
-    if (text.startsWith("/")) {
-      const command = text.split(/\s+/)[0];
+    if (userText.startsWith("/")) {
+      const command = userText.split(/\s+/)[0];
       
       // Handle /init command
       if (command === "/init") {
@@ -419,12 +509,12 @@ Commit & Pull Request Guidelines
     }
     setMessages((prev) => [
       ...prev,
-      { id: nextId("user"), role: "user", text }
+      { id: nextId("user"), role: "user", text: userText }
     ]);
     setStatusText("Thinking...");
     pushStatus("send_user_turn");
     try {
-      await window.codexApi.codex.send({ text, cwd: currentPath });
+      await window.codexApi.codex.send({ text: textToSend, cwd: currentPath });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setMessages((prev) => [
@@ -468,7 +558,14 @@ Commit & Pull Request Guidelines
   }
 
   return (
-    <div className="app">
+    <div className="app" style={{ display: "flex", flexDirection: "row" }}>
+      {showContextSidebar && (
+        <ContextSidebar
+          onSelectNodes={handleContextNodesSelected}
+          onClose={() => setShowContextSidebar(false)}
+        />
+      )}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <div className="app__background" />
       <header className="app__topbar">
         <div>
@@ -657,6 +754,7 @@ Commit & Pull Request Guidelines
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

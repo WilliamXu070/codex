@@ -325,12 +325,26 @@ class AppServerClient {
         return;
       }
 
+      // Handle context system notifications
+      if (msg.method === "context/indexProgress") {
+        if (mainWindow) {
+          mainWindow.webContents.send("context:index-progress", msg.params);
+        }
+        return;
+      }
+
+      if (msg.method === "context/indexComplete") {
+        if (mainWindow) {
+          mainWindow.webContents.send("context:index-complete", msg.params);
+        }
+        return;
+      }
 
       // Log unhandled notifications for debugging (don't forward as UI events)
       // Many app-server notifications are internal and shouldn't create UI messages
-      this.emitStatus({ 
-        type: "unhandled_notification", 
-        text: `Unhandled notification: ${msg.method}` 
+      this.emitStatus({
+        type: "unhandled_notification",
+        text: `Unhandled notification: ${msg.method}`
       });
       return;
     }
@@ -788,6 +802,69 @@ function setupIpc() {
   ipcMain.handle("fs:checkAgentsMd", async (_, dirPath) => {
     const agentsPath = path.join(dirPath, "AGENTS.md");
     return await fileExists(agentsPath);
+  });
+
+  // Helper to ensure app-server is running for context operations
+  async function ensureAppServerForContext() {
+    if (appServerClient && appServerClient.child && appServerClient.initialized) {
+      return; // Already running and initialized
+    }
+
+    if (mainWindow) {
+      mainWindow.webContents.send("codex:status", {
+        type: "server",
+        text: "Starting app-server for context operations..."
+      });
+    }
+
+    const serverConfig = await resolveAppServerCommand();
+    appServerClient = new AppServerClient(serverConfig);
+    appServerClient.start();
+    await appServerClient.initialize();
+
+    // Also create a thread so chat works after context operations
+    if (!appServerClient.threadId) {
+      const result = await appServerClient.request("thread/start", {});
+      appServerClient.threadId = result.thread?.id;
+      if (mainWindow) {
+        mainWindow.webContents.send("codex:status", {
+          type: "server",
+          text: `Thread started: ${result.thread?.id}`
+        });
+        // Notify UI that codex is ready for chat
+        mainWindow.webContents.send("codex:ready", {
+          conversationId: result.thread?.id
+        });
+      }
+    }
+
+    if (mainWindow) {
+      mainWindow.webContents.send("codex:status", {
+        type: "server",
+        text: "App-server ready for context operations"
+      });
+    }
+  }
+
+  // Context system IPC handlers
+  ipcMain.handle("context:index-directory", async (_, dirPath) => {
+    await ensureAppServerForContext();
+    return appServerClient.request("context/index", { path: dirPath });
+  });
+
+  ipcMain.handle("context:query-context", async (_, params) => {
+    await ensureAppServerForContext();
+    return appServerClient.request("context/query", params);
+  });
+
+  ipcMain.handle("context:get-node-context", async (_, nodeId) => {
+    await ensureAppServerForContext();
+    return appServerClient.request("context/node/get", { node_id: nodeId });
+  });
+
+  ipcMain.handle("context:list-domains", async () => {
+    await ensureAppServerForContext();
+    return appServerClient.request("context/domains/list", {});
   });
 }
 

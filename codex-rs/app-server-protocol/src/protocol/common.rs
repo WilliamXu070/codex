@@ -292,6 +292,24 @@ client_request_definitions! {
         params: v1::ExecOneOffCommandParams,
         response: v1::ExecOneOffCommandResponse,
     },
+
+    // Context system APIs
+    IndexDirectory => "context/index" {
+        params: v2::IndexDirectoryParams,
+        response: v2::IndexDirectoryResponse,
+    },
+    QueryContext => "context/query" {
+        params: v2::QueryContextParams,
+        response: v2::QueryContextResponse,
+    },
+    GetNodeContext => "context/node/get" {
+        params: v2::GetNodeContextParams,
+        response: v2::GetNodeContextResponse,
+    },
+    ListDomains => "context/domains/list" {
+        params: v2::ListDomainsParams,
+        response: v2::ListDomainsResponse,
+    },
 }
 
 /// Generates an `enum ServerRequest` where each variant is a request that the
@@ -555,6 +573,10 @@ server_notification_definitions! {
     /// Deprecated: use `account/login/completed` instead.
     LoginChatGptComplete(v1::LoginChatGptCompleteNotification),
     SessionConfigured(v1::SessionConfiguredNotification),
+
+    // Context system notifications
+    IndexProgress => "context/indexProgress" (v2::IndexProgressNotification),
+    IndexComplete => "context/indexComplete" (v2::IndexCompleteNotification),
 }
 
 client_notification_definitions! {

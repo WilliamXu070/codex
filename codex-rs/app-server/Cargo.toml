@@ -19,6 +19,7 @@ workspace = true
 anyhow = { workspace = true }
 codex-arg0 = { workspace = true }
 codex-common = { workspace = true, features = ["cli"] }
+codex-context-files = { path = "../context-files" }
 codex-core = { workspace = true }
 codex-backend-client = { workspace = true }
 codex-file-search = { workspace = true }

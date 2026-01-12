@@ -105,6 +105,10 @@ use codex_app_server_protocol::UserInfoResponse;
 use codex_app_server_protocol::UserInput as V2UserInput;
 use codex_app_server_protocol::UserSavedConfig;
 use codex_app_server_protocol::build_turns_from_event_msgs;
+// Context system types
+use codex_app_server_protocol::{
+    GetNodeContextParams, IndexDirectoryParams, ListDomainsParams, QueryContextParams,
+};
 use codex_backend_client::Client as BackendClient;
 use codex_core::AuthManager;
 use codex_core::CodexConversation;
@@ -223,6 +227,7 @@ pub(crate) struct CodexMessageProcessor {
     turn_summary_store: TurnSummaryStore,
     pending_fuzzy_searches: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     feedback: CodexFeedback,
+    context_handler: Arc<crate::context_handler::ContextHandler>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -265,6 +270,12 @@ impl CodexMessageProcessor {
         cli_overrides: Vec<(String, TomlValue)>,
         feedback: CodexFeedback,
     ) -> Self {
+        // Initialize context handler
+        let context_handler = Arc::new(
+            crate::context_handler::ContextHandler::new()
+                .expect("Failed to initialize context handler"),
+        );
+
         Self {
             auth_manager,
             conversation_manager,
@@ -278,6 +289,7 @@ impl CodexMessageProcessor {
             turn_summary_store: Arc::new(Mutex::new(HashMap::new())),
             pending_fuzzy_searches: Arc::new(Mutex::new(HashMap::new())),
             feedback,
+            context_handler,
         }
     }
 
@@ -511,6 +523,19 @@ impl CodexMessageProcessor {
             }
             ClientRequest::FeedbackUpload { request_id, params } => {
                 self.upload_feedback(request_id, params).await;
+            }
+            // Context system requests
+            ClientRequest::IndexDirectory { request_id, params } => {
+                self.index_directory(request_id, params).await;
+            }
+            ClientRequest::QueryContext { request_id, params } => {
+                self.query_context(request_id, params).await;
+            }
+            ClientRequest::GetNodeContext { request_id, params } => {
+                self.get_node_context(request_id, params).await;
+            }
+            ClientRequest::ListDomains { request_id, params } => {
+                self.list_domains(request_id, params).await;
             }
         }
     }
@@ -3310,6 +3335,95 @@ impl CodexMessageProcessor {
             Ok(conv) => Some(conv.rollout_path()),
             Err(_) => None,
         }
+    }
+
+    // ===== Context System Handlers =====
+
+    async fn index_directory(&self, request_id: RequestId, params: IndexDirectoryParams) {
+        let context_handler = self.context_handler.clone();
+        let outgoing = self.outgoing.clone();
+
+        tokio::spawn(async move {
+            match context_handler
+                .index_directory(params, outgoing.clone())
+                .await
+            {
+                Ok(response) => {
+                    outgoing.send_response(request_id, response).await;
+                }
+                Err(e) => {
+                    let error = JSONRPCErrorError {
+                        code: INTERNAL_ERROR_CODE,
+                        message: format!("Failed to index directory: {}", e),
+                        data: None,
+                    };
+                    outgoing.send_error(request_id, error).await;
+                }
+            }
+        });
+    }
+
+    async fn query_context(&self, request_id: RequestId, params: QueryContextParams) {
+        let context_handler = self.context_handler.clone();
+        let outgoing = self.outgoing.clone();
+
+        tokio::spawn(async move {
+            match context_handler.query_context(params).await {
+                Ok(response) => {
+                    outgoing.send_response(request_id, response).await;
+                }
+                Err(e) => {
+                    let error = JSONRPCErrorError {
+                        code: INTERNAL_ERROR_CODE,
+                        message: format!("Failed to query context: {}", e),
+                        data: None,
+                    };
+                    outgoing.send_error(request_id, error).await;
+                }
+            }
+        });
+    }
+
+    async fn get_node_context(&self, request_id: RequestId, params: GetNodeContextParams) {
+        let context_handler = self.context_handler.clone();
+        let outgoing = self.outgoing.clone();
+
+        tokio::spawn(async move {
+            match context_handler.get_node_context(params).await {
+                Ok(response) => {
+                    outgoing.send_response(request_id, response).await;
+                }
+                Err(e) => {
+                    let error = JSONRPCErrorError {
+                        code: INTERNAL_ERROR_CODE,
+                        message: format!("Failed to get node context: {}", e),
+                        data: None,
+                    };
+                    outgoing.send_error(request_id, error).await;
+                }
+            }
+        });
+    }
+
+    async fn list_domains(&self, request_id: RequestId, params: ListDomainsParams) {
+        let context_handler = self.context_handler.clone();
+        let outgoing = self.outgoing.clone();
+
+        tokio::spawn(async move {
+            match context_handler.list_domains(params).await {
+                Ok(response) => {
+                    outgoing.send_response(request_id, response).await;
+                }
+                Err(e) => {
+                    let error = JSONRPCErrorError {
+                        code: INTERNAL_ERROR_CODE,
+                        message: format!("Failed to list domains: {}", e),
+                        data: None,
+                    };
+                    outgoing.send_error(request_id, error).await;
+                }
+            }
+        });
     }
 }
 

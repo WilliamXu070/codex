@@ -26,6 +26,9 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 # File system utilities
 walkdir.workspace = true
 
+# ZIP archive reading (for Office documents)
+zip = "0.6"
+
 # Regex for pattern matching
 regex-lite.workspace = true
 

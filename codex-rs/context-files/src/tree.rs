@@ -55,14 +55,52 @@ impl ContextTree {
 
     /// Get the root node.
     pub fn root(&self) -> &ContextNode {
-        self.nodes.get(&self.root_id).expect("Root node must exist")
+        match self.nodes.get(&self.root_id) {
+            Some(node) => node,
+            None => {
+                // This should never happen - log the state for debugging
+                warn!(
+                    "Root node '{}' missing! Tree has {} nodes. Node IDs: {:?}",
+                    self.root_id,
+                    self.nodes.len(),
+                    self.nodes.keys().collect::<Vec<_>>()
+                );
+                panic!("Root node '{}' must exist but was not found in tree with {} nodes",
+                    self.root_id, self.nodes.len());
+            }
+        }
     }
 
     /// Get a mutable reference to the root node.
     pub fn root_mut(&mut self) -> &mut ContextNode {
-        self.nodes
-            .get_mut(&self.root_id)
-            .expect("Root node must exist")
+        let root_id = self.root_id.clone();
+        let node_count = self.nodes.len();
+        match self.nodes.get_mut(&root_id) {
+            Some(node) => node,
+            None => {
+                warn!(
+                    "Root node '{}' missing! Tree has {} nodes.",
+                    root_id,
+                    node_count
+                );
+                panic!("Root node '{}' must exist but was not found", root_id);
+            }
+        }
+    }
+
+    /// Check if the tree has a valid root node.
+    pub fn has_valid_root(&self) -> bool {
+        self.nodes.contains_key(&self.root_id)
+    }
+
+    /// Ensure the tree has a valid root, creating one if needed.
+    pub fn ensure_root(&mut self) {
+        if !self.nodes.contains_key(&self.root_id) {
+            warn!("Tree missing root node, creating new one");
+            let root = ContextNode::root();
+            self.root_id = root.id.clone();
+            self.nodes.insert(root.id.clone(), root);
+        }
     }
 
     /// Get a node by ID.
@@ -406,20 +444,60 @@ impl ContextTree {
     }
 
     /// Search for nodes by keyword.
+    ///
+    /// Returns nodes that match ANY of the search terms (more lenient).
+    /// Nodes are scored by how many terms they match and sorted by relevance.
     pub fn search(&self, query: &str) -> Vec<&ContextNode> {
         let query_lower = query.to_lowercase();
-        let terms: Vec<&str> = query_lower.split_whitespace().collect();
 
-        self.nodes
+        // Filter out common stop words for better matching
+        let stop_words: std::collections::HashSet<&str> = [
+            "a", "an", "the", "is", "are", "was", "were", "be", "been", "have", "has",
+            "had", "do", "does", "did", "will", "would", "could", "should", "can",
+            "to", "of", "in", "for", "on", "with", "at", "by", "from", "as",
+            "and", "but", "if", "or", "what", "who", "whom", "which", "when", "where",
+            "why", "how", "i", "my", "me", "we", "our", "you", "your", "that", "this",
+        ].into_iter().collect();
+
+        let terms: Vec<&str> = query_lower
+            .split_whitespace()
+            .filter(|t| t.len() >= 2 && !stop_words.contains(t))
+            .collect();
+
+        if terms.is_empty() {
+            // If no meaningful terms, return top-level content nodes
+            return self.nodes
+                .values()
+                .filter(|n| matches!(n.node_type, NodeType::Project | NodeType::Document))
+                .take(10)
+                .collect();
+        }
+
+        // Score nodes by how many terms they match
+        let mut scored: Vec<(&ContextNode, usize)> = self.nodes
             .values()
-            .filter(|node| {
-                terms.iter().all(|term| {
-                    node.name.to_lowercase().contains(term)
-                        || node.summary.to_lowercase().contains(term)
-                        || node.keywords.iter().any(|k| k.contains(term))
-                })
+            .filter_map(|node| {
+                let name_lower = node.name.to_lowercase();
+                let summary_lower = node.summary.to_lowercase();
+
+                let match_count = terms.iter().filter(|term| {
+                    name_lower.contains(*term)
+                        || summary_lower.contains(*term)
+                        || node.keywords.iter().any(|k| k.to_lowercase().contains(*term))
+                }).count();
+
+                if match_count > 0 {
+                    Some((node, match_count))
+                } else {
+                    None
+                }
             })
-            .collect()
+            .collect();
+
+        // Sort by match count (descending)
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+
+        scored.into_iter().map(|(node, _)| node).collect()
     }
 }
 

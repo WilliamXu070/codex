@@ -82,6 +82,10 @@ yarn.lock
 package.json-e
 session.ts-e
 CHANGELOG.ignore.md
+apps/codex-electron/release/
+apps/codex-electron/release/**
+**/win-unpacked/
+*.exe
 
 # nix related
 .direnv

@@ -33,6 +33,25 @@ contextBridge.exposeInMainWorld("codexApi", {
         onStatus: (handler) => {
           ipcRenderer.on("codex:status", (_, payload) => handler(payload));
           return () => ipcRenderer.removeAllListeners("codex:status");
+        },
+        onReady: (handler) => {
+          ipcRenderer.on("codex:ready", (_, payload) => handler(payload));
+          return () => ipcRenderer.removeAllListeners("codex:ready");
+        }
+      },
+      context: {
+        indexDirectory: (path) => ipcRenderer.invoke("context:index-directory", path),
+        queryContext: (query, maxResults = 50) =>
+          ipcRenderer.invoke("context:query-context", { query, maxResults }),
+        getNodeContext: (nodeId) => ipcRenderer.invoke("context:get-node-context", nodeId),
+        listDomains: () => ipcRenderer.invoke("context:list-domains"),
+        onIndexProgress: (handler) => {
+          ipcRenderer.on("context:index-progress", (_, data) => handler(data));
+          return () => ipcRenderer.removeAllListeners("context:index-progress");
+        },
+        onIndexComplete: (handler) => {
+          ipcRenderer.on("context:index-complete", (_, data) => handler(data));
+          return () => ipcRenderer.removeAllListeners("context:index-complete");
         }
       }
 });

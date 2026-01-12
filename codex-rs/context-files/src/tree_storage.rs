@@ -50,6 +50,19 @@ impl TreeData {
     }
 
     fn into_tree(self) -> Result<ContextTree> {
+        // If no nodes were stored, return a fresh tree
+        if self.nodes.is_empty() {
+            info!("Stored tree is empty, creating fresh tree");
+            return Ok(ContextTree::new());
+        }
+
+        // Check if root node exists in the stored nodes
+        let has_root = self.nodes.iter().any(|n| n.id == self.root_id);
+        if !has_root {
+            warn!("Stored tree missing root node '{}', creating fresh tree", self.root_id);
+            return Ok(ContextTree::new());
+        }
+
         let mut tree = ContextTree::new();
 
         // Clear the default root
@@ -63,6 +76,12 @@ impl TreeData {
         // Remove the default root if it's different from the stored one
         if default_root_id != self.root_id {
             tree.remove(&default_root_id);
+        }
+
+        // Final safety check - ensure root exists
+        if tree.get(&self.root_id).is_none() {
+            warn!("Tree reconstruction failed, creating fresh tree");
+            return Ok(ContextTree::new());
         }
 
         Ok(tree)

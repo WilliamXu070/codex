@@ -25,6 +25,52 @@ type ApprovalEvent = {
   params: Record<string, unknown>;
 };
 
+// Context system types
+export type ContextNode = {
+  id: string;
+  name: string;
+  node_type: string;
+  path?: string;
+  summary: string;
+  depth: number;
+  keywords: string[];
+};
+
+export type QueryContextResult = {
+  nodes: ContextNode[];
+  processing_time_ms: number;
+};
+
+export type NodeContextResult = {
+  node: ContextNode;
+  ancestry: ContextNode[];
+  related: ContextNode[];
+};
+
+export type IndexStatus =
+  | { type: "starting"; path: string }
+  | { type: "processing"; file: string; progress: number; total: number }
+  | { type: "analyzing"; stage: string }
+  | { type: "complete"; nodes_created: number; files_processed: number }
+  | { type: "error"; message: string };
+
+export type IndexDirectoryResult = {
+  started: boolean;
+  path: string;
+};
+
+export type IndexCompleteNotification = {
+  domain: string;
+  files_processed: number;
+  nodes_created: number;
+  entities_extracted: number;
+  processing_time_ms: number;
+};
+
+export type ListDomainsResult = {
+  domains: string[];
+};
+
 declare global {
   interface Window {
     codexApi: {
@@ -70,6 +116,15 @@ declare global {
         onEvent: (handler: (event: CodexEvent) => void) => () => void;
         onApproval: (handler: (event: ApprovalEvent) => void) => () => void;
         onStatus: (handler: (event: { type: string; [key: string]: unknown }) => void) => () => void;
+        onReady: (handler: (event: { conversationId: string }) => void) => () => void;
+      };
+      context: {
+        indexDirectory: (path: string) => Promise<IndexDirectoryResult>;
+        queryContext: (query: string, maxResults?: number) => Promise<QueryContextResult>;
+        getNodeContext: (nodeId: string) => Promise<NodeContextResult>;
+        listDomains: () => Promise<ListDomainsResult>;
+        onIndexProgress: (handler: (data: { status: IndexStatus }) => void) => () => void;
+        onIndexComplete: (handler: (data: IndexCompleteNotification) => void) => () => void;
       };
     };
   }
