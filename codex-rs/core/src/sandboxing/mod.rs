@@ -1,180 +1,171 @@
 /*
 Module: sandboxing
 
-Build platform wrappers and produce ExecEnv for execution. Owns low‑level
-sandbox placement and transformation of portable CommandSpec into a
-ready‑to‑spawn environment.
+Core-owned adapter types for exec/runtime plumbing. Policy selection and
+command transformation live in the codex-sandboxing crate; this module keeps
+the exec-only metadata and translates transformed sandbox commands back into
+ExecRequest for execution.
 */
 
+use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
-use crate::exec::ExecToolCallOutput;
-use crate::exec::SandboxType;
 use crate::exec::StdoutStream;
-use crate::exec::execute_exec_env;
-use crate::landlock::create_linux_sandbox_command_args;
-use crate::protocol::SandboxPolicy;
-#[cfg(target_os = "macos")]
-use crate::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
-#[cfg(target_os = "macos")]
-use crate::seatbelt::create_seatbelt_command_args;
+use crate::exec::WindowsSandboxFilesystemOverrides;
+use crate::exec::execute_exec_request;
 #[cfg(target_os = "macos")]
 use crate::spawn::CODEX_SANDBOX_ENV_VAR;
 use crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
-use crate::tools::sandboxing::SandboxablePreference;
+use codex_network_proxy::NetworkProxy;
+use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::exec_output::ExecToolCallOutput;
+use codex_protocol::models::PermissionProfile;
 pub use codex_protocol::models::SandboxPermissions;
+use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::NetworkSandboxPolicy;
+use codex_sandboxing::SandboxExecRequest;
+use codex_sandboxing::SandboxType;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
-use std::path::Path;
-use std::path::PathBuf;
 
 #[derive(Debug)]
-pub struct CommandSpec {
-    pub program: String,
-    pub args: Vec<String>,
-    pub cwd: PathBuf,
-    pub env: HashMap<String, String>,
-    pub expiration: ExecExpiration,
-    pub sandbox_permissions: SandboxPermissions,
-    pub justification: Option<String>,
+pub(crate) struct ExecOptions {
+    pub(crate) expiration: ExecExpiration,
+    pub(crate) capture_policy: ExecCapturePolicy,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ExecServerEnvConfig {
+    pub(crate) policy: codex_exec_server::ExecEnvPolicy,
+    pub(crate) local_policy_env: HashMap<String, String>,
 }
 
 #[derive(Debug)]
-pub struct ExecEnv {
+pub struct ExecRequest {
     pub command: Vec<String>,
-    pub cwd: PathBuf,
+    pub cwd: AbsolutePathBuf,
     pub env: HashMap<String, String>,
+    pub(crate) exec_server_env_config: Option<ExecServerEnvConfig>,
+    pub network: Option<NetworkProxy>,
     pub expiration: ExecExpiration,
+    pub capture_policy: ExecCapturePolicy,
     pub sandbox: SandboxType,
-    pub sandbox_permissions: SandboxPermissions,
-    pub justification: Option<String>,
+    pub windows_sandbox_policy_cwd: AbsolutePathBuf,
+    pub windows_sandbox_workspace_roots: Vec<AbsolutePathBuf>,
+    pub windows_sandbox_level: WindowsSandboxLevel,
+    pub windows_sandbox_private_desktop: bool,
+    pub permission_profile: PermissionProfile,
+    pub file_system_sandbox_policy: FileSystemSandboxPolicy,
+    pub network_sandbox_policy: NetworkSandboxPolicy,
+    pub(crate) windows_sandbox_filesystem_overrides: Option<WindowsSandboxFilesystemOverrides>,
     pub arg0: Option<String>,
 }
 
-pub enum SandboxPreference {
-    Auto,
-    Require,
-    Forbid,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum SandboxTransformError {
-    #[error("missing codex-linux-sandbox executable path")]
-    MissingLinuxSandboxExecutable,
-    #[cfg(not(target_os = "macos"))]
-    #[error("seatbelt sandbox is only available on macOS")]
-    SeatbeltUnavailable,
-}
-
-#[derive(Default)]
-pub struct SandboxManager;
-
-impl SandboxManager {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub(crate) fn select_initial(
-        &self,
-        policy: &SandboxPolicy,
-        pref: SandboxablePreference,
-    ) -> SandboxType {
-        match pref {
-            SandboxablePreference::Forbid => SandboxType::None,
-            SandboxablePreference::Require => {
-                // Require a platform sandbox when available; on Windows this
-                // respects the experimental_windows_sandbox feature.
-                crate::safety::get_platform_sandbox().unwrap_or(SandboxType::None)
-            }
-            SandboxablePreference::Auto => match policy {
-                SandboxPolicy::DangerFullAccess | SandboxPolicy::ExternalSandbox { .. } => {
-                    SandboxType::None
-                }
-                _ => crate::safety::get_platform_sandbox().unwrap_or(SandboxType::None),
-            },
+impl ExecRequest {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        command: Vec<String>,
+        cwd: AbsolutePathBuf,
+        env: HashMap<String, String>,
+        network: Option<NetworkProxy>,
+        expiration: ExecExpiration,
+        capture_policy: ExecCapturePolicy,
+        sandbox: SandboxType,
+        windows_sandbox_workspace_roots: Vec<AbsolutePathBuf>,
+        windows_sandbox_level: WindowsSandboxLevel,
+        windows_sandbox_private_desktop: bool,
+        permission_profile: PermissionProfile,
+        arg0: Option<String>,
+    ) -> Self {
+        let windows_sandbox_policy_cwd = cwd.clone();
+        let (file_system_sandbox_policy, network_sandbox_policy) =
+            permission_profile.to_runtime_permissions();
+        Self {
+            command,
+            cwd,
+            env,
+            exec_server_env_config: None,
+            network,
+            expiration,
+            capture_policy,
+            sandbox,
+            windows_sandbox_policy_cwd,
+            windows_sandbox_workspace_roots,
+            windows_sandbox_level,
+            windows_sandbox_private_desktop,
+            permission_profile,
+            file_system_sandbox_policy,
+            network_sandbox_policy,
+            windows_sandbox_filesystem_overrides: None,
+            arg0,
         }
     }
 
-    pub(crate) fn transform(
-        &self,
-        mut spec: CommandSpec,
-        policy: &SandboxPolicy,
-        sandbox: SandboxType,
-        sandbox_policy_cwd: &Path,
-        codex_linux_sandbox_exe: Option<&PathBuf>,
-    ) -> Result<ExecEnv, SandboxTransformError> {
-        let mut env = spec.env;
-        if !policy.has_full_network_access() {
+    pub(crate) fn from_sandbox_exec_request(
+        request: SandboxExecRequest,
+        options: ExecOptions,
+        windows_sandbox_workspace_roots: Vec<AbsolutePathBuf>,
+    ) -> Self {
+        let SandboxExecRequest {
+            command,
+            cwd,
+            sandbox_policy_cwd: windows_sandbox_policy_cwd,
+            mut env,
+            network,
+            sandbox,
+            windows_sandbox_level,
+            windows_sandbox_private_desktop,
+            permission_profile,
+            file_system_sandbox_policy,
+            network_sandbox_policy,
+            arg0,
+        } = request;
+        let ExecOptions {
+            expiration,
+            capture_policy,
+        } = options;
+        if !network_sandbox_policy.is_enabled() {
             env.insert(
                 CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR.to_string(),
                 "1".to_string(),
             );
         }
-
-        let mut command = Vec::with_capacity(1 + spec.args.len());
-        command.push(spec.program);
-        command.append(&mut spec.args);
-
-        let (command, sandbox_env, arg0_override) = match sandbox {
-            SandboxType::None => (command, HashMap::new(), None),
-            #[cfg(target_os = "macos")]
-            SandboxType::MacosSeatbelt => {
-                let mut seatbelt_env = HashMap::new();
-                seatbelt_env.insert(CODEX_SANDBOX_ENV_VAR.to_string(), "seatbelt".to_string());
-                let mut args =
-                    create_seatbelt_command_args(command.clone(), policy, sandbox_policy_cwd);
-                let mut full_command = Vec::with_capacity(1 + args.len());
-                full_command.push(MACOS_PATH_TO_SEATBELT_EXECUTABLE.to_string());
-                full_command.append(&mut args);
-                (full_command, seatbelt_env, None)
-            }
-            #[cfg(not(target_os = "macos"))]
-            SandboxType::MacosSeatbelt => return Err(SandboxTransformError::SeatbeltUnavailable),
-            SandboxType::LinuxSeccomp => {
-                let exe = codex_linux_sandbox_exe
-                    .ok_or(SandboxTransformError::MissingLinuxSandboxExecutable)?;
-                let mut args =
-                    create_linux_sandbox_command_args(command.clone(), policy, sandbox_policy_cwd);
-                let mut full_command = Vec::with_capacity(1 + args.len());
-                full_command.push(exe.to_string_lossy().to_string());
-                full_command.append(&mut args);
-                (
-                    full_command,
-                    HashMap::new(),
-                    Some("codex-linux-sandbox".to_string()),
-                )
-            }
-            // On Windows, the restricted token sandbox executes in-process via the
-            // codex-windows-sandbox crate. We leave the command unchanged here and
-            // branch during execution based on the sandbox type.
-            #[cfg(target_os = "windows")]
-            SandboxType::WindowsRestrictedToken => (command, HashMap::new(), None),
-            // When building for non-Windows targets, this variant is never constructed.
-            #[cfg(not(target_os = "windows"))]
-            SandboxType::WindowsRestrictedToken => (command, HashMap::new(), None),
-        };
-
-        env.extend(sandbox_env);
-
-        Ok(ExecEnv {
+        #[cfg(target_os = "macos")]
+        if sandbox == SandboxType::MacosSeatbelt {
+            env.insert(CODEX_SANDBOX_ENV_VAR.to_string(), "seatbelt".to_string());
+        }
+        Self {
             command,
-            cwd: spec.cwd,
+            cwd,
             env,
-            expiration: spec.expiration,
+            exec_server_env_config: None,
+            network,
+            expiration,
+            capture_policy,
             sandbox,
-            sandbox_permissions: spec.sandbox_permissions,
-            justification: spec.justification,
-            arg0: arg0_override,
-        })
-    }
-
-    pub fn denied(&self, sandbox: SandboxType, out: &ExecToolCallOutput) -> bool {
-        crate::exec::is_likely_sandbox_denied(sandbox, out)
+            windows_sandbox_policy_cwd,
+            windows_sandbox_workspace_roots,
+            windows_sandbox_level,
+            windows_sandbox_private_desktop,
+            permission_profile,
+            file_system_sandbox_policy,
+            network_sandbox_policy,
+            windows_sandbox_filesystem_overrides: None,
+            arg0,
+        }
     }
 }
 
 pub async fn execute_env(
-    env: ExecEnv,
-    policy: &SandboxPolicy,
+    exec_request: ExecRequest,
     stdout_stream: Option<StdoutStream>,
-) -> crate::error::Result<ExecToolCallOutput> {
-    execute_exec_env(env, policy, stdout_stream).await
+) -> codex_protocol::error::Result<ExecToolCallOutput> {
+    execute_exec_request(exec_request, stdout_stream, /*after_spawn*/ None).await
+}
+
+pub async fn execute_exec_request_with_after_spawn(
+    exec_request: ExecRequest,
+    stdout_stream: Option<StdoutStream>,
+    after_spawn: Option<Box<dyn FnOnce() + Send>>,
+) -> codex_protocol::error::Result<ExecToolCallOutput> {
+    execute_exec_request(exec_request, stdout_stream, after_spawn).await
 }

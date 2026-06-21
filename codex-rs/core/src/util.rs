@@ -3,13 +3,86 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use rand::Rng;
-use tracing::debug;
 use tracing::error;
 
 const INITIAL_DELAY_MS: u64 = 200;
 const BACKOFF_FACTOR: f64 = 2.0;
 
-pub(crate) fn backoff(attempt: u64) -> Duration {
+/// Emit structured feedback metadata as key/value pairs.
+///
+/// This logs a tracing event with `target: "feedback_tags"`. If
+/// `codex_feedback::CodexFeedback::metadata_layer()` is installed, these fields are captured and
+/// later attached as tags when feedback is uploaded.
+///
+/// Values are wrapped with [`tracing::field::DebugValue`], so the expression only needs to
+/// implement [`std::fmt::Debug`].
+///
+/// Example:
+///
+/// ```rust
+/// codex_core::feedback_tags!(model = "gpt-5", cached = true);
+/// codex_core::feedback_tags!(provider = provider_id, request_id = request_id);
+/// ```
+#[macro_export]
+macro_rules! feedback_tags {
+    ($( $key:ident = $value:expr ),+ $(,)?) => {
+        ::tracing::info!(
+            target: "feedback_tags",
+            $( $key = ::tracing::field::debug(&$value) ),+
+        );
+    };
+}
+
+struct Auth401FeedbackSnapshot<'a> {
+    request_id: &'a str,
+    cf_ray: &'a str,
+    error: &'a str,
+    error_code: &'a str,
+}
+
+impl<'a> Auth401FeedbackSnapshot<'a> {
+    fn from_optional_fields(
+        request_id: Option<&'a str>,
+        cf_ray: Option<&'a str>,
+        error: Option<&'a str>,
+        error_code: Option<&'a str>,
+    ) -> Self {
+        Self {
+            request_id: request_id.unwrap_or(""),
+            cf_ray: cf_ray.unwrap_or(""),
+            error: error.unwrap_or(""),
+            error_code: error_code.unwrap_or(""),
+        }
+    }
+}
+
+pub(crate) fn emit_feedback_auth_recovery_tags(
+    auth_recovery_mode: &str,
+    auth_recovery_phase: &str,
+    auth_recovery_outcome: &str,
+    auth_request_id: Option<&str>,
+    auth_cf_ray: Option<&str>,
+    auth_error: Option<&str>,
+    auth_error_code: Option<&str>,
+) {
+    let auth_401 = Auth401FeedbackSnapshot::from_optional_fields(
+        auth_request_id,
+        auth_cf_ray,
+        auth_error,
+        auth_error_code,
+    );
+    feedback_tags!(
+        auth_recovery_mode = auth_recovery_mode,
+        auth_recovery_phase = auth_recovery_phase,
+        auth_recovery_outcome = auth_recovery_outcome,
+        auth_401_request_id = auth_401.request_id,
+        auth_401_cf_ray = auth_401.cf_ray,
+        auth_401_error = auth_401.error,
+        auth_401_error_code = auth_401.error_code
+    );
+}
+
+pub fn backoff(attempt: u64) -> Duration {
     let exp = BACKOFF_FACTOR.powi(attempt.saturating_sub(1) as i32);
     let base = (INITIAL_DELAY_MS as f64 * exp) as u64;
     let jitter = rand::rng().random_range(0.9..1.1);
@@ -24,21 +97,6 @@ pub(crate) fn error_or_panic(message: impl std::string::ToString) {
     }
 }
 
-pub(crate) fn try_parse_error_message(text: &str) -> String {
-    debug!("Parsing server error response: {}", text);
-    let json = serde_json::from_str::<serde_json::Value>(text).unwrap_or_default();
-    if let Some(error) = json.get("error")
-        && let Some(message) = error.get("message")
-        && let Some(message_str) = message.as_str()
-    {
-        return message_str.to_string();
-    }
-    if text.is_empty() {
-        return "Unknown error".to_string();
-    }
-    text.to_string()
-}
-
 pub fn resolve_path(base: &Path, path: &PathBuf) -> PathBuf {
     if path.is_absolute() {
         path.clone()
@@ -47,31 +105,16 @@ pub fn resolve_path(base: &Path, path: &PathBuf) -> PathBuf {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_try_parse_error_message() {
-        let text = r#"{
-  "error": {
-    "message": "Your refresh token has already been used to generate a new access token. Please try signing in again.",
-    "type": "invalid_request_error",
-    "param": null,
-    "code": "refresh_token_reused"
-  }
-}"#;
-        let message = try_parse_error_message(text);
-        assert_eq!(
-            message,
-            "Your refresh token has already been used to generate a new access token. Please try signing in again."
-        );
-    }
-
-    #[test]
-    fn test_try_parse_error_message_no_error() {
-        let text = r#"{"message": "test"}"#;
-        let message = try_parse_error_message(text);
-        assert_eq!(message, r#"{"message": "test"}"#);
+/// Trim a thread name and return `None` if it is empty after trimming.
+pub fn normalize_thread_name(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
+
+#[cfg(test)]
+#[path = "util_tests.rs"]
+mod tests;

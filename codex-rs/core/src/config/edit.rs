@@ -1,18 +1,30 @@
-use crate::config::CONFIG_TOML_FILE;
-use crate::config::types::McpServerConfig;
-use crate::config::types::Notice;
+use crate::path_utils::resolve_symlink_write_paths;
+use crate::path_utils::write_atomically;
 use anyhow::Context;
+use codex_config::CONFIG_TOML_FILE;
+use codex_config::types::McpServerConfig;
+use codex_config::types::SessionPickerViewMode;
+use codex_config::types::ToolSuggestDisabledTool;
+use codex_features::FEATURES;
+use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::openai_models::ReasoningEffort;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
-use tempfile::NamedTempFile;
 use tokio::task;
+use toml_edit::ArrayOfTables;
 use toml_edit::DocumentMut;
 use toml_edit::Item as TomlItem;
 use toml_edit::Table as TomlTable;
 use toml_edit::value;
+
+const NOTICE_TABLE_KEY: &str = "notice";
+
+mod document_helpers;
 
 /// Discrete config mutations supported by the persistence engine.
 #[derive(Clone, Debug)]
@@ -22,20 +34,36 @@ pub enum ConfigEdit {
         model: Option<String>,
         effort: Option<ReasoningEffort>,
     },
+    /// Update the service tier preference for future turns.
+    SetServiceTier { service_tier: Option<String> },
+    /// Update the active (or default) model personality.
+    SetModelPersonality { personality: Option<Personality> },
     /// Toggle the acknowledgement flag under `[notice]`.
     SetNoticeHideFullAccessWarning(bool),
     /// Toggle the Windows world-writable directories warning acknowledgement flag.
     SetNoticeHideWorldWritableWarning(bool),
     /// Toggle the rate limit model nudge acknowledgement flag.
     SetNoticeHideRateLimitModelNudge(bool),
-    /// Toggle the Windows onboarding acknowledgement flag.
-    SetWindowsWslSetupAcknowledged(bool),
     /// Toggle the model migration prompt acknowledgement flag.
     SetNoticeHideModelMigrationPrompt(String, bool),
+    /// Toggle the home external config migration prompt acknowledgement flag.
+    SetNoticeHideExternalConfigMigrationPromptHome(bool),
+    /// Record when the home external config migration prompt was last shown.
+    SetNoticeExternalConfigMigrationPromptHomeLastPromptedAt(i64),
+    /// Toggle the project external config migration prompt acknowledgement flag.
+    SetNoticeHideExternalConfigMigrationPromptProject(String, bool),
+    /// Record when the project external config migration prompt was last shown.
+    SetNoticeExternalConfigMigrationPromptProjectLastPromptedAt(String, i64),
     /// Record that a migration prompt was shown for an old->new model mapping.
     RecordModelMigrationSeen { from: String, to: String },
     /// Replace the entire `[mcp_servers]` table.
     ReplaceMcpServers(BTreeMap<String, McpServerConfig>),
+    /// Add a disabled tool suggestion under `[tool_suggest].disabled_tools`.
+    AddToolSuggestDisabledTool(ToolSuggestDisabledTool),
+    /// Set or clear a skill config entry under `[[skills.config]]` by path.
+    SetSkillConfig { path: PathBuf, enabled: bool },
+    /// Set or clear a skill config entry under `[[skills.config]]` by name.
+    SetSkillConfigByName { name: String, enabled: bool },
     /// Set trust_level under `[projects."<path>"]`,
     /// migrating inline tables to explicit tables.
     SetProjectTrustLevel { path: PathBuf, level: TrustLevel },
@@ -48,196 +76,132 @@ pub enum ConfigEdit {
     ClearPath { segments: Vec<String> },
 }
 
-// TODO(jif) move to a dedicated file
-mod document_helpers {
-    use crate::config::types::McpServerConfig;
-    use crate::config::types::McpServerTransportConfig;
-    use toml_edit::Array as TomlArray;
-    use toml_edit::InlineTable;
-    use toml_edit::Item as TomlItem;
-    use toml_edit::Table as TomlTable;
-    use toml_edit::value;
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SkillConfigSelector {
+    Name(String),
+    Path(PathBuf),
+}
 
-    pub(super) fn ensure_table_for_write(item: &mut TomlItem) -> Option<&mut TomlTable> {
-        match item {
-            TomlItem::Table(table) => Some(table),
-            TomlItem::Value(value) => {
-                if let Some(inline) = value.as_inline_table() {
-                    *item = TomlItem::Table(table_from_inline(inline));
-                    item.as_table_mut()
-                } else {
-                    *item = TomlItem::Table(new_implicit_table());
-                    item.as_table_mut()
-                }
-            }
-            TomlItem::None => {
-                *item = TomlItem::Table(new_implicit_table());
-                item.as_table_mut()
-            }
-            _ => None,
-        }
+/// Produces a config edit that sets `[tui].theme = "<name>"`.
+pub fn syntax_theme_edit(name: &str) -> ConfigEdit {
+    ConfigEdit::SetPath {
+        segments: vec!["tui".to_string(), "theme".to_string()],
+        value: value(name.to_string()),
     }
+}
 
-    pub(super) fn ensure_table_for_read(item: &mut TomlItem) -> Option<&mut TomlTable> {
-        match item {
-            TomlItem::Table(table) => Some(table),
-            TomlItem::Value(value) => {
-                let inline = value.as_inline_table()?;
-                *item = TomlItem::Table(table_from_inline(inline));
-                item.as_table_mut()
-            }
-            _ => None,
-        }
+/// Produces a config edit that sets [tui].pet = "<name>".
+pub fn tui_pet_edit(name: &str) -> ConfigEdit {
+    ConfigEdit::SetPath {
+        segments: vec!["tui".to_string(), "pet".to_string()],
+        value: value(name.to_string()),
     }
+}
 
-    fn serialize_mcp_server_table(config: &McpServerConfig) -> TomlTable {
-        let mut entry = TomlTable::new();
-        entry.set_implicit(false);
-
-        match &config.transport {
-            McpServerTransportConfig::Stdio {
-                command,
-                args,
-                env,
-                env_vars,
-                cwd,
-            } => {
-                entry["command"] = value(command.clone());
-                if !args.is_empty() {
-                    entry["args"] = array_from_iter(args.iter().cloned());
-                }
-                if let Some(env) = env
-                    && !env.is_empty()
-                {
-                    entry["env"] = table_from_pairs(env.iter());
-                }
-                if !env_vars.is_empty() {
-                    entry["env_vars"] = array_from_iter(env_vars.iter().cloned());
-                }
-                if let Some(cwd) = cwd {
-                    entry["cwd"] = value(cwd.to_string_lossy().to_string());
-                }
-            }
-            McpServerTransportConfig::StreamableHttp {
-                url,
-                bearer_token_env_var,
-                http_headers,
-                env_http_headers,
-            } => {
-                entry["url"] = value(url.clone());
-                if let Some(env_var) = bearer_token_env_var {
-                    entry["bearer_token_env_var"] = value(env_var.clone());
-                }
-                if let Some(headers) = http_headers
-                    && !headers.is_empty()
-                {
-                    entry["http_headers"] = table_from_pairs(headers.iter());
-                }
-                if let Some(headers) = env_http_headers
-                    && !headers.is_empty()
-                {
-                    entry["env_http_headers"] = table_from_pairs(headers.iter());
-                }
-            }
-        }
-
-        if !config.enabled {
-            entry["enabled"] = value(false);
-        }
-        if let Some(timeout) = config.startup_timeout_sec {
-            entry["startup_timeout_sec"] = value(timeout.as_secs_f64());
-        }
-        if let Some(timeout) = config.tool_timeout_sec {
-            entry["tool_timeout_sec"] = value(timeout.as_secs_f64());
-        }
-        if let Some(enabled_tools) = &config.enabled_tools
-            && !enabled_tools.is_empty()
-        {
-            entry["enabled_tools"] = array_from_iter(enabled_tools.iter().cloned());
-        }
-        if let Some(disabled_tools) = &config.disabled_tools
-            && !disabled_tools.is_empty()
-        {
-            entry["disabled_tools"] = array_from_iter(disabled_tools.iter().cloned());
-        }
-
-        entry
+/// Produces a config edit that sets `[tui].session_picker_view = "<mode>"`.
+pub fn session_picker_view_edit(mode: SessionPickerViewMode) -> ConfigEdit {
+    ConfigEdit::SetPath {
+        segments: vec!["tui".to_string(), "session_picker_view".to_string()],
+        value: value(mode.to_string()),
     }
+}
 
-    pub(super) fn serialize_mcp_server(config: &McpServerConfig) -> TomlItem {
-        TomlItem::Table(serialize_mcp_server_table(config))
+/// Produces a config edit that sets `[tui].status_line` to an explicit ordered list.
+///
+/// The array is written even when it is empty so "hide the status line" stays
+/// distinct from "unset, so use defaults".
+pub fn status_line_items_edit(items: &[String]) -> ConfigEdit {
+    let array = items.iter().cloned().collect::<toml_edit::Array>();
+
+    ConfigEdit::SetPath {
+        segments: vec!["tui".to_string(), "status_line".to_string()],
+        value: TomlItem::Value(array.into()),
     }
+}
 
-    pub(super) fn serialize_mcp_server_inline(config: &McpServerConfig) -> InlineTable {
-        serialize_mcp_server_table(config).into_inline_table()
+/// Produces a config edit that sets `[tui].status_line_use_colors`.
+pub fn status_line_use_colors_edit(enabled: bool) -> ConfigEdit {
+    ConfigEdit::SetPath {
+        segments: vec!["tui".to_string(), "status_line_use_colors".to_string()],
+        value: value(enabled),
     }
+}
 
-    pub(super) fn merge_inline_table(existing: &mut InlineTable, replacement: InlineTable) {
-        existing.retain(|key, _| replacement.get(key).is_some());
+/// Produces a config edit that sets `[tui].terminal_title` to an explicit ordered list.
+///
+/// The array is written even when it is empty so "disabled title updates" stays
+/// distinct from "unset, so use defaults".
+pub fn terminal_title_items_edit(items: &[String]) -> ConfigEdit {
+    let array = items.iter().cloned().collect::<toml_edit::Array>();
 
-        for (key, value) in replacement.iter() {
-            if let Some(existing_value) = existing.get_mut(key) {
-                let mut updated_value = value.clone();
-                *updated_value.decor_mut() = existing_value.decor().clone();
-                *existing_value = updated_value;
-            } else {
-                existing.insert(key.to_string(), value.clone());
-            }
-        }
+    ConfigEdit::SetPath {
+        segments: vec!["tui".to_string(), "terminal_title".to_string()],
+        value: TomlItem::Value(array.into()),
     }
+}
 
-    fn table_from_inline(inline: &InlineTable) -> TomlTable {
-        let mut table = new_implicit_table();
-        for (key, value) in inline.iter() {
-            let mut value = value.clone();
-            let decor = value.decor_mut();
-            decor.set_suffix("");
-            table.insert(key, TomlItem::Value(value));
-        }
-        table
-    }
-
-    pub(super) fn new_implicit_table() -> TomlTable {
-        let mut table = TomlTable::new();
-        table.set_implicit(true);
-        table
-    }
-
-    fn array_from_iter<I>(iter: I) -> TomlItem
-    where
-        I: Iterator<Item = String>,
-    {
-        let mut array = TomlArray::new();
-        for value in iter {
-            array.push(value);
-        }
+fn keymap_binding_value(keys: &[String]) -> TomlItem {
+    if let [key] = keys {
+        value(key.to_string())
+    } else {
+        let array = keys.iter().cloned().collect::<toml_edit::Array>();
         TomlItem::Value(array.into())
     }
+}
 
-    fn table_from_pairs<'a, I>(pairs: I) -> TomlItem
-    where
-        I: IntoIterator<Item = (&'a String, &'a String)>,
-    {
-        let mut entries: Vec<_> = pairs.into_iter().collect();
-        entries.sort_by(|(a, _), (b, _)| a.cmp(b));
-        let mut table = TomlTable::new();
-        table.set_implicit(false);
-        for (key, val) in entries {
-            table.insert(key, value(val.clone()));
-        }
-        TomlItem::Table(table)
+/// Produces a config edit that replaces one root-level TUI keymap binding list.
+pub fn keymap_bindings_edit(context: &str, action: &str, keys: &[String]) -> ConfigEdit {
+    ConfigEdit::SetPath {
+        segments: vec![
+            "tui".to_string(),
+            "keymap".to_string(),
+            context.to_string(),
+            action.to_string(),
+        ],
+        value: keymap_binding_value(keys),
     }
+}
+
+/// Produces a config edit that replaces one root-level TUI keymap binding.
+pub fn keymap_binding_edit(context: &str, action: &str, key: &str) -> ConfigEdit {
+    keymap_bindings_edit(context, action, &[key.to_string()])
+}
+
+/// Produces a config edit that removes one root-level TUI keymap binding.
+pub fn keymap_binding_clear_edit(context: &str, action: &str) -> ConfigEdit {
+    ConfigEdit::ClearPath {
+        segments: vec![
+            "tui".to_string(),
+            "keymap".to_string(),
+            context.to_string(),
+            action.to_string(),
+        ],
+    }
+}
+
+pub fn model_availability_nux_count_edits(shown_count: &HashMap<String, u32>) -> Vec<ConfigEdit> {
+    let mut shown_count_entries: Vec<_> = shown_count.iter().collect();
+    shown_count_entries.sort_unstable_by_key(|(left, _)| *left);
+
+    let mut edits = vec![ConfigEdit::ClearPath {
+        segments: vec!["tui".to_string(), "model_availability_nux".to_string()],
+    }];
+    for (model_slug, count) in shown_count_entries {
+        edits.push(ConfigEdit::SetPath {
+            segments: vec![
+                "tui".to_string(),
+                "model_availability_nux".to_string(),
+                model_slug.clone(),
+            ],
+            value: value(i64::from(*count)),
+        });
+    }
+
+    edits
 }
 
 struct ConfigDocument {
     doc: DocumentMut,
-    profile: Option<String>,
-}
-
-#[derive(Copy, Clone)]
-enum Scope {
-    Global,
-    Profile,
 }
 
 #[derive(Copy, Clone)]
@@ -247,57 +211,116 @@ enum TraversalMode {
 }
 
 impl ConfigDocument {
-    fn new(doc: DocumentMut, profile: Option<String>) -> Self {
-        Self { doc, profile }
+    fn new(doc: DocumentMut) -> Self {
+        Self { doc }
     }
 
     fn apply(&mut self, edit: &ConfigEdit) -> anyhow::Result<bool> {
         match edit {
             ConfigEdit::SetModel { model, effort } => Ok({
                 let mut mutated = false;
-                mutated |= self.write_profile_value(
+                mutated |= self.write_optional_value(
                     &["model"],
                     model.as_ref().map(|model_value| value(model_value.clone())),
                 );
-                mutated |= self.write_profile_value(
+                mutated |= self.write_optional_value(
                     &["model_reasoning_effort"],
-                    effort.map(|effort| value(effort.to_string())),
+                    effort.as_ref().map(|effort| value(effort.to_string())),
                 );
                 mutated
             }),
+            ConfigEdit::SetServiceTier { service_tier } => Ok(self.write_optional_value(
+                &["service_tier"],
+                service_tier.as_ref().map(|service_tier| {
+                    // Keep the legacy config spelling stable. Runtime values use
+                    // `priority`, but config.toml continues to store it as `fast`.
+                    let config_value = match ServiceTier::from_request_value(service_tier) {
+                        Some(ServiceTier::Fast) => "fast",
+                        Some(ServiceTier::Flex) => "flex",
+                        None => service_tier.as_str(),
+                    };
+                    value(config_value)
+                }),
+            )),
+            ConfigEdit::SetModelPersonality { personality } => Ok(self.write_optional_value(
+                &["personality"],
+                personality.map(|personality| value(personality.to_string())),
+            )),
             ConfigEdit::SetNoticeHideFullAccessWarning(acknowledged) => Ok(self.write_value(
-                Scope::Global,
-                &[Notice::TABLE_KEY, "hide_full_access_warning"],
+                &[NOTICE_TABLE_KEY, "hide_full_access_warning"],
                 value(*acknowledged),
             )),
             ConfigEdit::SetNoticeHideWorldWritableWarning(acknowledged) => Ok(self.write_value(
-                Scope::Global,
-                &[Notice::TABLE_KEY, "hide_world_writable_warning"],
+                &[NOTICE_TABLE_KEY, "hide_world_writable_warning"],
                 value(*acknowledged),
             )),
             ConfigEdit::SetNoticeHideRateLimitModelNudge(acknowledged) => Ok(self.write_value(
-                Scope::Global,
-                &[Notice::TABLE_KEY, "hide_rate_limit_model_nudge"],
+                &[NOTICE_TABLE_KEY, "hide_rate_limit_model_nudge"],
                 value(*acknowledged),
             )),
             ConfigEdit::SetNoticeHideModelMigrationPrompt(migration_config, acknowledged) => {
                 Ok(self.write_value(
-                    Scope::Global,
-                    &[Notice::TABLE_KEY, migration_config.as_str()],
+                    &[NOTICE_TABLE_KEY, migration_config.as_str()],
                     value(*acknowledged),
                 ))
             }
-            ConfigEdit::RecordModelMigrationSeen { from, to } => Ok(self.write_value(
-                Scope::Global,
-                &[Notice::TABLE_KEY, "model_migrations", from.as_str()],
-                value(to.clone()),
-            )),
-            ConfigEdit::SetWindowsWslSetupAcknowledged(acknowledged) => Ok(self.write_value(
-                Scope::Global,
-                &["windows_wsl_setup_acknowledged"],
+            ConfigEdit::SetNoticeHideExternalConfigMigrationPromptHome(acknowledged) => Ok(self
+                .write_value(
+                    &[
+                        NOTICE_TABLE_KEY,
+                        "external_config_migration_prompts",
+                        "home",
+                    ],
+                    value(*acknowledged),
+                )),
+            ConfigEdit::SetNoticeExternalConfigMigrationPromptHomeLastPromptedAt(timestamp) => {
+                Ok(self.write_value(
+                    &[
+                        NOTICE_TABLE_KEY,
+                        "external_config_migration_prompts",
+                        "home_last_prompted_at",
+                    ],
+                    value(*timestamp),
+                ))
+            }
+            ConfigEdit::SetNoticeHideExternalConfigMigrationPromptProject(
+                project,
+                acknowledged,
+            ) => Ok(self.write_value(
+                &[
+                    NOTICE_TABLE_KEY,
+                    "external_config_migration_prompts",
+                    "projects",
+                    project.as_str(),
+                ],
                 value(*acknowledged),
             )),
+            ConfigEdit::SetNoticeExternalConfigMigrationPromptProjectLastPromptedAt(
+                project,
+                timestamp,
+            ) => Ok(self.write_value(
+                &[
+                    NOTICE_TABLE_KEY,
+                    "external_config_migration_prompts",
+                    "project_last_prompted_at",
+                    project.as_str(),
+                ],
+                value(*timestamp),
+            )),
+            ConfigEdit::RecordModelMigrationSeen { from, to } => Ok(self.write_value(
+                &[NOTICE_TABLE_KEY, "model_migrations", from.as_str()],
+                value(to.clone()),
+            )),
             ConfigEdit::ReplaceMcpServers(servers) => Ok(self.replace_mcp_servers(servers)),
+            ConfigEdit::AddToolSuggestDisabledTool(disabled_tool) => {
+                Ok(self.add_tool_suggest_disabled_tool(disabled_tool))
+            }
+            ConfigEdit::SetSkillConfig { path, enabled } => {
+                Ok(self.set_skill_config(SkillConfigSelector::Path(path.clone()), *enabled))
+            }
+            ConfigEdit::SetSkillConfigByName { name, enabled } => {
+                Ok(self.set_skill_config(SkillConfigSelector::Name(name.clone()), *enabled))
+            }
             ConfigEdit::SetPath { segments, value } => Ok(self.insert(segments, value.clone())),
             ConfigEdit::ClearPath { segments } => Ok(self.clear_owned(segments)),
             ConfigEdit::SetProjectTrustLevel { path, level } => {
@@ -313,21 +336,61 @@ impl ConfigDocument {
         }
     }
 
-    fn write_profile_value(&mut self, segments: &[&str], value: Option<TomlItem>) -> bool {
+    fn write_optional_value(&mut self, segments: &[&str], value: Option<TomlItem>) -> bool {
         match value {
-            Some(item) => self.write_value(Scope::Profile, segments, item),
-            None => self.clear(Scope::Profile, segments),
+            Some(item) => self.write_value(segments, item),
+            None => self.clear(segments),
         }
     }
 
-    fn write_value(&mut self, scope: Scope, segments: &[&str], value: TomlItem) -> bool {
-        let resolved = self.scoped_segments(scope, segments);
+    fn write_value(&mut self, segments: &[&str], value: TomlItem) -> bool {
+        let resolved = segments
+            .iter()
+            .map(|segment| (*segment).to_string())
+            .collect::<Vec<_>>();
         self.insert(&resolved, value)
     }
 
-    fn clear(&mut self, scope: Scope, segments: &[&str]) -> bool {
-        let resolved = self.scoped_segments(scope, segments);
+    fn clear(&mut self, segments: &[&str]) -> bool {
+        let resolved = segments
+            .iter()
+            .map(|segment| (*segment).to_string())
+            .collect::<Vec<_>>();
         self.remove(&resolved)
+    }
+
+    fn add_tool_suggest_disabled_tool(&mut self, disabled_tool: &ToolSuggestDisabledTool) -> bool {
+        let disabled_tools_item = self
+            .doc
+            .get("tool_suggest")
+            .and_then(|item| item.as_table_like())
+            .and_then(|table| table.get("disabled_tools"));
+        let existing_from_array = disabled_tools_item
+            .and_then(|item| item.as_value())
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flat_map(|array| array.iter())
+            .filter_map(document_helpers::parse_tool_suggest_disabled_tool);
+        let existing_from_tables = disabled_tools_item
+            .and_then(|item| match item {
+                TomlItem::ArrayOfTables(array) => Some(array),
+                _ => None,
+            })
+            .into_iter()
+            .flat_map(|array| array.iter())
+            .filter_map(document_helpers::parse_tool_suggest_disabled_tool_table);
+
+        let mut seen = HashSet::new();
+        let disabled_tools = existing_from_array
+            .chain(existing_from_tables)
+            .chain(std::iter::once(disabled_tool.clone()))
+            .filter_map(|disabled_tool| disabled_tool.normalized())
+            .filter(|disabled_tool| seen.insert(disabled_tool.clone()))
+            .collect::<Vec<_>>();
+        self.write_value(
+            &["tool_suggest", "disabled_tools"],
+            document_helpers::tool_suggest_disabled_tools_value(&disabled_tools),
+        )
     }
 
     fn clear_owned(&mut self, segments: &[String]) -> bool {
@@ -336,7 +399,7 @@ impl ConfigDocument {
 
     fn replace_mcp_servers(&mut self, servers: &BTreeMap<String, McpServerConfig>) -> bool {
         if servers.is_empty() {
-            return self.clear(Scope::Global, &["mcp_servers"]);
+            return self.clear(&["mcp_servers"]);
         }
 
         let root = self.doc.as_table_mut();
@@ -387,24 +450,115 @@ impl ConfigDocument {
         true
     }
 
-    fn scoped_segments(&self, scope: Scope, segments: &[&str]) -> Vec<String> {
-        let resolved: Vec<String> = segments
-            .iter()
-            .map(|segment| (*segment).to_string())
-            .collect();
+    fn set_skill_config(&mut self, selector: SkillConfigSelector, enabled: bool) -> bool {
+        let selector = match selector {
+            SkillConfigSelector::Name(name) => SkillConfigSelector::Name(name.trim().to_string()),
+            SkillConfigSelector::Path(path) => {
+                SkillConfigSelector::Path(PathBuf::from(normalize_skill_config_path(&path)))
+            }
+        };
+        if matches!(&selector, SkillConfigSelector::Name(name) if name.is_empty()) {
+            return false;
+        }
+        let mut remove_skills_table = false;
+        let mut mutated = false;
 
-        if matches!(scope, Scope::Profile)
-            && resolved.first().is_none_or(|segment| segment != "profiles")
-            && let Some(profile) = self.profile.as_deref()
         {
-            let mut scoped = Vec::with_capacity(resolved.len() + 2);
-            scoped.push("profiles".to_string());
-            scoped.push(profile.to_string());
-            scoped.extend(resolved);
-            return scoped;
+            let root = self.doc.as_table_mut();
+            let skills_item = match root.get_mut("skills") {
+                Some(item) => item,
+                None => {
+                    if enabled {
+                        return false;
+                    }
+                    root.insert(
+                        "skills",
+                        TomlItem::Table(document_helpers::new_implicit_table()),
+                    );
+                    let Some(item) = root.get_mut("skills") else {
+                        return false;
+                    };
+                    item
+                }
+            };
+
+            if document_helpers::ensure_table_for_write(skills_item).is_none() {
+                if enabled {
+                    return false;
+                }
+                *skills_item = TomlItem::Table(document_helpers::new_implicit_table());
+            }
+            let Some(skills_table) = skills_item.as_table_mut() else {
+                return false;
+            };
+
+            let config_item = match skills_table.get_mut("config") {
+                Some(item) => item,
+                None => {
+                    if enabled {
+                        return false;
+                    }
+                    skills_table.insert("config", TomlItem::ArrayOfTables(ArrayOfTables::new()));
+                    let Some(item) = skills_table.get_mut("config") else {
+                        return false;
+                    };
+                    item
+                }
+            };
+
+            if !matches!(config_item, TomlItem::ArrayOfTables(_)) {
+                if enabled {
+                    return false;
+                }
+                *config_item = TomlItem::ArrayOfTables(ArrayOfTables::new());
+            }
+
+            let TomlItem::ArrayOfTables(overrides) = config_item else {
+                return false;
+            };
+
+            let existing_index = overrides.iter().enumerate().find_map(|(idx, table)| {
+                skill_config_selector_from_table(table)
+                    .filter(|value| value == &selector)
+                    .map(|_| idx)
+            });
+
+            if enabled {
+                if let Some(index) = existing_index {
+                    overrides.remove(index);
+                    mutated = true;
+                    if overrides.is_empty() {
+                        skills_table.remove("config");
+                        if skills_table.is_empty() {
+                            remove_skills_table = true;
+                        }
+                    }
+                }
+            } else if let Some(index) = existing_index {
+                for (idx, table) in overrides.iter_mut().enumerate() {
+                    if idx == index {
+                        write_skill_config_selector(table, &selector);
+                        table["enabled"] = value(false);
+                        mutated = true;
+                        break;
+                    }
+                }
+            } else {
+                let mut entry = TomlTable::new();
+                entry.set_implicit(false);
+                write_skill_config_selector(&mut entry, &selector);
+                entry["enabled"] = value(false);
+                overrides.push(entry);
+                mutated = true;
+            }
         }
 
-        resolved
+        if remove_skills_table {
+            let root = self.doc.as_table_mut();
+            root.remove("skills");
+        }
+
+        mutated
     }
 
     fn insert(&mut self, segments: &[String], value: TomlItem) -> bool {
@@ -494,21 +648,67 @@ impl ConfigDocument {
     }
 }
 
+fn normalize_skill_config_path(path: &Path) -> String {
+    dunce::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .to_string()
+}
+
+fn skill_config_selector_from_table(table: &TomlTable) -> Option<SkillConfigSelector> {
+    let path = table
+        .get("path")
+        .and_then(|item| item.as_str())
+        .map(Path::new)
+        .map(|path| SkillConfigSelector::Path(PathBuf::from(normalize_skill_config_path(path))));
+    let name = table
+        .get("name")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| SkillConfigSelector::Name(name.to_string()));
+
+    match (path, name) {
+        (Some(selector), None) | (None, Some(selector)) => Some(selector),
+        _ => None,
+    }
+}
+
+fn write_skill_config_selector(table: &mut TomlTable, selector: &SkillConfigSelector) {
+    match selector {
+        SkillConfigSelector::Name(name) => {
+            table.remove("path");
+            table["name"] = value(name.clone());
+        }
+        SkillConfigSelector::Path(path) => {
+            table.remove("name");
+            table["path"] = value(path.to_string_lossy().to_string());
+        }
+    }
+}
+
 /// Persist edits using a blocking strategy.
-pub fn apply_blocking(
-    codex_home: &Path,
-    profile: Option<&str>,
+pub fn apply_blocking(codex_home: &Path, edits: &[ConfigEdit]) -> anyhow::Result<()> {
+    let config_path = codex_home.join(CONFIG_TOML_FILE);
+    apply_blocking_to_resolved_file(&config_path, edits)
+}
+
+fn apply_blocking_to_resolved_file(
+    resolved_config_file: &Path,
     edits: &[ConfigEdit],
 ) -> anyhow::Result<()> {
     if edits.is_empty() {
         return Ok(());
     }
 
-    let config_path = codex_home.join(CONFIG_TOML_FILE);
-    let serialized = match std::fs::read_to_string(&config_path) {
-        Ok(contents) => contents,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(err) => return Err(err.into()),
+    let write_paths = resolve_symlink_write_paths(resolved_config_file)?;
+    let serialized = match write_paths.read_path {
+        Some(path) => match std::fs::read_to_string(&path) {
+            Ok(contents) => contents,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(err) => return Err(err.into()),
+        },
+        None => String::new(),
     };
 
     let doc = if serialized.is_empty() {
@@ -517,13 +717,7 @@ pub fn apply_blocking(
         serialized.parse::<DocumentMut>()?
     };
 
-    let profile = profile.map(ToOwned::to_owned).or_else(|| {
-        doc.get("profile")
-            .and_then(|item| item.as_str())
-            .map(ToOwned::to_owned)
-    });
-
-    let mut document = ConfigDocument::new(doc, profile);
+    let mut document = ConfigDocument::new(doc);
     let mut mutated = false;
 
     for edit in edits {
@@ -534,34 +728,22 @@ pub fn apply_blocking(
         return Ok(());
     }
 
-    std::fs::create_dir_all(codex_home).with_context(|| {
+    write_atomically(&write_paths.write_path, &document.doc.to_string()).with_context(|| {
         format!(
-            "failed to create Codex home directory at {}",
-            codex_home.display()
+            "failed to persist config at {}",
+            write_paths.write_path.display()
         )
     })?;
-
-    let tmp = NamedTempFile::new_in(codex_home)?;
-    std::fs::write(tmp.path(), document.doc.to_string()).with_context(|| {
-        format!(
-            "failed to write temporary config file at {}",
-            tmp.path().display()
-        )
-    })?;
-    tmp.persist(config_path)?;
 
     Ok(())
 }
 
 /// Persist edits asynchronously by offloading the blocking writer.
-pub async fn apply(
-    codex_home: &Path,
-    profile: Option<&str>,
-    edits: Vec<ConfigEdit>,
-) -> anyhow::Result<()> {
+///
+pub async fn apply(codex_home: &Path, edits: Vec<ConfigEdit>) -> anyhow::Result<()> {
     let codex_home = codex_home.to_path_buf();
-    let profile = profile.map(ToOwned::to_owned);
-    task::spawn_blocking(move || apply_blocking(&codex_home, profile.as_deref(), &edits))
+    let config_path = codex_home.join(CONFIG_TOML_FILE);
+    task::spawn_blocking(move || apply_blocking_to_resolved_file(&config_path, &edits))
         .await
         .context("config persistence task panicked")?
 }
@@ -569,23 +751,29 @@ pub async fn apply(
 /// Fluent builder to batch config edits and apply them atomically.
 #[derive(Default)]
 pub struct ConfigEditsBuilder {
-    codex_home: PathBuf,
-    profile: Option<String>,
+    config_path: PathBuf,
     edits: Vec<ConfigEdit>,
 }
 
 impl ConfigEditsBuilder {
     pub fn new(codex_home: &Path) -> Self {
-        Self {
-            codex_home: codex_home.to_path_buf(),
-            profile: None,
-            edits: Vec::new(),
-        }
+        Self::for_config_path(&codex_home.join(CONFIG_TOML_FILE))
     }
 
-    pub fn with_profile(mut self, profile: Option<&str>) -> Self {
-        self.profile = profile.map(ToOwned::to_owned);
-        self
+    pub fn for_config(config: &crate::config::Config) -> Self {
+        let config_path = config
+            .config_layer_stack
+            .get_user_config_file()
+            .map(codex_utils_absolute_path::AbsolutePathBuf::to_path_buf)
+            .unwrap_or_else(|| config.codex_home.join(CONFIG_TOML_FILE).to_path_buf());
+        Self::for_config_path(&config_path)
+    }
+
+    pub fn for_config_path(config_path: &Path) -> Self {
+        Self {
+            config_path: config_path.to_path_buf(),
+            edits: Vec::new(),
+        }
     }
 
     pub fn set_model(mut self, model: Option<&str>, effort: Option<ReasoningEffort>) -> Self {
@@ -593,6 +781,17 @@ impl ConfigEditsBuilder {
             model: model.map(ToOwned::to_owned),
             effort,
         });
+        self
+    }
+
+    pub fn set_service_tier(mut self, service_tier: Option<String>) -> Self {
+        self.edits.push(ConfigEdit::SetServiceTier { service_tier });
+        self
+    }
+
+    pub fn set_personality(mut self, personality: Option<Personality>) -> Self {
+        self.edits
+            .push(ConfigEdit::SetModelPersonality { personality });
         self
     }
 
@@ -623,6 +822,28 @@ impl ConfigEditsBuilder {
         self
     }
 
+    pub fn set_hide_external_config_migration_prompt_home(mut self, acknowledged: bool) -> Self {
+        self.edits
+            .push(ConfigEdit::SetNoticeHideExternalConfigMigrationPromptHome(
+                acknowledged,
+            ));
+        self
+    }
+
+    pub fn set_hide_external_config_migration_prompt_project(
+        mut self,
+        project: &str,
+        acknowledged: bool,
+    ) -> Self {
+        self.edits.push(
+            ConfigEdit::SetNoticeHideExternalConfigMigrationPromptProject(
+                project.to_string(),
+                acknowledged,
+            ),
+        );
+        self
+    }
+
     pub fn record_model_migration_seen(mut self, from: &str, to: &str) -> Self {
         self.edits.push(ConfigEdit::RecordModelMigrationSeen {
             from: from.to_string(),
@@ -631,9 +852,9 @@ impl ConfigEditsBuilder {
         self
     }
 
-    pub fn set_windows_wsl_setup_acknowledged(mut self, acknowledged: bool) -> Self {
+    pub fn set_model_availability_nux_count(mut self, shown_count: &HashMap<String, u32>) -> Self {
         self.edits
-            .push(ConfigEdit::SetWindowsWslSetupAcknowledged(acknowledged));
+            .extend(model_availability_nux_count_edits(shown_count));
         self
     }
 
@@ -656,10 +877,87 @@ impl ConfigEditsBuilder {
     }
 
     /// Enable or disable a feature flag by key under the `[features]` table.
+    ///
+    /// Disabling a default-false feature clears the key instead of
+    /// persisting `false`, so the config does not pin the feature once it
+    /// graduates to globally enabled.
     pub fn set_feature_enabled(mut self, key: &str, enabled: bool) -> Self {
+        let segments = vec!["features".to_string(), key.to_string()];
+        let is_default_false_feature = FEATURES
+            .iter()
+            .find(|spec| spec.key == key)
+            .is_some_and(|spec| !spec.default_enabled);
+        if enabled || !is_default_false_feature {
+            self.edits.push(ConfigEdit::SetPath {
+                segments,
+                value: value(enabled),
+            });
+        } else {
+            self.edits.push(ConfigEdit::ClearPath { segments });
+        }
+        self
+    }
+
+    pub fn set_windows_sandbox_mode(mut self, mode: &str) -> Self {
         self.edits.push(ConfigEdit::SetPath {
-            segments: vec!["features".to_string(), key.to_string()],
-            value: value(enabled),
+            segments: vec!["windows".to_string(), "sandbox".to_string()],
+            value: value(mode),
+        });
+        self
+    }
+
+    pub fn set_realtime_microphone(mut self, microphone: Option<&str>) -> Self {
+        let segments = vec!["audio".to_string(), "microphone".to_string()];
+        match microphone {
+            Some(microphone) => self.edits.push(ConfigEdit::SetPath {
+                segments,
+                value: value(microphone),
+            }),
+            None => self.edits.push(ConfigEdit::ClearPath { segments }),
+        }
+        self
+    }
+
+    pub fn set_realtime_speaker(mut self, speaker: Option<&str>) -> Self {
+        let segments = vec!["audio".to_string(), "speaker".to_string()];
+        match speaker {
+            Some(speaker) => self.edits.push(ConfigEdit::SetPath {
+                segments,
+                value: value(speaker),
+            }),
+            None => self.edits.push(ConfigEdit::ClearPath { segments }),
+        }
+        self
+    }
+
+    pub fn set_realtime_voice(mut self, voice: Option<&str>) -> Self {
+        let segments = vec!["realtime".to_string(), "voice".to_string()];
+        match voice {
+            Some(voice) => self.edits.push(ConfigEdit::SetPath {
+                segments,
+                value: value(voice),
+            }),
+            None => self.edits.push(ConfigEdit::ClearPath { segments }),
+        }
+        self
+    }
+
+    pub fn clear_legacy_windows_sandbox_keys(mut self) -> Self {
+        for key in [
+            "experimental_windows_sandbox",
+            "elevated_windows_sandbox",
+            "enable_experimental_windows_sandbox",
+        ] {
+            let segments = vec!["features".to_string(), key.to_string()];
+            self.edits.push(ConfigEdit::ClearPath { segments });
+        }
+        self
+    }
+
+    pub fn set_session_picker_view(mut self, mode: SessionPickerViewMode) -> Self {
+        self.edits.push(ConfigEdit::SetPath {
+            segments: vec!["tui".to_string(), "session_picker_view".to_string()],
+            value: value(mode.to_string()),
         });
         self
     }
@@ -674,13 +972,13 @@ impl ConfigEditsBuilder {
 
     /// Apply edits on a blocking thread.
     pub fn apply_blocking(self) -> anyhow::Result<()> {
-        apply_blocking(&self.codex_home, self.profile.as_deref(), &self.edits)
+        apply_blocking_to_resolved_file(&self.config_path, &self.edits)
     }
 
     /// Apply edits asynchronously via a blocking offload.
     pub async fn apply(self) -> anyhow::Result<()> {
         task::spawn_blocking(move || {
-            apply_blocking(&self.codex_home, self.profile.as_deref(), &self.edits)
+            apply_blocking_to_resolved_file(&self.config_path, &self.edits)
         })
         .await
         .context("config persistence task panicked")?
@@ -688,812 +986,5 @@ impl ConfigEditsBuilder {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::types::McpServerTransportConfig;
-    use codex_protocol::openai_models::ReasoningEffort;
-    use pretty_assertions::assert_eq;
-    use tempfile::tempdir;
-    use toml::Value as TomlValue;
-
-    #[test]
-    fn blocking_set_model_top_level() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::SetModel {
-                model: Some("gpt-5.1-codex".to_string()),
-                effort: Some(ReasoningEffort::High),
-            }],
-        )
-        .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"model = "gpt-5.1-codex"
-model_reasoning_effort = "high"
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn builder_with_edits_applies_custom_paths() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-
-        ConfigEditsBuilder::new(codex_home)
-            .with_edits(vec![ConfigEdit::SetPath {
-                segments: vec!["enabled".to_string()],
-                value: value(true),
-            }])
-            .apply_blocking()
-            .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        assert_eq!(contents, "enabled = true\n");
-    }
-
-    #[test]
-    fn blocking_set_model_preserves_inline_table_contents() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-
-        // Seed with inline tables for profiles to simulate common user config.
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"profile = "fast"
-
-profiles = { fast = { model = "gpt-4o", sandbox_mode = "strict" } }
-"#,
-        )
-        .expect("seed");
-
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::SetModel {
-                model: Some("o4-mini".to_string()),
-                effort: None,
-            }],
-        )
-        .expect("persist");
-
-        let raw = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let value: TomlValue = toml::from_str(&raw).expect("parse config");
-
-        // Ensure sandbox_mode is preserved under profiles.fast and model updated.
-        let profiles_tbl = value
-            .get("profiles")
-            .and_then(|v| v.as_table())
-            .expect("profiles table");
-        let fast_tbl = profiles_tbl
-            .get("fast")
-            .and_then(|v| v.as_table())
-            .expect("fast table");
-        assert_eq!(
-            fast_tbl.get("sandbox_mode").and_then(|v| v.as_str()),
-            Some("strict")
-        );
-        assert_eq!(
-            fast_tbl.get("model").and_then(|v| v.as_str()),
-            Some("o4-mini")
-        );
-    }
-
-    #[test]
-    fn batch_write_table_upsert_preserves_inline_comments() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        let original = r#"approval_policy = "never"
-
-[mcp_servers.linear]
-name = "linear"
-# ok
-url = "https://linear.example"
-
-[mcp_servers.linear.http_headers]
-foo = "bar"
-
-[sandbox_workspace_write]
-# ok 3
-network_access = false
-"#;
-        std::fs::write(codex_home.join(CONFIG_TOML_FILE), original).expect("seed config");
-
-        apply_blocking(
-            codex_home,
-            None,
-            &[
-                ConfigEdit::SetPath {
-                    segments: vec![
-                        "mcp_servers".to_string(),
-                        "linear".to_string(),
-                        "url".to_string(),
-                    ],
-                    value: value("https://linear.example/v2"),
-                },
-                ConfigEdit::SetPath {
-                    segments: vec![
-                        "sandbox_workspace_write".to_string(),
-                        "network_access".to_string(),
-                    ],
-                    value: value(true),
-                },
-            ],
-        )
-        .expect("apply");
-
-        let updated =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"approval_policy = "never"
-
-[mcp_servers.linear]
-name = "linear"
-# ok
-url = "https://linear.example/v2"
-
-[mcp_servers.linear.http_headers]
-foo = "bar"
-
-[sandbox_workspace_write]
-# ok 3
-network_access = true
-"#;
-        assert_eq!(updated, expected);
-    }
-
-    #[test]
-    fn blocking_clear_model_removes_inline_table_entry() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"profile = "fast"
-
-profiles = { fast = { model = "gpt-4o", sandbox_mode = "strict" } }
-"#,
-        )
-        .expect("seed");
-
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::SetModel {
-                model: None,
-                effort: Some(ReasoningEffort::High),
-            }],
-        )
-        .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"profile = "fast"
-
-[profiles.fast]
-sandbox_mode = "strict"
-model_reasoning_effort = "high"
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_set_model_scopes_to_active_profile() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"profile = "team"
-
-[profiles.team]
-model_reasoning_effort = "low"
-"#,
-        )
-        .expect("seed");
-
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::SetModel {
-                model: Some("o5-preview".to_string()),
-                effort: Some(ReasoningEffort::Minimal),
-            }],
-        )
-        .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"profile = "team"
-
-[profiles.team]
-model_reasoning_effort = "minimal"
-model = "o5-preview"
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_set_model_with_explicit_profile() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"[profiles."team a"]
-model = "gpt-5.1-codex"
-"#,
-        )
-        .expect("seed");
-
-        apply_blocking(
-            codex_home,
-            Some("team a"),
-            &[ConfigEdit::SetModel {
-                model: Some("o4-mini".to_string()),
-                effort: None,
-            }],
-        )
-        .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"[profiles."team a"]
-model = "o4-mini"
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_set_hide_full_access_warning_preserves_table() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"# Global comment
-
-[notice]
-# keep me
-existing = "value"
-"#,
-        )
-        .expect("seed");
-
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::SetNoticeHideFullAccessWarning(true)],
-        )
-        .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"# Global comment
-
-[notice]
-# keep me
-existing = "value"
-hide_full_access_warning = true
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_set_hide_rate_limit_model_nudge_preserves_table() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"[notice]
-existing = "value"
-"#,
-        )
-        .expect("seed");
-
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::SetNoticeHideRateLimitModelNudge(true)],
-        )
-        .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"[notice]
-existing = "value"
-hide_rate_limit_model_nudge = true
-"#;
-        assert_eq!(contents, expected);
-    }
-    #[test]
-    fn blocking_set_hide_gpt5_1_migration_prompt_preserves_table() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"[notice]
-existing = "value"
-"#,
-        )
-        .expect("seed");
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::SetNoticeHideModelMigrationPrompt(
-                "hide_gpt5_1_migration_prompt".to_string(),
-                true,
-            )],
-        )
-        .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"[notice]
-existing = "value"
-hide_gpt5_1_migration_prompt = true
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_set_hide_gpt_5_1_codex_max_migration_prompt_preserves_table() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"[notice]
-existing = "value"
-"#,
-        )
-        .expect("seed");
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::SetNoticeHideModelMigrationPrompt(
-                "hide_gpt-5.1-codex-max_migration_prompt".to_string(),
-                true,
-            )],
-        )
-        .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"[notice]
-existing = "value"
-"hide_gpt-5.1-codex-max_migration_prompt" = true
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_record_model_migration_seen_preserves_table() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"[notice]
-existing = "value"
-"#,
-        )
-        .expect("seed");
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::RecordModelMigrationSeen {
-                from: "gpt-5".to_string(),
-                to: "gpt-5.1".to_string(),
-            }],
-        )
-        .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"[notice]
-existing = "value"
-
-[notice.model_migrations]
-gpt-5 = "gpt-5.1"
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_replace_mcp_servers_round_trips() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-
-        let mut servers = BTreeMap::new();
-        servers.insert(
-            "stdio".to_string(),
-            McpServerConfig {
-                transport: McpServerTransportConfig::Stdio {
-                    command: "cmd".to_string(),
-                    args: vec!["--flag".to_string()],
-                    env: Some(
-                        [
-                            ("B".to_string(), "2".to_string()),
-                            ("A".to_string(), "1".to_string()),
-                        ]
-                        .into_iter()
-                        .collect(),
-                    ),
-                    env_vars: vec!["FOO".to_string()],
-                    cwd: None,
-                },
-                enabled: true,
-                startup_timeout_sec: None,
-                tool_timeout_sec: None,
-                enabled_tools: Some(vec!["one".to_string(), "two".to_string()]),
-                disabled_tools: None,
-            },
-        );
-
-        servers.insert(
-            "http".to_string(),
-            McpServerConfig {
-                transport: McpServerTransportConfig::StreamableHttp {
-                    url: "https://example.com".to_string(),
-                    bearer_token_env_var: Some("TOKEN".to_string()),
-                    http_headers: Some(
-                        [("Z-Header".to_string(), "z".to_string())]
-                            .into_iter()
-                            .collect(),
-                    ),
-                    env_http_headers: None,
-                },
-                enabled: false,
-                startup_timeout_sec: Some(std::time::Duration::from_secs(5)),
-                tool_timeout_sec: None,
-                enabled_tools: None,
-                disabled_tools: Some(vec!["forbidden".to_string()]),
-            },
-        );
-
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::ReplaceMcpServers(servers.clone())],
-        )
-        .expect("persist");
-
-        let raw = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = "\
-[mcp_servers.http]
-url = \"https://example.com\"
-bearer_token_env_var = \"TOKEN\"
-enabled = false
-startup_timeout_sec = 5.0
-disabled_tools = [\"forbidden\"]
-
-[mcp_servers.http.http_headers]
-Z-Header = \"z\"
-
-[mcp_servers.stdio]
-command = \"cmd\"
-args = [\"--flag\"]
-env_vars = [\"FOO\"]
-enabled_tools = [\"one\", \"two\"]
-
-[mcp_servers.stdio.env]
-A = \"1\"
-B = \"2\"
-";
-        assert_eq!(raw, expected);
-    }
-
-    #[test]
-    fn blocking_replace_mcp_servers_preserves_inline_comments() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"[mcp_servers]
-# keep me
-foo = { command = "cmd" }
-"#,
-        )
-        .expect("seed");
-
-        let mut servers = BTreeMap::new();
-        servers.insert(
-            "foo".to_string(),
-            McpServerConfig {
-                transport: McpServerTransportConfig::Stdio {
-                    command: "cmd".to_string(),
-                    args: Vec::new(),
-                    env: None,
-                    env_vars: Vec::new(),
-                    cwd: None,
-                },
-                enabled: true,
-                startup_timeout_sec: None,
-                tool_timeout_sec: None,
-                enabled_tools: None,
-                disabled_tools: None,
-            },
-        );
-
-        apply_blocking(codex_home, None, &[ConfigEdit::ReplaceMcpServers(servers)])
-            .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"[mcp_servers]
-# keep me
-foo = { command = "cmd" }
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_replace_mcp_servers_preserves_inline_comment_suffix() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"[mcp_servers]
-foo = { command = "cmd" } # keep me
-"#,
-        )
-        .expect("seed");
-
-        let mut servers = BTreeMap::new();
-        servers.insert(
-            "foo".to_string(),
-            McpServerConfig {
-                transport: McpServerTransportConfig::Stdio {
-                    command: "cmd".to_string(),
-                    args: Vec::new(),
-                    env: None,
-                    env_vars: Vec::new(),
-                    cwd: None,
-                },
-                enabled: false,
-                startup_timeout_sec: None,
-                tool_timeout_sec: None,
-                enabled_tools: None,
-                disabled_tools: None,
-            },
-        );
-
-        apply_blocking(codex_home, None, &[ConfigEdit::ReplaceMcpServers(servers)])
-            .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"[mcp_servers]
-foo = { command = "cmd" , enabled = false } # keep me
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_replace_mcp_servers_preserves_inline_comment_after_removing_keys() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"[mcp_servers]
-foo = { command = "cmd", args = ["--flag"] } # keep me
-"#,
-        )
-        .expect("seed");
-
-        let mut servers = BTreeMap::new();
-        servers.insert(
-            "foo".to_string(),
-            McpServerConfig {
-                transport: McpServerTransportConfig::Stdio {
-                    command: "cmd".to_string(),
-                    args: Vec::new(),
-                    env: None,
-                    env_vars: Vec::new(),
-                    cwd: None,
-                },
-                enabled: true,
-                startup_timeout_sec: None,
-                tool_timeout_sec: None,
-                enabled_tools: None,
-                disabled_tools: None,
-            },
-        );
-
-        apply_blocking(codex_home, None, &[ConfigEdit::ReplaceMcpServers(servers)])
-            .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"[mcp_servers]
-foo = { command = "cmd"} # keep me
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_replace_mcp_servers_preserves_inline_comment_prefix_on_update() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            r#"[mcp_servers]
-# keep me
-foo = { command = "cmd" }
-"#,
-        )
-        .expect("seed");
-
-        let mut servers = BTreeMap::new();
-        servers.insert(
-            "foo".to_string(),
-            McpServerConfig {
-                transport: McpServerTransportConfig::Stdio {
-                    command: "cmd".to_string(),
-                    args: Vec::new(),
-                    env: None,
-                    env_vars: Vec::new(),
-                    cwd: None,
-                },
-                enabled: false,
-                startup_timeout_sec: None,
-                tool_timeout_sec: None,
-                enabled_tools: None,
-                disabled_tools: None,
-            },
-        );
-
-        apply_blocking(codex_home, None, &[ConfigEdit::ReplaceMcpServers(servers)])
-            .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"[mcp_servers]
-# keep me
-foo = { command = "cmd" , enabled = false }
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_clear_path_noop_when_missing() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::ClearPath {
-                segments: vec!["missing".to_string()],
-            }],
-        )
-        .expect("apply");
-
-        assert!(
-            !codex_home.join(CONFIG_TOML_FILE).exists(),
-            "config.toml should not be created on noop"
-        );
-    }
-
-    #[test]
-    fn blocking_set_path_updates_notifications() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-
-        let item = value(false);
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::SetPath {
-                segments: vec!["tui".to_string(), "notifications".to_string()],
-                value: item,
-            }],
-        )
-        .expect("apply");
-
-        let raw = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let config: TomlValue = toml::from_str(&raw).expect("parse config");
-        let notifications = config
-            .get("tui")
-            .and_then(|item| item.as_table())
-            .and_then(|tbl| tbl.get("notifications"))
-            .and_then(toml::Value::as_bool);
-        assert_eq!(notifications, Some(false));
-    }
-
-    #[tokio::test]
-    async fn async_builder_set_model_persists() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path().to_path_buf();
-
-        ConfigEditsBuilder::new(&codex_home)
-            .set_model(Some("gpt-5.1-codex"), Some(ReasoningEffort::High))
-            .apply()
-            .await
-            .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let expected = r#"model = "gpt-5.1-codex"
-model_reasoning_effort = "high"
-"#;
-        assert_eq!(contents, expected);
-    }
-
-    #[test]
-    fn blocking_builder_set_model_round_trips_back_and_forth() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-
-        let initial_expected = r#"model = "o4-mini"
-model_reasoning_effort = "low"
-"#;
-        ConfigEditsBuilder::new(codex_home)
-            .set_model(Some("o4-mini"), Some(ReasoningEffort::Low))
-            .apply_blocking()
-            .expect("persist initial");
-        let mut contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        assert_eq!(contents, initial_expected);
-
-        let updated_expected = r#"model = "gpt-5.1-codex"
-model_reasoning_effort = "high"
-"#;
-        ConfigEditsBuilder::new(codex_home)
-            .set_model(Some("gpt-5.1-codex"), Some(ReasoningEffort::High))
-            .apply_blocking()
-            .expect("persist update");
-        contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        assert_eq!(contents, updated_expected);
-
-        ConfigEditsBuilder::new(codex_home)
-            .set_model(Some("o4-mini"), Some(ReasoningEffort::Low))
-            .apply_blocking()
-            .expect("persist revert");
-        contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        assert_eq!(contents, initial_expected);
-    }
-
-    #[tokio::test]
-    async fn blocking_set_asynchronous_helpers_available() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path().to_path_buf();
-
-        ConfigEditsBuilder::new(&codex_home)
-            .set_hide_full_access_warning(true)
-            .apply()
-            .await
-            .expect("persist");
-
-        let raw = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        let notice = toml::from_str::<TomlValue>(&raw)
-            .expect("parse config")
-            .get("notice")
-            .and_then(|item| item.as_table())
-            .and_then(|tbl| tbl.get("hide_full_access_warning"))
-            .and_then(toml::Value::as_bool);
-        assert_eq!(notice, Some(true));
-    }
-
-    #[test]
-    fn replace_mcp_servers_blocking_clears_table_when_empty() {
-        let tmp = tempdir().expect("tmpdir");
-        let codex_home = tmp.path();
-        std::fs::write(
-            codex_home.join(CONFIG_TOML_FILE),
-            "[mcp_servers]\nfoo = { command = \"cmd\" }\n",
-        )
-        .expect("seed");
-
-        apply_blocking(
-            codex_home,
-            None,
-            &[ConfigEdit::ReplaceMcpServers(BTreeMap::new())],
-        )
-        .expect("persist");
-
-        let contents =
-            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-        assert!(!contents.contains("mcp_servers"));
-    }
-}
+#[path = "edit_tests.rs"]
+mod tests;

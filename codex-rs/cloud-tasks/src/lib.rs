@@ -1,16 +1,18 @@
 mod app;
 mod cli;
-pub mod env_detect;
+pub(crate) mod env_detect;
 mod new_task;
-pub mod scrollable_diff;
+pub(crate) mod scrollable_diff;
 mod ui;
-pub mod util;
+pub(crate) mod util;
 pub use cli::Cli;
 
 use anyhow::anyhow;
 use chrono::Utc;
 use codex_cloud_tasks_client::TaskStatus;
-use codex_login::AuthManager;
+use codex_git_utils::current_branch_name;
+use codex_git_utils::default_branch_name;
+use codex_login::default_client::get_codex_user_agent;
 use owo_colors::OwoColorize;
 use owo_colors::Stream;
 use std::cmp::Ordering;
@@ -39,6 +41,7 @@ struct BackendContext {
 }
 
 async fn init_backend(user_agent_suffix: &str) -> anyhow::Result<BackendContext> {
+    #[cfg(debug_assertions)]
     let use_mock = matches!(
         std::env::var("CODEX_CLOUD_TASKS_MODE").ok().as_deref(),
         Some("mock") | Some("MOCK")
@@ -48,14 +51,15 @@ async fn init_backend(user_agent_suffix: &str) -> anyhow::Result<BackendContext>
 
     set_user_agent_suffix(user_agent_suffix);
 
+    #[cfg(debug_assertions)]
     if use_mock {
         return Ok(BackendContext {
-            backend: Arc::new(codex_cloud_tasks_client::MockClient),
+            backend: Arc::new(codex_cloud_tasks_mock_client::MockClient),
             base_url,
         });
     }
 
-    let ua = codex_core::default_client::get_codex_user_agent();
+    let ua = get_codex_user_agent();
     let mut http = codex_cloud_tasks_client::HttpClient::new(base_url.clone())?.with_user_agent(ua);
     let style = if base_url.contains("/backend-api") {
         "wham"
@@ -64,8 +68,12 @@ async fn init_backend(user_agent_suffix: &str) -> anyhow::Result<BackendContext>
     };
     append_error_log(format!("startup: base_url={base_url} path_style={style}"));
 
-    let auth_manager = util::load_auth_manager().await;
-    let auth = match auth_manager.as_ref().and_then(AuthManager::auth) {
+    let auth_manager = util::load_auth_manager(Some(base_url.clone())).await;
+    let auth = match auth_manager.as_ref() {
+        Some(manager) => manager.auth().await,
+        None => None,
+    };
+    let auth = match auth {
         Some(auth) => auth,
         None => {
             eprintln!(
@@ -79,23 +87,17 @@ async fn init_backend(user_agent_suffix: &str) -> anyhow::Result<BackendContext>
         append_error_log(format!("auth: mode=ChatGPT account_id={acc}"));
     }
 
-    let token = match auth.get_token().await {
-        Ok(t) if !t.is_empty() => t,
-        _ => {
-            eprintln!(
-                "Not signed in. Please run 'codex login' to sign in with ChatGPT, then re-run 'codex cloud'."
-            );
-            std::process::exit(1);
-        }
-    };
+    if !auth.uses_codex_backend() {
+        eprintln!(
+            "Not signed in. Please run 'codex login' to sign in with ChatGPT, then re-run 'codex cloud'."
+        );
+        std::process::exit(1);
+    }
 
-    http = http.with_bearer_token(token.clone());
-    if let Some(acc) = auth
-        .get_account_id()
-        .or_else(|| util::extract_chatgpt_account_id(&token))
-    {
+    let auth_provider = codex_model_provider::auth_provider_from_auth(&auth);
+    http = http.with_auth_provider(auth_provider);
+    if let Some(acc) = auth.get_account_id() {
         append_error_log(format!("auth: set ChatGPT-Account-Id header: {acc}"));
-        http = http.with_chatgpt_account_id(acc);
     }
 
     Ok(BackendContext {
@@ -104,23 +106,27 @@ async fn init_backend(user_agent_suffix: &str) -> anyhow::Result<BackendContext>
     })
 }
 
-#[async_trait::async_trait]
 trait GitInfoProvider {
-    async fn default_branch_name(&self, path: &std::path::Path) -> Option<String>;
+    fn default_branch_name(
+        &self,
+        path: &std::path::Path,
+    ) -> impl std::future::Future<Output = Option<String>> + Send;
 
-    async fn current_branch_name(&self, path: &std::path::Path) -> Option<String>;
+    fn current_branch_name(
+        &self,
+        path: &std::path::Path,
+    ) -> impl std::future::Future<Output = Option<String>> + Send;
 }
 
 struct RealGitInfo;
 
-#[async_trait::async_trait]
 impl GitInfoProvider for RealGitInfo {
     async fn default_branch_name(&self, path: &std::path::Path) -> Option<String> {
-        codex_core::git_info::default_branch_name(path).await
+        default_branch_name(path).await
     }
 
     async fn current_branch_name(&self, path: &std::path::Path) -> Option<String> {
-        codex_core::git_info::current_branch_name(path).await
+        current_branch_name(path).await
     }
 }
 
@@ -168,7 +174,7 @@ async fn run_exec_command(args: crate::cli::ExecCommand) -> anyhow::Result<()> {
         &env_id,
         &prompt,
         &git_ref,
-        false,
+        /*qa_mode*/ false,
         attempts,
     )
     .await?;
@@ -390,11 +396,10 @@ fn summary_line(summary: &codex_cloud_tasks_client::DiffSummary, colorize: bool)
         let bullet = "•"
             .if_supports_color(Stream::Stdout, |t| t.dimmed())
             .to_string();
-        let file_label = "file"
+        let file_label = format!("file{}", if files == 1 { "" } else { "s" })
             .if_supports_color(Stream::Stdout, |t| t.dimmed())
             .to_string();
-        let plural = if files == 1 { "" } else { "s" };
-        format!("{adds_str}/{dels_str}  {bullet}  {files} {file_label}{plural}")
+        format!("{adds_str}/{dels_str}  {bullet}  {files} {file_label}")
     } else {
         format!(
             "+{adds}/-{dels} • {files} file{}",
@@ -470,6 +475,25 @@ fn format_task_status_lines(
     lines
 }
 
+fn format_task_list_lines(
+    tasks: &[codex_cloud_tasks_client::TaskSummary],
+    base_url: &str,
+    now: chrono::DateTime<Utc>,
+    colorize: bool,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (idx, task) in tasks.iter().enumerate() {
+        lines.push(util::task_url(base_url, &task.id.0));
+        for line in format_task_status_lines(task, now, colorize) {
+            lines.push(format!("  {line}"));
+        }
+        if idx + 1 < tasks.len() {
+            lines.push(String::new());
+        }
+    }
+    lines
+}
+
 async fn run_status_command(args: crate::cli::StatusCommand) -> anyhow::Result<()> {
     let ctx = init_backend("codex_cloud_tasks_status").await?;
     let task_id = parse_task_id(&args.task_id)?;
@@ -482,6 +506,73 @@ async fn run_status_command(args: crate::cli::StatusCommand) -> anyhow::Result<(
     }
     if !matches!(summary.status, TaskStatus::Ready) {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+async fn run_list_command(args: crate::cli::ListCommand) -> anyhow::Result<()> {
+    let ctx = init_backend("codex_cloud_tasks_list").await?;
+    let env_filter = if let Some(env) = args.environment {
+        Some(resolve_environment_id(&ctx, &env).await?)
+    } else {
+        None
+    };
+    let page = codex_cloud_tasks_client::CloudBackend::list_tasks(
+        &*ctx.backend,
+        env_filter.as_deref(),
+        Some(args.limit),
+        args.cursor.as_deref(),
+    )
+    .await?;
+    if args.json {
+        let tasks: Vec<_> = page
+            .tasks
+            .iter()
+            .map(|task| {
+                serde_json::json!({
+                    "id": task.id.0,
+                    "url": util::task_url(&ctx.base_url, &task.id.0),
+                    "title": task.title,
+                    "status": task.status,
+                    "updated_at": task.updated_at,
+                    "environment_id": task.environment_id,
+                    "environment_label": task.environment_label,
+                    "summary": {
+                        "files_changed": task.summary.files_changed,
+                        "lines_added": task.summary.lines_added,
+                        "lines_removed": task.summary.lines_removed,
+                    },
+                    "is_review": task.is_review,
+                    "attempt_total": task.attempt_total,
+                })
+            })
+            .collect();
+        let payload = serde_json::json!({
+            "tasks": tasks,
+            "cursor": page.cursor,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+    if page.tasks.is_empty() {
+        println!("No tasks found.");
+        return Ok(());
+    }
+    let now = Utc::now();
+    let colorize = supports_color::on(SupportStream::Stdout).is_some();
+    for line in format_task_list_lines(&page.tasks, &ctx.base_url, now, colorize) {
+        println!("{line}");
+    }
+    if let Some(cursor) = page.cursor {
+        let command = format!("codex cloud list --cursor='{cursor}'");
+        if colorize {
+            println!(
+                "\nTo fetch the next page, run {}",
+                command.if_supports_color(Stream::Stdout, |text| text.cyan())
+            );
+        } else {
+            println!("\nTo fetch the next page, run {command}");
+        }
     }
     Ok(())
 }
@@ -646,6 +737,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
         return match command {
             crate::cli::Command::Exec(args) => run_exec_command(args).await,
             crate::cli::Command::Status(args) => run_status_command(args).await,
+            crate::cli::Command::List(args) => run_list_command(args).await,
             crate::cli::Command::Apply(args) => run_apply_command(args).await,
             crate::cli::Command::Diff(args) => run_diff_command(args).await,
         };
@@ -711,7 +803,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
     append_error_log(format!(
         "startup: wham_force_internal={} ua={}",
         force_internal,
-        codex_core::default_client::get_codex_user_agent()
+        get_codex_user_agent()
     ));
     // Non-blocking initial load so the in-box spinner can animate
     app.status = "Loading tasks…".to_string();
@@ -738,7 +830,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
         let backend = Arc::clone(&backend);
         let tx = tx.clone();
         tokio::spawn(async move {
-            let res = app::load_tasks(&*backend, None).await;
+            let res = app::load_tasks(&*backend, /*env*/ None).await;
             let _ = tx.send(app::AppEvent::TasksLoaded {
                 env: None,
                 result: res,
@@ -772,7 +864,10 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
             let headers = util::build_chatgpt_headers().await;
 
             // Run autodetect. If it fails, we keep using "All".
-            let res = crate::env_detect::autodetect_environment_id(&base_url, &headers, None).await;
+            let res = crate::env_detect::autodetect_environment_id(
+                &base_url, &headers, /*desired_label*/ None,
+            )
+            .await;
             let _ = tx.send(app::AppEvent::EnvironmentAutodetected(res));
         });
     }
@@ -836,7 +931,8 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                 if let Some(page) = app.new_task.as_mut() {
                     if page.composer.flush_paste_burst_if_due() { needs_redraw = true; }
                     if page.composer.is_in_paste_burst() {
-                        let _ = frame_tx.send(Instant::now() + codex_tui::ComposerInput::recommended_flush_delay());
+                        let _ = frame_tx
+                            .send(Instant::now() + codex_tui::ComposerInput::recommended_flush_delay());
                     }
                 }
                 // Keep spinner pulsing only while loading.
@@ -1016,7 +1112,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                 ov.base_can_apply = true;
                                 ov.apply_selection_to_fields();
                             } else {
-                                let mut overlay = app::DiffOverlay::new(id.clone(), title, None);
+                                let mut overlay = app::DiffOverlay::new(id.clone(), title, /*attempt_total_hint*/ None);
                                 {
                                     let base = overlay.base_attempt_mut();
                                     base.diff_lines = diff_lines.clone();
@@ -1089,7 +1185,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                         });
                                     }
                             } else {
-                                let mut overlay = app::DiffOverlay::new(id.clone(), title, None);
+                                let mut overlay = app::DiffOverlay::new(id.clone(), title, /*attempt_total_hint*/ None);
                                 {
                                     let base = overlay.base_attempt_mut();
                                     base.text_lines = conv.clone();
@@ -1127,7 +1223,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                         .as_ref()
                                         .map(|d| d.lines().map(str::to_string).collect())
                                         .unwrap_or_default();
-                                    let text_lines = conversation_lines(None, &attempt.messages);
+                                    let text_lines = conversation_lines(/*prompt*/ None, &attempt.messages);
                                     ov.attempts.push(app::AttemptView {
                                         turn_id: Some(attempt.turn_id.clone()),
                                         status: attempt.status,
@@ -1174,7 +1270,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                 ov.current_view = app::DetailView::Prompt;
                                 ov.apply_selection_to_fields();
                             } else {
-                                let mut overlay = app::DiffOverlay::new(id.clone(), title, None);
+                                let mut overlay = app::DiffOverlay::new(id.clone(), title, /*attempt_total_hint*/ None);
                                 {
                                     let base = overlay.base_attempt_mut();
                                     base.text_lines = pretty;
@@ -1397,7 +1493,9 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                 _ => {
                                     if page.submitting {
                                         // Ignore input while submitting
-                                    } else if let codex_tui::ComposerAction::Submitted(text) = page.composer.input(key) {
+                                    } else if let codex_tui::ComposerAction::Submitted(text) =
+                                        page.composer.input(key)
+                                    {
                                             // Submit only if we have an env id
                                             if let Some(env) = page.env_id.clone() {
                                                 append_error_log(format!(
@@ -1411,9 +1509,9 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                                 let backend = Arc::clone(&backend);
                                                 let best_of_n = page.best_of_n;
                                                 tokio::spawn(async move {
-                                                    let git_ref = resolve_git_ref(None).await;
+                                                    let git_ref = resolve_git_ref(/*branch_override*/ None).await;
 
-                                                    let result = codex_cloud_tasks_client::CloudBackend::create_task(&*backend, &env, &text, &git_ref, false, best_of_n).await;
+                                                    let result = codex_cloud_tasks_client::CloudBackend::create_task(&*backend, &env, &text, &git_ref, /*qa_mode*/ false, best_of_n).await;
                                                     let evt = match result {
                                                         Ok(ok) => app::AppEvent::NewTaskSubmitted(Ok(ok)),
                                                         Err(e) => app::AppEvent::NewTaskSubmitted(Err(format!("{e}"))),
@@ -1427,7 +1525,10 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                     needs_redraw = true;
                                     // If paste‑burst is active, schedule a micro‑flush frame.
                                     if page.composer.is_in_paste_burst() {
-                                        let _ = frame_tx.send(Instant::now() + codex_tui::ComposerInput::recommended_flush_delay());
+                                        let _ = frame_tx.send(
+                                            Instant::now()
+                                                + codex_tui::ComposerInput::recommended_flush_delay(),
+                                        );
                                     }
                                     // Always schedule an immediate redraw for key edits in the composer.
                                     let _ = frame_tx.send(Instant::now());
@@ -1493,7 +1594,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                         let total = ov.attempt_display_total();
                                         let current = ov.selected_attempt + 1;
                                         app.status = format!("Viewing attempt {current} of {total}");
-                                        ov.sd.to_top();
+                                        ov.sd.scroll_to_top();
                                         needs_redraw = true;
                                     }
                             };
@@ -1569,7 +1670,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                         let has_diff = ov.current_attempt().is_some_and(app::AttemptView::has_diff) || ov.base_can_apply;
                                         if has_text && has_diff {
                                             ov.set_view(app::DetailView::Prompt);
-                                            ov.sd.to_top();
+                                            ov.sd.scroll_to_top();
                                             needs_redraw = true;
                                         }
                                     }
@@ -1580,7 +1681,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                         let has_diff = ov.current_attempt().is_some_and(app::AttemptView::has_diff) || ov.base_can_apply;
                                         if has_text && has_diff {
                                             ov.set_view(app::DetailView::Diff);
-                                            ov.sd.to_top();
+                                            ov.sd.scroll_to_top();
                                             needs_redraw = true;
                                         }
                                     }
@@ -1596,11 +1697,11 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                     needs_redraw = true;
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
-                                    if let Some(ov) = &mut app.diff_overlay { ov.sd.scroll_by(1); }
+                                    if let Some(ov) = &mut app.diff_overlay { ov.sd.scroll_by(/*delta*/ 1); }
                                     needs_redraw = true;
                                 }
                                 KeyCode::Up | KeyCode::Char('k') => {
-                                    if let Some(ov) = &mut app.diff_overlay { ov.sd.scroll_by(-1); }
+                                    if let Some(ov) = &mut app.diff_overlay { ov.sd.scroll_by(/*delta*/ -1); }
                                     needs_redraw = true;
                                 }
                                 KeyCode::PageDown | KeyCode::Char(' ') => {
@@ -1611,8 +1712,8 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                     if let Some(ov) = &mut app.diff_overlay { let step = ov.sd.state.viewport_h.saturating_sub(1) as i16; ov.sd.page_by(-step); }
                                     needs_redraw = true;
                                 }
-                                KeyCode::Home => { if let Some(ov) = &mut app.diff_overlay { ov.sd.to_top(); } needs_redraw = true; }
-                                KeyCode::End  => { if let Some(ov) = &mut app.diff_overlay { ov.sd.to_bottom(); } needs_redraw = true; }
+                                KeyCode::Home => { if let Some(ov) = &mut app.diff_overlay { ov.sd.scroll_to_top(); } needs_redraw = true; }
+                                KeyCode::End  => { if let Some(ov) = &mut app.diff_overlay { ov.sd.scroll_to_bottom(); } needs_redraw = true; }
                                 _ => {}
                             }
                         } else if app.env_modal.is_some() {
@@ -1632,7 +1733,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                 KeyCode::PageUp => { if let Some(m) = app.env_modal.as_mut() { let step = 10usize; m.selected = m.selected.saturating_sub(step); } needs_redraw = true; }
                                 KeyCode::Char('n') => {
                                     if app.env_filter.is_none() {
-                                        app.new_task = Some(crate::new_task::NewTaskPage::new(None, app.best_of_n));
+                                        app.new_task = Some(crate::new_task::NewTaskPage::new(/*env_id*/ None, app.best_of_n));
                                     } else {
                                         app.new_task = Some(crate::new_task::NewTaskPage::new(app.env_filter.clone(), app.best_of_n));
                                     }
@@ -2032,10 +2133,10 @@ mod tests {
     use super::*;
     use crate::resolve_git_ref_with_git_info;
     use codex_cloud_tasks_client::DiffSummary;
-    use codex_cloud_tasks_client::MockClient;
     use codex_cloud_tasks_client::TaskId;
     use codex_cloud_tasks_client::TaskStatus;
     use codex_cloud_tasks_client::TaskSummary;
+    use codex_cloud_tasks_mock_client::MockClient;
     use codex_tui::ComposerAction;
     use codex_tui::ComposerInput;
     use crossterm::event::KeyCode;
@@ -2059,7 +2160,6 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
     impl super::GitInfoProvider for StubGitInfo {
         async fn default_branch_name(&self, _path: &std::path::Path) -> Option<String> {
             self.default_branch.clone()
@@ -2074,7 +2174,7 @@ mod tests {
     async fn branch_override_is_used_when_provided() {
         let git_ref = resolve_git_ref_with_git_info(
             Some(&"feature/override".to_string()),
-            &StubGitInfo::new(None, None),
+            &StubGitInfo::new(/*default_branch*/ None, /*current_branch*/ None),
         )
         .await;
 
@@ -2085,7 +2185,7 @@ mod tests {
     async fn trims_override_whitespace() {
         let git_ref = resolve_git_ref_with_git_info(
             Some(&"  feature/spaces  ".to_string()),
-            &StubGitInfo::new(None, None),
+            &StubGitInfo::new(/*default_branch*/ None, /*current_branch*/ None),
         )
         .await;
 
@@ -2095,7 +2195,7 @@ mod tests {
     #[tokio::test]
     async fn prefers_current_branch_when_available() {
         let git_ref = resolve_git_ref_with_git_info(
-            None,
+            /*branch_override*/ None,
             &StubGitInfo::new(
                 Some("default-main".to_string()),
                 Some("feature/current".to_string()),
@@ -2109,8 +2209,8 @@ mod tests {
     #[tokio::test]
     async fn falls_back_to_current_branch_when_default_is_missing() {
         let git_ref = resolve_git_ref_with_git_info(
-            None,
-            &StubGitInfo::new(None, Some("develop".to_string())),
+            /*branch_override*/ None,
+            &StubGitInfo::new(/*default_branch*/ None, Some("develop".to_string())),
         )
         .await;
 
@@ -2119,7 +2219,11 @@ mod tests {
 
     #[tokio::test]
     async fn falls_back_to_main_when_no_git_info_is_available() {
-        let git_ref = resolve_git_ref_with_git_info(None, &StubGitInfo::new(None, None)).await;
+        let git_ref = resolve_git_ref_with_git_info(
+            /*branch_override*/ None,
+            &StubGitInfo::new(/*default_branch*/ None, /*current_branch*/ None),
+        )
+        .await;
 
         assert_eq!(git_ref, "main");
     }
@@ -2142,7 +2246,7 @@ mod tests {
             is_review: false,
             attempt_total: None,
         };
-        let lines = format_task_status_lines(&task, now, false);
+        let lines = format_task_status_lines(&task, now, /*colorize*/ false);
         assert_eq!(
             lines,
             vec![
@@ -2167,13 +2271,66 @@ mod tests {
             is_review: false,
             attempt_total: Some(1),
         };
-        let lines = format_task_status_lines(&task, now, false);
+        let lines = format_task_status_lines(&task, now, /*colorize*/ false);
         assert_eq!(
             lines,
             vec![
                 "[PENDING] No diff task".to_string(),
                 "env-2  •  0s ago".to_string(),
                 "no diff".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn format_task_list_lines_formats_urls() {
+        let now = Utc::now();
+        let tasks = vec![
+            TaskSummary {
+                id: TaskId("task_1".to_string()),
+                title: "Example task".to_string(),
+                status: TaskStatus::Ready,
+                updated_at: now,
+                environment_id: Some("env-1".to_string()),
+                environment_label: Some("Env".to_string()),
+                summary: DiffSummary {
+                    files_changed: 3,
+                    lines_added: 5,
+                    lines_removed: 2,
+                },
+                is_review: false,
+                attempt_total: None,
+            },
+            TaskSummary {
+                id: TaskId("task_2".to_string()),
+                title: "No diff task".to_string(),
+                status: TaskStatus::Pending,
+                updated_at: now,
+                environment_id: Some("env-2".to_string()),
+                environment_label: None,
+                summary: DiffSummary::default(),
+                is_review: false,
+                attempt_total: Some(1),
+            },
+        ];
+        let lines = format_task_list_lines(
+            &tasks,
+            "https://chatgpt.com/backend-api",
+            now,
+            /*colorize*/ false,
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "https://chatgpt.com/codex/tasks/task_1".to_string(),
+                "  [READY] Example task".to_string(),
+                "  Env  •  0s ago".to_string(),
+                "  +5/-2 • 3 files".to_string(),
+                String::new(),
+                "https://chatgpt.com/codex/tasks/task_2".to_string(),
+                "  [PENDING] No diff task".to_string(),
+                "  env-2  •  0s ago".to_string(),
+                "  no diff".to_string(),
             ]
         );
     }

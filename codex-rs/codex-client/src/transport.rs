@@ -2,8 +2,8 @@ use crate::default_client::CodexHttpClient;
 use crate::default_client::CodexRequestBuilder;
 use crate::error::TransportError;
 use crate::request::Request;
+use crate::request::RequestBody;
 use crate::request::Response;
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
 use futures::stream::BoxStream;
@@ -22,10 +22,15 @@ pub struct StreamResponse {
     pub bytes: ByteStream,
 }
 
-#[async_trait]
 pub trait HttpTransport: Send + Sync {
-    async fn execute(&self, req: Request) -> Result<Response, TransportError>;
-    async fn stream(&self, req: Request) -> Result<StreamResponse, TransportError>;
+    fn execute(
+        &self,
+        req: Request,
+    ) -> impl std::future::Future<Output = Result<Response, TransportError>> + Send;
+    fn stream(
+        &self,
+        req: Request,
+    ) -> impl std::future::Future<Output = Result<StreamResponse, TransportError>> + Send;
 }
 
 #[derive(Clone, Debug)]
@@ -41,18 +46,29 @@ impl ReqwestTransport {
     }
 
     fn build(&self, req: Request) -> Result<CodexRequestBuilder, TransportError> {
-        let mut builder = self
-            .client
-            .request(
-                Method::from_bytes(req.method.as_str().as_bytes()).unwrap_or(Method::GET),
-                &req.url,
-            )
-            .headers(req.headers);
-        if let Some(timeout) = req.timeout {
+        let prepared = req.prepare_body_for_send().map_err(TransportError::Build)?;
+
+        let Request {
+            method,
+            url,
+            headers: _,
+            body: _,
+            compression: _,
+            timeout,
+        } = req;
+
+        let mut builder = self.client.request(
+            Method::from_bytes(method.as_str().as_bytes()).unwrap_or(Method::GET),
+            &url,
+        );
+
+        if let Some(timeout) = timeout {
             builder = builder.timeout(timeout);
         }
-        if let Some(body) = req.body {
-            builder = builder.json(&body);
+
+        builder = builder.headers(prepared.headers);
+        if let Some(body) = prepared.body {
+            builder = builder.body(body);
         }
         Ok(builder)
     }
@@ -66,9 +82,29 @@ impl ReqwestTransport {
     }
 }
 
-#[async_trait]
+fn request_body_for_trace(req: &Request) -> String {
+    match req.body.as_ref() {
+        Some(RequestBody::Json(body)) => body.to_string(),
+        Some(RequestBody::EncodedJson(body)) => {
+            String::from_utf8_lossy(body.trace_bytes()).into_owned()
+        }
+        Some(RequestBody::Raw(body)) => format!("<raw body: {} bytes>", body.len()),
+        None => String::new(),
+    }
+}
+
 impl HttpTransport for ReqwestTransport {
     async fn execute(&self, req: Request) -> Result<Response, TransportError> {
+        if enabled!(Level::TRACE) {
+            trace!(
+                "{} to {}: {}",
+                req.method,
+                req.url,
+                request_body_for_trace(&req)
+            );
+        }
+
+        let url = req.url.clone();
         let builder = self.build(req)?;
         let resp = builder.send().await.map_err(Self::map_error)?;
         let status = resp.status();
@@ -78,6 +114,7 @@ impl HttpTransport for ReqwestTransport {
             let body = String::from_utf8(bytes.to_vec()).ok();
             return Err(TransportError::Http {
                 status,
+                url: Some(url),
                 headers: Some(headers),
                 body,
             });
@@ -95,10 +132,11 @@ impl HttpTransport for ReqwestTransport {
                 "{} to {}: {}",
                 req.method,
                 req.url,
-                req.body.as_ref().unwrap_or_default()
+                request_body_for_trace(&req)
             );
         }
 
+        let url = req.url.clone();
         let builder = self.build(req)?;
         let resp = builder.send().await.map_err(Self::map_error)?;
         let status = resp.status();
@@ -107,6 +145,7 @@ impl HttpTransport for ReqwestTransport {
             let body = resp.text().await.ok();
             return Err(TransportError::Http {
                 status,
+                url: Some(url),
                 headers: Some(headers),
                 body,
             });

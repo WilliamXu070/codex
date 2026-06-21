@@ -2,13 +2,18 @@ use crate::acl::add_deny_write_ace;
 use crate::acl::path_mask_allows;
 use crate::cap::cap_sid_file;
 use crate::cap::load_or_create_cap_sids;
-use crate::logging::{debug_log, log_note};
-use crate::policy::SandboxPolicy;
-use crate::token::convert_string_sid_to_sid;
+use crate::cap::workspace_write_cap_sid_for_root;
+use crate::cap::workspace_write_root_contains_path;
+use crate::logging::debug_log;
+use crate::logging::log_note;
+use crate::path_normalization::canonical_path_key;
+use crate::resolved_permissions::ResolvedWindowsSandboxPermissions;
+use crate::setup::effective_write_roots_for_permissions;
+use crate::token::LocalSid;
 use crate::token::world_sid;
-use anyhow::anyhow;
 use anyhow::Result;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::ffi::c_void;
 use std::path::Path;
 use std::path::PathBuf;
@@ -30,16 +35,11 @@ const SKIP_DIR_SUFFIXES: &[&str] = &[
     "/programdata",
 ];
 
-fn normalize_path_key(p: &Path) -> String {
-    let n = dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    n.to_string_lossy().replace('\\', "/").to_ascii_lowercase()
-}
-
 fn unique_push(set: &mut HashSet<PathBuf>, out: &mut Vec<PathBuf>, p: PathBuf) {
-    if let Ok(abs) = p.canonicalize() {
-        if set.insert(abs.clone()) {
-            out.push(abs);
-        }
+    if let Ok(abs) = p.canonicalize()
+        && set.insert(abs.clone())
+    {
+        out.push(abs);
     }
 }
 
@@ -67,9 +67,9 @@ fn gather_candidates(cwd: &Path, env: &std::collections::HashMap<String, String>
         .cloned()
         .or_else(|| std::env::var("PATH").ok())
     {
-        for part in path.split(std::path::MAIN_SEPARATOR) {
-            if !part.is_empty() {
-                unique_push(&mut set, &mut out, PathBuf::from(part));
+        for part in std::env::split_paths(OsStr::new(&path)) {
+            if !part.as_os_str().is_empty() {
+                unique_push(&mut set, &mut out, part);
             }
         }
     }
@@ -84,7 +84,12 @@ unsafe fn path_has_world_write_allow(path: &Path) -> Result<bool> {
     let mut world = world_sid()?;
     let psid_world = world.as_mut_ptr() as *mut c_void;
     let write_mask = FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES;
-    path_mask_allows(path, &[psid_world], write_mask, false)
+    path_mask_allows(
+        path,
+        &[psid_world],
+        write_mask,
+        /*require_all_bits*/ false,
+    )
 }
 
 pub fn audit_everyone_writable(
@@ -130,7 +135,7 @@ pub fn audit_everyone_writable(
             checked += 1;
             let has = check_world_writable(&p);
             if has {
-                let key = normalize_path_key(&p);
+                let key = canonical_path_key(&p);
                 if seen.insert(key) {
                     flagged.push(p);
                 }
@@ -148,7 +153,7 @@ pub fn audit_everyone_writable(
         checked += 1;
         let has_root = check_world_writable(&root);
         if has_root {
-            let key = normalize_path_key(&root);
+            let key = canonical_path_key(&root);
             if seen.insert(key) {
                 flagged.push(root.clone());
             }
@@ -180,7 +185,7 @@ pub fn audit_everyone_writable(
                     checked += 1;
                     let has_child = check_world_writable(&p);
                     if has_child {
-                        let key = normalize_path_key(&p);
+                        let key = canonical_path_key(&p);
                         if seen.insert(key) {
                             flagged.push(p);
                         }
@@ -197,8 +202,7 @@ pub fn audit_everyone_writable(
         }
         crate::logging::log_note(
             &format!(
-                "AUDIT: world-writable scan FAILED; cwd={cwd:?}; checked={checked}; duration_ms={elapsed_ms}; flagged:{}",
-                list
+                "AUDIT: world-writable scan FAILED; cwd={cwd:?}; checked={checked}; duration_ms={elapsed_ms}; flagged:{list}",
             ),
             logs_base_dir,
         );
@@ -213,37 +217,39 @@ pub fn audit_everyone_writable(
     Ok(Vec::new())
 }
 
-pub fn apply_world_writable_scan_and_denies(
+pub fn apply_world_writable_scan_and_denies_for_permissions(
     codex_home: &Path,
     cwd: &Path,
     env_map: &std::collections::HashMap<String, String>,
-    sandbox_policy: &SandboxPolicy,
+    permissions: &ResolvedWindowsSandboxPermissions,
     logs_base_dir: Option<&Path>,
 ) -> Result<()> {
     let flagged = audit_everyone_writable(cwd, env_map, logs_base_dir)?;
     if flagged.is_empty() {
         return Ok(());
     }
-    if let Err(err) = apply_capability_denies_for_world_writable(
+    if let Err(err) = apply_capability_denies_for_world_writable_for_permissions(
         codex_home,
         &flagged,
-        sandbox_policy,
+        permissions,
         cwd,
+        env_map,
         logs_base_dir,
     ) {
         log_note(
-            &format!("AUDIT: failed to apply capability deny ACEs: {}", err),
+            &format!("AUDIT: failed to apply capability deny ACEs: {err}"),
             logs_base_dir,
         );
     }
     Ok(())
 }
 
-pub fn apply_capability_denies_for_world_writable(
+fn apply_capability_denies_for_world_writable_for_permissions(
     codex_home: &Path,
     flagged: &[PathBuf],
-    sandbox_policy: &SandboxPolicy,
+    permissions: &ResolvedWindowsSandboxPermissions,
     cwd: &Path,
+    env_map: &std::collections::HashMap<String, String>,
     logs_base_dir: Option<&Path>,
 ) -> Result<()> {
     if flagged.is_empty() {
@@ -253,48 +259,92 @@ pub fn apply_capability_denies_for_world_writable(
     let cap_path = cap_sid_file(codex_home);
     let caps = load_or_create_cap_sids(codex_home)?;
     std::fs::write(&cap_path, serde_json::to_string(&caps)?)?;
-    let (active_sid, workspace_roots): (*mut c_void, Vec<PathBuf>) = match sandbox_policy {
-        SandboxPolicy::WorkspaceWrite { writable_roots, .. } => {
-            let sid = unsafe { convert_string_sid_to_sid(&caps.workspace) }
-                .ok_or_else(|| anyhow!("ConvertStringSidToSidW failed for workspace capability"))?;
-            let mut roots: Vec<PathBuf> =
-                vec![dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf())];
-            for root in writable_roots {
-                let candidate = root.as_path();
-                roots.push(dunce::canonicalize(candidate).unwrap_or_else(|_| root.to_path_buf()));
-            }
-            (sid, roots)
-        }
-        SandboxPolicy::ReadOnly => (
-            unsafe { convert_string_sid_to_sid(&caps.readonly) }.ok_or_else(|| {
-                anyhow!("ConvertStringSidToSidW failed for readonly capability")
-            })?,
-            Vec::new(),
-        ),
-        SandboxPolicy::DangerFullAccess | SandboxPolicy::ExternalSandbox { .. } => {
-            return Ok(());
-        }
-    };
+    if !permissions.is_enforceable_by_windows_sandbox() {
+        return Ok(());
+    }
+    let (active_sids, workspace_roots): (Vec<LocalSid>, Vec<PathBuf>) =
+        if permissions.uses_write_capabilities_for_cwd(cwd, env_map) {
+            let roots = effective_write_roots_for_permissions(
+                permissions,
+                cwd,
+                env_map,
+                codex_home,
+                /*write_roots_override*/ None,
+            );
+            let active_sids = roots
+                .iter()
+                .map(|root| {
+                    workspace_write_cap_sid_for_root(codex_home, cwd, root)
+                        .and_then(|sid| LocalSid::from_string(&sid))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            (active_sids, roots)
+        } else {
+            (vec![LocalSid::from_string(&caps.readonly)?], Vec::new())
+        };
     for path in flagged {
-        if workspace_roots.iter().any(|root| path.starts_with(root)) {
+        if workspace_roots
+            .iter()
+            .any(|root| workspace_write_root_contains_path(root, path))
+        {
             continue;
         }
-        let res = unsafe { add_deny_write_ace(path, active_sid) };
-        match res {
-            Ok(true) => log_note(
-                &format!("AUDIT: applied capability deny ACE to {}", path.display()),
-                logs_base_dir,
-            ),
-            Ok(false) => {}
-            Err(err) => log_note(
-                &format!(
-                    "AUDIT: failed to apply capability deny ACE to {}: {}",
-                    path.display(),
-                    err
+        for active_sid in &active_sids {
+            let res = unsafe { add_deny_write_ace(path, active_sid.as_ptr()) };
+            match res {
+                Ok(true) => log_note(
+                    &format!("AUDIT: applied capability deny ACE to {}", path.display()),
+                    logs_base_dir,
                 ),
-                logs_base_dir,
-            ),
+                Ok(false) => {}
+                Err(err) => log_note(
+                    &format!(
+                        "AUDIT: failed to apply capability deny ACE to {}: {}",
+                        path.display(),
+                        err
+                    ),
+                    logs_base_dir,
+                ),
+            }
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gather_candidates;
+    use std::collections::HashMap;
+    use std::fs;
+
+    #[test]
+    fn gathers_path_entries_by_list_separator() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir_a = tmp.path().join("Tools");
+        let dir_b = tmp.path().join("Bin");
+        let dir_space = tmp.path().join("Program Files");
+        fs::create_dir_all(&dir_a).expect("dir a");
+        fs::create_dir_all(&dir_b).expect("dir b");
+        fs::create_dir_all(&dir_space).expect("dir space");
+
+        let mut env_map = HashMap::new();
+        env_map.insert(
+            "PATH".to_string(),
+            format!(
+                "{};{};{}",
+                dir_a.display(),
+                dir_b.display(),
+                dir_space.display()
+            ),
+        );
+
+        let candidates = gather_candidates(tmp.path(), &env_map);
+        let canon_a = dir_a.canonicalize().expect("canon a");
+        let canon_b = dir_b.canonicalize().expect("canon b");
+        let canon_space = dir_space.canonicalize().expect("canon space");
+
+        assert!(candidates.contains(&canon_a));
+        assert!(candidates.contains(&canon_b));
+        assert!(candidates.contains(&canon_space));
+    }
 }

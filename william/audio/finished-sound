@@ -1,0 +1,2 @@
+#!/bin/zsh
+exec /bin/zsh /Users/williamxu/.codex/codex-random-sound "$@"
