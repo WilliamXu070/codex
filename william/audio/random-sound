@@ -13,6 +13,7 @@ completion_token_file="$state_dir/codex-random-sound-completion.token"
 completion_delay="${CODEX_SOUND_COMPLETION_DELAY:-0}"
 volume="${CODEX_SOUND_VOLUME:-1.0}"
 enabled="${CODEX_SOUND_ENABLED:-1}"
+completion_only="${CODEX_SOUND_COMPLETION_ONLY:-1}"
 explicit_event=""
 payload=""
 
@@ -116,6 +117,11 @@ fi
 
 if [[ "$event_kind" == "completion" ]] && should_ignore_completion; then
   log_sound_event "ignored internal approval-review completion payload=${payload[1,300]}"
+  exit 0
+fi
+
+if [[ "$completion_only" == "1" && "$event_kind" != "completion" ]]; then
+  log_sound_event "ignored non-completion event kind=$event_kind explicit_event=$explicit_event payload=${payload[1,300]}"
   exit 0
 fi
 
