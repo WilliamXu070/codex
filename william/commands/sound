@@ -20,13 +20,11 @@ write_state() {
     CODEX_SOUND_COMPLETION_DELAY \
     CODEX_SOUND_COMPLETION_FILE \
     CODEX_SOUND_APPROVAL_FILE \
-    CODEX_SOUND_APPROVAL_MODE \
-    CODEX_SOUND_COMPLETION_ONLY \
     CODEX_SOUND_DIR > "$state_file"
 }
 
 usage() {
-  print "usage: sound status | sound volume 0-100 | sound mute | sound unmute | sound test [completion|approval] | sound track list|random|set <file> | sound approval default|set <file> | sound approval-mode completion|prompt|both"
+  print "usage: sound status | sound volume 0-100 | sound mute | sound unmute | sound test [completion|approval] | sound track list|random|set <file> | sound approval default|set <file>"
 }
 
 cmd="${1:-status}"
@@ -34,7 +32,7 @@ shift || true
 
 case "$cmd" in
   status)
-    print "enabled=${CODEX_SOUND_ENABLED:-1} volume=${CODEX_SOUND_VOLUME:-1.0} profile=${CODEX_SOUND_PROFILE:-normal} track=${CODEX_SOUND_COMPLETION_FILE:-random} approval=${CODEX_SOUND_APPROVAL_FILE:-default} approval_mode=${CODEX_SOUND_APPROVAL_MODE:-completion}"
+    print "enabled=${CODEX_SOUND_ENABLED:-1} volume=${CODEX_SOUND_VOLUME:-1.0} profile=${CODEX_SOUND_PROFILE:-normal} track=${CODEX_SOUND_COMPLETION_FILE:-random} approval=${CODEX_SOUND_APPROVAL_FILE:-default}"
     ;;
   volume)
     value="${1:-}"
@@ -163,30 +161,6 @@ case "$cmd" in
         exit 1
         ;;
     esac
-    ;;
-  approval-mode|mode)
-    mode="${1:-completion}"
-    shift || true
-    case "$mode" in
-      completion)
-        CODEX_SOUND_APPROVAL_MODE=completion
-        CODEX_SOUND_COMPLETION_ONLY=1
-        ;;
-      prompt|immediate)
-        CODEX_SOUND_APPROVAL_MODE=prompt
-        CODEX_SOUND_COMPLETION_ONLY=0
-        ;;
-      both)
-        CODEX_SOUND_APPROVAL_MODE=both
-        CODEX_SOUND_COMPLETION_ONLY=0
-        ;;
-      *)
-        usage
-        exit 1
-        ;;
-    esac
-    write_state
-    print "approval mode set to $mode"
     ;;
   *)
     usage
