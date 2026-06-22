@@ -76,7 +76,6 @@ pub(crate) enum SoundMenu {
     Volume,
     Completion,
     Approval,
-    ApprovalMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

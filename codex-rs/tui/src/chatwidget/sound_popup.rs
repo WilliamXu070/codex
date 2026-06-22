@@ -7,7 +7,6 @@ struct SoundState {
     volume: u32,
     completion: String,
     approval: String,
-    approval_mode: String,
 }
 
 impl Default for SoundState {
@@ -17,7 +16,6 @@ impl Default for SoundState {
             volume: 100,
             completion: "random".to_string(),
             approval: "default".to_string(),
-            approval_mode: "completion".to_string(),
         }
     }
 }
@@ -49,11 +47,6 @@ impl ChatWidget {
                 self.sound_menu_item("Volume", state.volume_label(), SoundMenu::Volume),
                 self.sound_menu_item("Completion", state.completion, SoundMenu::Completion),
                 self.sound_menu_item("Approval", state.approval, SoundMenu::Approval),
-                self.sound_menu_item(
-                    "Approval Mode",
-                    state.approval_mode.clone(),
-                    SoundMenu::ApprovalMode,
-                ),
                 sound_exit_item(),
             ],
             SoundMenu::Enabled => vec![
@@ -87,11 +80,6 @@ impl ChatWidget {
                 "use the default approval sound",
                 "use this approval sound",
             ),
-            SoundMenu::ApprovalMode => vec![
-                self.sound_command_item("Completion", "set approval-mode", state.approval_mode == "completion", &["approval-mode", "completion"]),
-                self.sound_command_item("Prompt", "set approval-mode", state.approval_mode == "prompt", &["approval-mode", "prompt"]),
-                self.sound_command_item("Both", "set approval-mode", state.approval_mode == "both", &["approval-mode", "both"]),
-            ],
         };
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
@@ -102,7 +90,6 @@ impl ChatWidget {
                 SoundMenu::Volume => "Sound Volume",
                 SoundMenu::Completion => "Completion Sound",
                 SoundMenu::Approval => "Approval Sound",
-                SoundMenu::ApprovalMode => "Approval Mode",
             }
             .to_string(),
             ),
@@ -201,7 +188,6 @@ impl ChatWidget {
                 }
                 "track" => state.completion = sound_label(value),
                 "approval" => state.approval = sound_label(value),
-                "approval_mode" => state.approval_mode = sound_label(value),
                 _ => {}
             }
         }
