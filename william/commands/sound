@@ -3,8 +3,10 @@
 set -e
 
 state_file="${CODEX_SOUND_STATE_FILE:-/Users/williamxu/.codex/codex-sound-state}"
-repo_root="/Users/williamxu/Desktop/Projects/codex-sound-0.141.0/william"
+script_dir="${0:A:h}"
+repo_root="${script_dir:h}"
 sound_dir="$repo_root/audio/sounds"
+alt_sound_dir="$repo_root/audio"
 mkdir -p "${state_file:h}"
 [[ -r "$state_file" ]] || cp "$repo_root/audio/sound-state" "$state_file"
 source "$state_file"
@@ -96,7 +98,9 @@ case "$cmd" in
     shift || true
     case "$sub" in
       list)
-        for file in "$sound_dir"/*.mp3(N) "$sound_dir"/*.wav(N) "$sound_dir"/*.aiff(N) "$sound_dir"/*.m4a(N); do
+        for file in \
+          "$sound_dir"/*.mp3(N) "$sound_dir"/*.wav(N) "$sound_dir"/*.aiff(N) "$sound_dir"/*.m4a(N) \
+          "$alt_sound_dir"/*.mp3(N) "$alt_sound_dir"/*.wav(N) "$alt_sound_dir"/*.aiff(N) "$alt_sound_dir"/*.m4a(N); do
           print "${file:t}"
         done
         ;;
@@ -112,6 +116,8 @@ case "$cmd" in
           CODEX_SOUND_COMPLETION_FILE="$name"
         elif [[ -r "$sound_dir/$name" ]]; then
           CODEX_SOUND_COMPLETION_FILE="$sound_dir/$name"
+        elif [[ -r "$alt_sound_dir/$name" ]]; then
+          CODEX_SOUND_COMPLETION_FILE="$alt_sound_dir/$name"
         else
           print "track not found: $name"
           exit 1
@@ -141,6 +147,8 @@ case "$cmd" in
           CODEX_SOUND_APPROVAL_FILE="$name"
         elif [[ -r "$sound_dir/$name" ]]; then
           CODEX_SOUND_APPROVAL_FILE="$sound_dir/$name"
+        elif [[ -r "$alt_sound_dir/$name" ]]; then
+          CODEX_SOUND_APPROVAL_FILE="$alt_sound_dir/$name"
         else
           print "approval sound not found: $name"
           exit 1

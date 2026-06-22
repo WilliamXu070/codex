@@ -1,7 +1,8 @@
 #!/bin/zsh
 
 state_file="${CODEX_SOUND_STATE_FILE:-/Users/williamxu/.codex/codex-sound-state}"
-repo_sound_dir="/Users/williamxu/Desktop/Projects/codex-sound-0.141.0/william/audio/sounds"
+script_dir="${0:A:h}"
+repo_sound_dir="$script_dir/sounds"
 [[ -r "$state_file" ]] && source "$state_file"
 
 sound_dir="${CODEX_SOUND_DIR:-$repo_sound_dir}"
