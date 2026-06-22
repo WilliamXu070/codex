@@ -7,6 +7,7 @@ struct SoundState {
     volume: u32,
     completion: String,
     approval: String,
+    approval_mode: String,
 }
 
 impl Default for SoundState {
@@ -16,6 +17,7 @@ impl Default for SoundState {
             volume: 100,
             completion: "random".to_string(),
             approval: "default".to_string(),
+            approval_mode: "completion".to_string(),
         }
     }
 }
@@ -33,12 +35,25 @@ impl SoundState {
 impl ChatWidget {
     pub(crate) fn open_sound_popup(&mut self, menu: SoundMenu) {
         let state = self.sound_state();
+        let on_cancel = (menu != SoundMenu::Root).then_some({
+            Box::new(|tx: &crate::app_event_sender::AppEventSender| {
+                tx.send(AppEvent::OpenSoundPopup {
+                    menu: SoundMenu::Root,
+                });
+            }) as Box<dyn Fn(&crate::app_event_sender::AppEventSender) + Send + Sync>
+        });
+
         let items = match menu {
             SoundMenu::Root => vec![
                 self.sound_menu_item("Enabled", state.enabled_label(), SoundMenu::Enabled),
                 self.sound_menu_item("Volume", state.volume_label(), SoundMenu::Volume),
                 self.sound_menu_item("Completion", state.completion, SoundMenu::Completion),
                 self.sound_menu_item("Approval", state.approval, SoundMenu::Approval),
+                self.sound_menu_item(
+                    "Approval Mode",
+                    state.approval_mode.clone(),
+                    SoundMenu::ApprovalMode,
+                ),
                 sound_exit_item(),
             ],
             SoundMenu::Enabled => vec![
@@ -72,21 +87,28 @@ impl ChatWidget {
                 "use the default approval sound",
                 "use this approval sound",
             ),
+            SoundMenu::ApprovalMode => vec![
+                self.sound_command_item("Completion", "set approval-mode", state.approval_mode == "completion", &["approval-mode", "completion"]),
+                self.sound_command_item("Prompt", "set approval-mode", state.approval_mode == "prompt", &["approval-mode", "prompt"]),
+                self.sound_command_item("Both", "set approval-mode", state.approval_mode == "both", &["approval-mode", "both"]),
+            ],
         };
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some(
-                match menu {
-                    SoundMenu::Root => "Sound Settings",
-                    SoundMenu::Enabled => "Sound Enabled",
-                    SoundMenu::Volume => "Sound Volume",
-                    SoundMenu::Completion => "Completion Sound",
-                    SoundMenu::Approval => "Approval Sound",
-                }
-                .to_string(),
+            match menu {
+                SoundMenu::Root => "Sound Settings",
+                SoundMenu::Enabled => "Sound Enabled",
+                SoundMenu::Volume => "Sound Volume",
+                SoundMenu::Completion => "Completion Sound",
+                SoundMenu::Approval => "Approval Sound",
+                SoundMenu::ApprovalMode => "Approval Mode",
+            }
+            .to_string(),
             ),
             footer_hint: Some(standard_popup_hint_line()),
             items,
+            on_cancel,
             ..Default::default()
         });
     }
@@ -179,6 +201,7 @@ impl ChatWidget {
                 }
                 "track" => state.completion = sound_label(value),
                 "approval" => state.approval = sound_label(value),
+                "approval_mode" => state.approval_mode = sound_label(value),
                 _ => {}
             }
         }

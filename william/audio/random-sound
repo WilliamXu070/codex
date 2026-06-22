@@ -14,6 +14,24 @@ completion_delay="${CODEX_SOUND_COMPLETION_DELAY:-0}"
 volume="${CODEX_SOUND_VOLUME:-1.0}"
 enabled="${CODEX_SOUND_ENABLED:-1}"
 completion_only="${CODEX_SOUND_COMPLETION_ONLY:-1}"
+approval_mode="${CODEX_SOUND_APPROVAL_MODE:-}"
+if [[ -z "$approval_mode" ]]; then
+  if [[ "$completion_only" == "0" ]]; then
+    approval_mode="prompt"
+  else
+    approval_mode="completion"
+  fi
+fi
+case "$approval_mode" in
+  completion|prompt|both) ;;
+  *)
+    if [[ "$completion_only" == "0" ]]; then
+      approval_mode="prompt"
+    else
+      approval_mode="completion"
+    fi
+    ;;
+esac
 explicit_event=""
 payload=""
 
@@ -120,7 +138,17 @@ if [[ "$event_kind" == "completion" ]] && should_ignore_completion; then
   exit 0
 fi
 
-if [[ "$completion_only" == "1" && "$event_kind" != "completion" ]]; then
+if [[ "$event_kind" == "completion" && "$approval_mode" == "prompt" ]]; then
+  log_sound_event "ignored completion due to approval_mode=prompt explicit_event=$explicit_event payload=${payload[1,300]}"
+  exit 0
+fi
+
+if [[ "$event_kind" == "immediate" && "$approval_mode" == "completion" ]]; then
+  log_sound_event "ignored immediate due to approval_mode=completion explicit_event=$explicit_event payload=${payload[1,300]}"
+  exit 0
+fi
+
+if [[ "$approval_mode" == "completion" && "$completion_only" == "1" && "$event_kind" != "completion" ]]; then
   log_sound_event "ignored non-completion event kind=$event_kind explicit_event=$explicit_event payload=${payload[1,300]}"
   exit 0
 fi
