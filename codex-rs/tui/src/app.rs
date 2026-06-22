@@ -530,6 +530,9 @@ pub(crate) struct App {
 
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) keymap: RuntimeKeymap,
+    transcribe_arm: Option<TranscribeArmState>,
+    transcribe_next_arm_id: u64,
+    transcribe_capture: Option<TranscribeCaptureState>,
 
     /// Controls the animation thread that sends CommitTick events.
     pub(crate) commit_anim_running: Arc<AtomicBool>,
@@ -585,6 +588,18 @@ pub(crate) struct App {
     // Serialize hook enablement writes per hook so stale completions cannot
     // persist an older toggle after a newer one.
     pending_hook_enabled_writes: HashMap<String, Option<bool>>,
+}
+
+struct TranscribeArmState {
+    id: u64,
+}
+
+struct TranscribeCaptureState {
+    child: std::process::Child,
+    wav_path: PathBuf,
+    started_at: Instant,
+    marker_id: u64,
+    spinner_stop_tx: tokio::sync::oneshot::Sender<()>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1021,6 +1036,9 @@ See the Codex keymap documentation for supported actions and examples."
             file_search,
             enhanced_keys_supported,
             keymap: runtime_keymap,
+            transcribe_arm: None,
+            transcribe_next_arm_id: 1,
+            transcribe_capture: None,
             transcript_cells: Vec::new(),
             overlay: None,
             deferred_history_lines: Vec::new(),

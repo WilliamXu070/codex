@@ -22,6 +22,10 @@ Current commands:
 ~/.codex/commands/sound track set 01-kanye-west-wolves-meme.mp3
 ~/.codex/commands/sound track random
 ~/.codex/commands/dictate start
+/transcribe
+/transcribe set-provider openai
+/transcribe set-key sk-...
+/transcribe set-language en
 ```
 
 Install:

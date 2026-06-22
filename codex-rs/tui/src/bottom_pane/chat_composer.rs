@@ -233,6 +233,21 @@ use crate::app_event::AppEvent;
 use crate::app_event::ConnectorsSnapshot;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::LocalImageAttachment;
+
+const TRANSCRIBE_MARKER_FRAMES: [&str; 8] = [
+    "▁▂▃▅▇▅▃▂▁",
+    "▂▃▅▇█▇▅▃▂",
+    "▃▅▇█▇▅▃▂▁",
+    "▅▇█▇▅▃▂▁▂",
+    "▇█▇▅▃▂▁▂▃",
+    "█▇▅▃▂▁▂▃▅",
+    "▇▅▃▂▁▂▃▅▇",
+    "▅▃▂▁▂▃▅▇█",
+];
+
+fn transcribe_marker_text(frame: usize) -> &'static str {
+    TRANSCRIBE_MARKER_FRAMES[frame % TRANSCRIBE_MARKER_FRAMES.len()]
+}
 use crate::bottom_pane::MentionBinding;
 use crate::bottom_pane::textarea::TextArea;
 use crate::clipboard_paste::normalize_pasted_path;
@@ -1021,6 +1036,24 @@ impl ChatComposer {
             .textarea
             .set_cursor(self.draft.textarea.text().len());
         self.sync_popups();
+    }
+
+    pub(crate) fn start_transcribe_marker(&mut self) -> u64 {
+        self.draft
+            .textarea
+            .insert_protected_element(transcribe_marker_text(/*frame*/ 0))
+    }
+
+    pub(crate) fn update_transcribe_marker(&mut self, marker_id: u64, frame: usize) -> bool {
+        self.draft
+            .textarea
+            .replace_element_payload_by_id(marker_id, transcribe_marker_text(frame))
+    }
+
+    pub(crate) fn replace_transcribe_marker(&mut self, marker_id: u64, text: &str) -> bool {
+        self.draft
+            .textarea
+            .replace_element_with_text_by_id(marker_id, text)
     }
 
     /// Enable or disable Vim editing for the composer textarea.
@@ -10770,6 +10803,29 @@ mod tests {
             composer.draft.textarea.cursor(),
             composer.current_text().len()
         );
+    }
+
+    #[test]
+    fn transcribe_marker_replaces_in_place() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ false,
+            "Ask Codex to do anything".to_string(),
+            /*disable_paste_burst*/ false,
+        );
+        composer.set_text_content("before  after".to_string(), Vec::new(), Vec::new());
+        composer.draft.textarea.set_cursor("before ".len());
+
+        let marker_id = composer.start_transcribe_marker();
+
+        assert_eq!(composer.current_text(), "before ▁▂▃▅▇▅▃▂▁ after");
+        assert!(composer.update_transcribe_marker(marker_id, /*frame*/ 1));
+        assert_eq!(composer.current_text(), "before ▂▃▅▇█▇▅▃▂ after");
+        assert!(composer.replace_transcribe_marker(marker_id, "hello"));
+        assert_eq!(composer.current_text(), "before hello after");
     }
 
     #[test]

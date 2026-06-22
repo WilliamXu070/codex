@@ -10,7 +10,7 @@ impl ChatWidget {
     /// Update the status indicator header and details.
     ///
     /// Passing `None` clears any existing details.
-    pub(super) fn set_status(
+    pub(crate) fn set_status(
         &mut self,
         header: String,
         details: Option<String>,
@@ -55,13 +55,25 @@ impl ChatWidget {
 
     /// Convenience wrapper around [`Self::set_status`];
     /// updates the status indicator header and clears any existing details.
-    pub(super) fn set_status_header(&mut self, header: String) {
+    pub(crate) fn set_status_header(&mut self, header: String) {
         self.set_status(
             header,
             /*details*/ None,
             StatusDetailsCapitalization::CapitalizeFirst,
             STATUS_DETAILS_DEFAULT_MAX_LINES,
         );
+    }
+
+    /// Show a transient status indicator for short-lived workflows (like dictation)
+    /// without marking the chat as task-running.
+    pub(crate) fn show_transcribe_status(&mut self, header: String) {
+        self.bottom_pane.ensure_status_indicator();
+        self.set_status_header(header);
+    }
+
+    /// Hide the transient status indicator used by short-lived workflows.
+    pub(crate) fn hide_transcribe_status(&mut self) {
+        self.bottom_pane.hide_status_indicator();
     }
 
     /// Sets the currently rendered footer status-line value.

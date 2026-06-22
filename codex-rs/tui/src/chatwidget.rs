@@ -362,6 +362,7 @@ mod interaction;
 mod skills;
 mod slash_dispatch;
 mod sound_popup;
+mod transcribe;
 use self::skills::collect_tool_mentions;
 use self::skills::find_app_mentions;
 use self::skills::find_skill_mentions_with_tool_mentions;

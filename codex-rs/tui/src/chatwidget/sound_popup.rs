@@ -47,7 +47,6 @@ impl ChatWidget {
                 self.sound_menu_item("Volume", state.volume_label(), SoundMenu::Volume),
                 self.sound_menu_item("Completion", state.completion, SoundMenu::Completion),
                 self.sound_menu_item("Approval", state.approval, SoundMenu::Approval),
-                sound_exit_item(),
             ],
             SoundMenu::Enabled => vec![
                 self.sound_command_item("On", "unmute", state.enabled, &["unmute"]),
@@ -84,14 +83,14 @@ impl ChatWidget {
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some(
-            match menu {
-                SoundMenu::Root => "Sound Settings",
-                SoundMenu::Enabled => "Sound Enabled",
-                SoundMenu::Volume => "Sound Volume",
-                SoundMenu::Completion => "Completion Sound",
-                SoundMenu::Approval => "Approval Sound",
-            }
-            .to_string(),
+                match menu {
+                    SoundMenu::Root => "Sound Settings",
+                    SoundMenu::Enabled => "Sound Enabled",
+                    SoundMenu::Volume => "Sound Volume",
+                    SoundMenu::Completion => "Completion Sound",
+                    SoundMenu::Approval => "Approval Sound",
+                }
+                .to_string(),
             ),
             footer_hint: Some(standard_popup_hint_line()),
             items,
@@ -126,7 +125,9 @@ impl ChatWidget {
             description: Some(description.into()),
             is_current,
             actions: vec![Box::new(move |tx| {
-                let _ = std::process::Command::new(script.as_ref()).args(&args).status();
+                let _ = std::process::Command::new(script.as_ref())
+                    .args(&args)
+                    .status();
                 tx.send(AppEvent::OpenSoundPopup {
                     menu: SoundMenu::Root,
                 });
@@ -200,15 +201,6 @@ impl ChatWidget {
             .output()
             .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
             .unwrap_or_default()
-    }
-}
-
-fn sound_exit_item() -> SelectionItem {
-    SelectionItem {
-        name: "Exit".to_string(),
-        description: Some("close sound settings".to_string()),
-        dismiss_on_select: true,
-        ..Default::default()
     }
 }
 
