@@ -8,20 +8,103 @@ CURRENT_LINK_DIR="${LOCAL_BIN}"
 LINK_TARGET="${LOCAL_BIN}/codex"
 LINK_TARGET_TUI="${LOCAL_BIN}/codex-tui"
 BACKUP_DIR="${HOME}/.local/lib/codex/releases"
+STATE_DIR="${HOME}/.local/lib/codex"
+STATE_FILE="${STATE_DIR}/release-tag.txt"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 NEW_TARGET_DIR="${BACKUP_DIR}/${TIMESTAMP}"
+WATCH_MODE=0
+FORCE=0
 
-mkdir -p "$LOCAL_BIN" "$BACKUP_DIR"
+while [ $# -gt 0 ]; do
+  case "${1:-}" in
+    --watch)
+      WATCH_MODE=1
+      shift
+      ;;
+    --force)
+      FORCE=1
+      shift
+      ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: update-codex-local.sh [--watch] [--force]
+
+  --watch   Check latest upstream release before building; skip if unchanged.
+  --force   Force a rebuild even if the watched release tag is unchanged.
+  --help    Show this help text.
+EOF
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1"
+      exit 1
+      ;;
+  esac
+done
+
+mkdir -p "$LOCAL_BIN" "$BACKUP_DIR" "$STATE_DIR"
 
 if [ ! -d "$CODER_DIR" ]; then
   echo "Missing Codex source directory: $CODER_DIR"
   exit 1
 fi
 
+cd "$CODEX_ROOT"
+
+extract_repo_from_remote() {
+  local remote_url
+  remote_url="$(git -C "$CODER_DIR" config --get remote.origin.url || true)"
+  remote_url="${remote_url%.git}"
+  case "$remote_url" in
+    git@github.com:*) echo "${remote_url#git@github.com:}" ;;
+    https://github.com/*) echo "${remote_url#https://github.com/}" ;;
+    http://github.com/*) echo "${remote_url#http://github.com/}" ;;
+    *) echo "" ;;
+  esac
+}
+
+fetch_latest_release_tag() {
+  local repo
+  repo="$(extract_repo_from_remote || true)"
+  if [ -n "$repo" ]; then
+    local release_json
+    if release_json="$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null)"; then
+      local tag
+      tag="$(printf '%s\n' "$release_json" | sed -n 's/.*\"tag_name\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p' | head -n 1)"
+      if [ -n "$tag" ]; then
+        echo "$tag"
+        return 0
+      fi
+    fi
+  fi
+
+  git -C "$CODER_DIR" ls-remote --refs --tags --sort='-v:refname' origin \
+    2>/dev/null \
+    | sed -n 's#.*refs/tags/##p' \
+    | sed 's/\^{}//' \
+    | sed '/{}$/d' \
+    | sed '/^$/d' \
+    | head -n 1
+}
+
 if [ -n "$(git -C "$CODER_DIR" status --porcelain)" ]; then
   echo "Working tree is dirty in $CODER_DIR; aborting."
   git -C "$CODER_DIR" status --short
   exit 1
+fi
+
+if [ "$WATCH_MODE" -eq 1 ] && [ "$FORCE" -eq 0 ]; then
+  remote_release="$(fetch_latest_release_tag || true)"
+  if [ -z "$remote_release" ]; then
+    echo "Could not determine remote release tag; skipping auto-update."
+    exit 0
+  fi
+  current_release="$(cat "$STATE_FILE" 2>/dev/null || true)"
+  if [ -n "$current_release" ] && [ "$current_release" = "$remote_release" ]; then
+    echo "Release unchanged: $remote_release. Skipping update."
+    exit 0
+  fi
+  echo "New release detected: ${current_release:-(none)} -> ${remote_release}. Rebuilding."
 fi
 
 git -C "$CODEX_ROOT" fetch --all --prune --tags
@@ -63,3 +146,7 @@ echo "  $(readlink -f "$LINK_TARGET")"
 echo "  $(readlink -f "$LINK_TARGET_TUI")"
 echo "Version:"
 "$LINK_TARGET" --version
+
+if [ "$WATCH_MODE" -eq 1 ] && [ -n "${remote_release:-}" ]; then
+  echo "$remote_release" > "$STATE_FILE"
+fi
