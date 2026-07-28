@@ -22,7 +22,7 @@ A published `openai/codex` release should claim its tag exactly once, launch one
 2. Add a SQLite ledger keyed by repository and release tag, plus a process lock.
 3. Clone the custom checkout into an isolated release workspace, fetch the personal fork and exact upstream tag, and give one `codex exec` run the dirty patch as read-only context.
 4. Require the agent to merge both `origin/main` and the upstream tag, preserve custom functionality, test, and commit.
-5. Independently validate ancestry, version, clean state, and targeted tests before pushing and opening a draft PR.
+5. Independently validate ancestry, version, clean state, and targeted tests before pushing and opening a draft PR. Give validation failures at most two repair turns inside the same claimed release.
 6. Add explicit manual retry; never retry failed, running, or successful tags automatically.
 
 ## Verification
@@ -32,6 +32,15 @@ A published `openai/codex` release should claim its tag exactly once, launch one
 - The original checkout fingerprint remains unchanged.
 - The resulting branch contains the upstream tag, reports `0.146.0-alpha.14`, preserves custom sound/transcription tests, pushes, and has a draft PR.
 
+## Acceptance evidence
+
+- A live isolated run merged `origin/main` and exact tag `rust-v0.146.0-alpha.14`.
+- The agent ported the dirty custom fork, including sound, transcription, clipboard, updater, and context-index functionality.
+- The independent build found two missing `IndexProgress`/`IndexComplete` TUI matches; the bounded repair flow fixed and committed them.
+- `cargo build -p codex-cli -p codex-tui`, formatting, and the sound regression pass.
+- The built binary reports `codex-cli 0.146.0-alpha.14`.
+- The original checkout's HEAD, tracked patch, untracked list, and untracked file contents still match the retry snapshot.
+
 ## Status
 
-In progress.
+Resolved.

@@ -28,6 +28,7 @@ DEFAULT_SOURCE_ROOT = Path("/Users/williamxu/Desktop/Projects/codex")
 DEFAULT_STATE_DIR = Path.home() / ".local/lib/codex/release-agent"
 DEFAULT_UPSTREAM_URL = "https://github.com/openai/codex.git"
 DEFAULT_REPOSITORY = "openai/codex"
+DEFAULT_MAX_REPAIR_ATTEMPTS = 2
 TAG_RE = re.compile(
     r"^rust-v(?P<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$"
 )
@@ -498,11 +499,52 @@ def integration_prompt(
         7. Ensure `codex-rs/Cargo.toml` reports workspace version {version}. Run
            `cargo fmt --all` from `codex-rs`, the focused custom tests you can
            identify, and `CODEX_ROOT={workspace} bash scripts/test-codex-sound-path.sh`.
+           If Cargo cannot fetch an uncached dependency in the network-restricted
+           sandbox, record the exact failure and continue to step 8; do not install
+           replacement tools. The orchestrator repeats formatting, tests, and the
+           full build with normal dependency access before publication.
         8. Commit all intended integration changes. Leave the worktree clean.
 
         Do not push, open a PR, alter git remotes, update the live binary symlink, or
         delete release context. The orchestrator independently validates and
         publishes only after you finish.
+        """
+    ).strip()
+
+
+def repair_prompt(
+    *,
+    source_root: Path,
+    workspace: Path,
+    tag: str,
+    version: str,
+    branch: str,
+    validation_error: str,
+) -> str:
+    return textwrap.dedent(
+        f"""
+        Continue the same claimed release integration inside this isolated clone:
+
+          {workspace}
+
+        The live checkout at {source_root} remains read-only. Do not edit, stash,
+        reset, clean, commit, or switch it. Do not push or open a PR.
+
+        Branch {branch} must integrate {tag} ({version}), preserve William's custom
+        behavior, pass validation, and finish committed with a clean worktree.
+
+        The independent orchestrator found this exact validation failure:
+
+        --- validation failure ---
+        {validation_error}
+        --- end validation failure ---
+
+        Inspect the current branch and any build-created changes, diagnose the root
+        cause, implement the smallest correct integration repair, run focused checks
+        plus `cargo fmt --all`, and commit every intended change. Do not replace
+        missing tools or weaken tests. If a dependency cannot be fetched in this
+        network-restricted sandbox, preserve the correct source/lockfile state and
+        let the orchestrator retry the full build with normal dependency access.
         """
     ).strip()
 
@@ -515,12 +557,18 @@ def run_codex_agent(
     tag: str,
     codex_binary: str,
     timeout_seconds: int,
+    log_suffix: str = "",
 ) -> None:
     log_dir = state_dir / "logs" / safe_tag_name(tag)
     log_dir.mkdir(parents=True, exist_ok=True)
-    jsonl_path = log_dir / "codex-events.jsonl"
-    stderr_path = log_dir / "codex-stderr.log"
-    last_message_path = log_dir / "last-message.md"
+    suffix = f"-{safe_tag_name(log_suffix)}" if log_suffix else ""
+    jsonl_path = log_dir / f"codex-events{suffix}.jsonl"
+    stderr_path = log_dir / f"codex-stderr{suffix}.log"
+    last_message_path = log_dir / f"last-message{suffix}.md"
+    cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+    rustup_home = Path(os.environ.get("RUSTUP_HOME", Path.home() / ".rustup"))
+    git_config = Path.home() / ".gitconfig"
+    git_config_dir = Path.home() / ".config/git"
     command = [
         codex_binary,
         "exec",
@@ -534,7 +582,16 @@ def run_codex_agent(
             '":minimal"="read",'
             '":tmpdir"="write",'
             '":slash_tmp"="write",'
-            '":workspace_roots"={"."="write",".git"="write"}'
+            f"{json.dumps(str(cargo_home))}=\"read\","
+            f"{json.dumps(str(rustup_home))}=\"read\","
+            f"{json.dumps(str(git_config))}=\"read\","
+            f"{json.dumps(str(git_config_dir))}=\"read\","
+            '":workspace_roots"={'
+            '"."="write",'
+            '".git"="write",'
+            '".codex"="write",'
+            '".agents"="write"'
+            "}"
             "}"
         ),
         "-c",
@@ -565,19 +622,41 @@ def workspace_version(workspace: Path) -> str:
     return str(data["workspace"]["package"]["version"])
 
 
+def verify_source_unchanged(
+    source_root: Path,
+    source_fingerprint_before: str,
+) -> None:
+    if source_fingerprint(source_root) != source_fingerprint_before:
+        raise ReleaseAgentError("the live dirty checkout changed during the agent run")
+
+
+def commit_generated_lockfile(workspace: Path) -> None:
+    status = git_output(
+        workspace,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+    )
+    if not status:
+        return
+    if status.splitlines() != ["M codex-rs/Cargo.lock"]:
+        raise ReleaseAgentError(
+            "validation left unexpected workspace changes:\n" + status
+        )
+    run_command(["git", "add", "--", "codex-rs/Cargo.lock"], cwd=workspace)
+    run_command(
+        ["git", "commit", "-m", "Update Cargo lockfile for integrated release"],
+        cwd=workspace,
+    )
+
+
 def verify_workspace(
     *,
     workspace: Path,
-    source_root: Path,
-    source_fingerprint_before: str,
     tag: str,
     version: str,
     skip_build: bool,
 ) -> None:
-    source_fingerprint_after = source_fingerprint(source_root)
-    if source_fingerprint_after != source_fingerprint_before:
-        raise ReleaseAgentError("the live dirty checkout changed during the agent run")
-
     if git_output(workspace, "status", "--porcelain"):
         raise ReleaseAgentError("agent left the integration workspace dirty")
 
@@ -624,11 +703,59 @@ def verify_workspace(
             cwd=workspace / "codex-rs",
             timeout=7200,
         )
+        commit_generated_lockfile(workspace)
         built_codex = workspace / "codex-rs/target/debug/codex"
         output = run_command([str(built_codex), "--version"], cwd=workspace).stdout
         if version not in output:
             raise ReleaseAgentError(
                 f"built Codex reports {output.strip()!r}, expected {version!r}"
+            )
+
+
+def verify_with_repairs(
+    *,
+    workspace: Path,
+    source_root: Path,
+    source_fingerprint_before: str,
+    state_dir: Path,
+    tag: str,
+    version: str,
+    branch: str,
+    codex_binary: str,
+    timeout_seconds: int,
+    skip_build: bool,
+    max_repair_attempts: int,
+) -> None:
+    for repair_attempt in range(max_repair_attempts + 1):
+        verify_source_unchanged(source_root, source_fingerprint_before)
+        try:
+            verify_workspace(
+                workspace=workspace,
+                tag=tag,
+                version=version,
+                skip_build=skip_build,
+            )
+            verify_source_unchanged(source_root, source_fingerprint_before)
+            return
+        except ReleaseAgentError as exc:
+            verify_source_unchanged(source_root, source_fingerprint_before)
+            if repair_attempt >= max_repair_attempts:
+                raise
+            run_codex_agent(
+                workspace=workspace,
+                prompt=repair_prompt(
+                    source_root=source_root,
+                    workspace=workspace,
+                    tag=tag,
+                    version=version,
+                    branch=branch,
+                    validation_error=str(exc),
+                ),
+                state_dir=state_dir,
+                tag=tag,
+                codex_binary=codex_binary,
+                timeout_seconds=timeout_seconds,
+                log_suffix=f"repair-{repair_attempt + 1}",
             )
 
 
@@ -732,6 +859,8 @@ def execute(args: argparse.Namespace) -> RunResult:
     source_root = args.source_root.resolve()
     state_dir = args.state_dir.resolve()
     version = validate_release(args.repository, args.release_tag)
+    if args.max_repair_attempts < 0:
+        raise ReleaseAgentError("--max-repair-attempts cannot be negative")
     ledger = ReleaseLedger(state_dir / "state.sqlite3")
     branch: str | None = None
     workspace: Path | None = None
@@ -777,13 +906,18 @@ def execute(args: argparse.Namespace) -> RunResult:
                 codex_binary=args.codex_binary,
                 timeout_seconds=args.timeout_seconds,
             )
-            verify_workspace(
+            verify_with_repairs(
                 workspace=workspace,
                 source_root=source_root,
                 source_fingerprint_before=before,
+                state_dir=state_dir,
                 tag=args.release_tag,
                 version=version,
+                branch=branch,
+                codex_binary=args.codex_binary,
+                timeout_seconds=args.timeout_seconds,
                 skip_build=args.skip_build,
+                max_repair_attempts=args.max_repair_attempts,
             )
             pr_url = None
             if not args.no_publish:
@@ -859,6 +993,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--timeout-seconds",
         type=int,
         default=int(os.environ.get("CODEX_RELEASE_AGENT_TIMEOUT", "7200")),
+    )
+    parser.add_argument(
+        "--max-repair-attempts",
+        type=int,
+        default=int(
+            os.environ.get(
+                "CODEX_RELEASE_AGENT_MAX_REPAIRS",
+                str(DEFAULT_MAX_REPAIR_ATTEMPTS),
+            )
+        ),
+        help=(
+            "Maximum bounded repair turns within one claimed release "
+            f"(default: {DEFAULT_MAX_REPAIR_ATTEMPTS})."
+        ),
     )
     parser.add_argument(
         "--retry-failed",
