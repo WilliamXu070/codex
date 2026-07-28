@@ -3,12 +3,20 @@
 //! The `ToolGenerator` creates new tools based on AI-identified needs
 //! and user requests.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use tracing::info;
 
-use crate::error::{Result, ToolError};
-use crate::spec::{DataType, ToolInput, ToolOutput, ToolSpec};
-use crate::tool::{Tool, ToolCategory, ToolDefinition, ToolType};
+use crate::error::Result;
+use crate::error::ToolError;
+use crate::spec::DataType;
+use crate::spec::ToolInput;
+use crate::spec::ToolOutput;
+use crate::spec::ToolSpec;
+use crate::tool::Tool;
+use crate::tool::ToolCategory;
+use crate::tool::ToolDefinition;
+use crate::tool::ToolType;
 
 /// A request to generate a new tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,16 +3,28 @@
 //! This module provides the main entry point for processing documents
 //! and generating context files using the full extraction pipeline.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
-use crate::chunker::{Chunk, ChunkerConfig, SemanticChunker};
+use crate::chunker::Chunk;
+use crate::chunker::ChunkerConfig;
+use crate::chunker::SemanticChunker;
 use crate::context_file::ContextFile;
-use crate::entity::{Entity, EntityExtractor, EntityExtractorConfig};
-use crate::error::{ContextError, Result};
-use crate::generator::{ContextGenerator, GeneratedContext, GeneratorConfig};
-use crate::relationship::{Relationship, RelationshipExtractor, RelationshipExtractorConfig};
+use crate::entity::Entity;
+use crate::entity::EntityExtractor;
+use crate::entity::EntityExtractorConfig;
+use crate::error::ContextError;
+use crate::error::Result;
+use crate::generator::ContextGenerator;
+use crate::generator::GeneratedContext;
+use crate::generator::GeneratorConfig;
+use crate::relationship::Relationship;
+use crate::relationship::RelationshipExtractor;
+use crate::relationship::RelationshipExtractorConfig;
 use crate::storage::ContextStore;
 
 /// Configuration for the context extraction pipeline.
@@ -606,7 +618,8 @@ This project uses Rust and Python for data processing.
 
     #[test]
     fn test_entity_deduplication() {
-        use crate::entity::{EntityMention, EntityType};
+        use crate::entity::EntityMention;
+        use crate::entity::EntityType;
 
         let entities = vec![
             Entity {

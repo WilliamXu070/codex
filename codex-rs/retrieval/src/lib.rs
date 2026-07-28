@@ -54,9 +54,16 @@ pub mod error;
 
 pub use config::RetrievalConfig;
 pub use engine::UnifiedRetrieval;
-pub use error::{Result, RetrievalError};
+pub use error::Result;
+pub use error::RetrievalError;
 
 // Re-export from dependencies for convenience
-pub use codex_context_files::{ContextFile, ContextStore, Query, QueryResult};
-pub use codex_directory_watcher::{DirectoryConfig, DirectoryWatcher, FileEvent};
-pub use codex_embeddings::{EmbeddingProvider, SimilarityIndex};
+pub use codex_context_files::ContextFile;
+pub use codex_context_files::ContextStore;
+pub use codex_context_files::Query;
+pub use codex_context_files::QueryResult;
+pub use codex_directory_watcher::DirectoryConfig;
+pub use codex_directory_watcher::DirectoryWatcher;
+pub use codex_directory_watcher::FileEvent;
+pub use codex_embeddings::EmbeddingProvider;
+pub use codex_embeddings::SimilarityIndex;

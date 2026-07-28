@@ -118,6 +118,9 @@ class ExecuteDeduplicationTests(unittest.TestCase):
             upstream_url="https://github.com/openai/codex.git",
             codex_binary="codex",
             timeout_seconds=10,
+            required_ci_check="CI required",
+            ci_timeout_seconds=10,
+            ci_poll_interval_seconds=0,
             max_repair_attempts=2,
             skip_build=True,
             no_publish=True,
@@ -203,6 +206,10 @@ class ExecuteDeduplicationTests(unittest.TestCase):
                 ) as merge,
                 mock.patch.object(
                     agent,
+                    "wait_for_pull_request_ci",
+                ) as wait_for_ci,
+                mock.patch.object(
+                    agent,
                     "install_active_cli",
                     return_value=installed,
                 ) as install,
@@ -215,8 +222,132 @@ class ExecuteDeduplicationTests(unittest.TestCase):
             self.assertEqual(first.installed_cli, str(installed.cli))
             self.assertEqual(second.status, "skipped")
             publish.assert_called_once()
+            wait_for_ci.assert_called_once_with(
+                workspace=workspace,
+                pr_url="https://example.test/pr/1",
+                required_check="CI required",
+                timeout_seconds=10,
+                poll_interval_seconds=0,
+            )
             merge.assert_called_once()
             install.assert_called_once()
+
+    def test_failed_ci_prevents_merge_and_activation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            workspace = root / "workspace"
+            source.mkdir()
+            workspace.mkdir()
+            args = self.make_args(source, root / "state")
+            args.no_publish = False
+
+            with (
+                mock.patch.object(agent, "source_fingerprint", return_value="same"),
+                mock.patch.object(
+                    agent,
+                    "prepare_workspace",
+                    return_value=(
+                        workspace,
+                        "agent/upstream-0.146.0-alpha.14",
+                        "abc123",
+                        workspace / ".codex-release-context",
+                    ),
+                ),
+                mock.patch.object(agent, "run_codex_agent"),
+                mock.patch.object(agent, "verify_with_repairs"),
+                mock.patch.object(
+                    agent,
+                    "publish_branch",
+                    return_value="https://example.test/pr/1",
+                ),
+                mock.patch.object(
+                    agent,
+                    "wait_for_pull_request_ci",
+                    side_effect=agent.ReleaseAgentError("CI required failed"),
+                ),
+                mock.patch.object(agent, "merge_pull_request") as merge,
+                mock.patch.object(agent, "install_active_cli") as install,
+            ):
+                with self.assertRaisesRegex(
+                    agent.ReleaseAgentError,
+                    "CI required failed",
+                ):
+                    agent.execute(args)
+
+            merge.assert_not_called()
+            install.assert_not_called()
+            ledger = agent.ReleaseLedger(args.state_dir / "state.sqlite3")
+            row = ledger.get(args.repository, args.release_tag)
+            self.assertIsNotNone(row)
+            assert row is not None
+            self.assertEqual(row["status"], "failed")
+
+
+class PullRequestCiGateTests(unittest.TestCase):
+    def test_successful_required_check_allows_merge(self) -> None:
+        with mock.patch.object(
+            agent,
+            "read_pull_request_checks",
+            return_value=[
+                {
+                    "name": "CI required",
+                    "state": "SUCCESS",
+                    "bucket": "pass",
+                    "link": "https://example.test/check/1",
+                }
+            ],
+        ):
+            agent.wait_for_pull_request_ci(
+                workspace=Path("/tmp/workspace"),
+                pr_url="https://example.test/pr/1",
+                required_check="CI required",
+                timeout_seconds=10,
+                poll_interval_seconds=0,
+            )
+
+    def test_failed_required_check_fails_closed(self) -> None:
+        with mock.patch.object(
+            agent,
+            "read_pull_request_checks",
+            return_value=[
+                {
+                    "name": "CI required",
+                    "state": "FAILURE",
+                    "bucket": "fail",
+                    "link": "https://example.test/check/1",
+                }
+            ],
+        ):
+            with self.assertRaisesRegex(
+                agent.ReleaseAgentError,
+                "required CI check 'CI required' failed",
+            ):
+                agent.wait_for_pull_request_ci(
+                    workspace=Path("/tmp/workspace"),
+                    pr_url="https://example.test/pr/1",
+                    required_check="CI required",
+                    timeout_seconds=10,
+                    poll_interval_seconds=0,
+                )
+
+    def test_missing_required_check_times_out_without_merging(self) -> None:
+        with mock.patch.object(
+            agent,
+            "read_pull_request_checks",
+            return_value=[],
+        ):
+            with self.assertRaisesRegex(
+                agent.ReleaseAgentError,
+                "timed out waiting for required CI check 'CI required'",
+            ):
+                agent.wait_for_pull_request_ci(
+                    workspace=Path("/tmp/workspace"),
+                    pr_url="https://example.test/pr/1",
+                    required_check="CI required",
+                    timeout_seconds=0,
+                    poll_interval_seconds=0,
+                )
 
 
 class AgentSandboxTests(unittest.TestCase):

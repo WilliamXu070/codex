@@ -1,9 +1,11 @@
 //! Similarity computation for embeddings.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::Embedding;
-use crate::error::{EmbeddingError, Result};
+use crate::error::EmbeddingError;
+use crate::error::Result;
 
 /// Compute the cosine similarity between two embeddings.
 ///

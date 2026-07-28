@@ -4,13 +4,19 @@
 //! input validation, and result capture.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use serde::Deserialize;
+use serde::Serialize;
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
-use crate::error::{Result, ToolError};
-use crate::tool::{Tool, ToolType};
+use crate::error::Result;
+use crate::error::ToolError;
+use crate::tool::Tool;
+use crate::tool::ToolType;
 
 /// Context for tool execution.
 #[derive(Debug, Clone, Default)]

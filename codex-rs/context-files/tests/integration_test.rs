@@ -5,7 +5,10 @@
 
 use std::path::PathBuf;
 
-use codex_context_files::{ContextPipeline, EntityType, PipelineBuilder, RelationshipType};
+use codex_context_files::ContextPipeline;
+use codex_context_files::EntityType;
+use codex_context_files::PipelineBuilder;
+use codex_context_files::RelationshipType;
 
 /// Get the path to the test fixtures directory.
 fn fixtures_dir() -> PathBuf {

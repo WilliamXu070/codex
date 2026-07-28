@@ -3,13 +3,19 @@
 //! The `ToolStore` handles reading and writing tools to disk.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 use tokio::fs;
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
-use crate::error::{Result, StorageError, ToolError};
-use crate::tool::{Tool, ToolCategory};
+use crate::error::Result;
+use crate::error::StorageError;
+use crate::error::ToolError;
+use crate::tool::Tool;
+use crate::tool::ToolCategory;
 
 /// Storage backend for tools.
 pub struct ToolStore {

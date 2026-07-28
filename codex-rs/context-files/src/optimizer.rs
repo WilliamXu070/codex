@@ -3,14 +3,18 @@
 //! The `TreeOptimizer` provides algorithms for optimizing the context tree
 //! by merging redundant nodes, pruning stale content, and compressing depth.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
 
-use chrono::{Duration, Utc};
-use tracing::{debug, info};
+use chrono::Duration;
+use chrono::Utc;
+use tracing::debug;
+use tracing::info;
 
 use crate::error::Result;
 use crate::llm::LlmAnalyzer;
-use crate::node::{ContextNode, NodeType};
+use crate::node::ContextNode;
+use crate::node::NodeType;
 use crate::tree::ContextTree;
 
 /// Configuration for the tree optimizer.

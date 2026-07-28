@@ -3,7 +3,8 @@
 //! The query module handles parsing natural language queries,
 //! identifying intent, and mapping queries to relevant concepts.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::context_file::ContextFile;
 

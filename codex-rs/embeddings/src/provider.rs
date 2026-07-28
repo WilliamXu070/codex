@@ -2,11 +2,17 @@
 //!
 //! Supports multiple embedding providers including OpenAI and local models.
 
-use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use codex_http_client::HttpClient;
+use codex_http_client::HttpClientBuilder;
+use serde::Deserialize;
+use serde::Serialize;
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 use crate::Embedding;
-use crate::error::{EmbeddingError, Result};
+use crate::error::EmbeddingError;
+use crate::error::Result;
 
 /// Request for generating embeddings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,7 +110,7 @@ pub struct OpenAIProvider {
     base_url: String,
 
     /// HTTP client.
-    client: reqwest::Client,
+    client: HttpClient,
 
     /// Default model.
     default_model: String,
@@ -116,7 +122,9 @@ impl OpenAIProvider {
         Self {
             api_key: std::env::var("OPENAI_API_KEY").ok(),
             base_url: "https://api.openai.com/v1".to_string(),
-            client: reqwest::Client::new(),
+            client: HttpClientBuilder::new()
+                .build_direct()
+                .expect("embedding HTTP client should initialize"),
             default_model: "text-embedding-3-small".to_string(),
         }
     }
@@ -193,7 +201,7 @@ impl EmbeddingProvider for OpenAIProvider {
             .send()
             .await?;
 
-        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        if response.status() == http::StatusCode::TOO_MANY_REQUESTS {
             let retry_after = response
                 .headers()
                 .get("retry-after")

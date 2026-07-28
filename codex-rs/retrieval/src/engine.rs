@@ -4,16 +4,23 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::debug;
+use tracing::info;
 
-use codex_context_files::{
-    ConceptExtractor, ConceptIndex, ContextStore, QueryResult, RetrievalEngine,
-};
-use codex_directory_watcher::{DirectoryConfig, DirectoryWatcher, FileEvent};
+use codex_context_files::ConceptExtractor;
+use codex_context_files::ConceptIndex;
+use codex_context_files::ContextStore;
+use codex_context_files::QueryResult;
+use codex_context_files::RetrievalEngine;
+use codex_directory_watcher::DirectoryConfig;
+use codex_directory_watcher::DirectoryWatcher;
+use codex_directory_watcher::FileEvent;
 use codex_embeddings::SimilarityIndex;
 
-use crate::config::{EmbeddingProviderType, RetrievalConfig};
-use crate::error::{Result, RetrievalError};
+use crate::config::EmbeddingProviderType;
+use crate::config::RetrievalConfig;
+use crate::error::Result;
+use crate::error::RetrievalError;
 
 /// Unified retrieval engine that combines all retrieval components.
 ///

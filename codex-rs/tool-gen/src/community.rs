@@ -3,11 +3,16 @@
 //! The `CommunityHub` handles publishing, discovering, and installing
 //! tools from the community repository.
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use chrono::DateTime;
+use chrono::Utc;
+use serde::Deserialize;
+use serde::Serialize;
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
-use crate::error::{Result, ToolError};
+use crate::error::Result;
+use crate::error::ToolError;
 use crate::tool::Tool;
 
 /// A tool that has been shared with the community.

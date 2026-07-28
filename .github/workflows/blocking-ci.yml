@@ -12,6 +12,7 @@ jobs:
   # version-controlled list that the main-branch ruleset should require.
   bazel:
     name: Bazel
+    if: ${{ github.repository == 'openai/codex' }}
     uses: ./.github/workflows/bazel.yml
     secrets: inherit
 
@@ -30,6 +31,12 @@ jobs:
     uses: ./.github/workflows/codespell.yml
     secrets: inherit
 
+  fork-ci:
+    name: Fork CI
+    if: ${{ github.repository != 'openai/codex' }}
+    uses: ./.github/workflows/fork-ci.yml
+    secrets: inherit
+
   repo-checks:
     name: repo-checks
     uses: ./.github/workflows/repo-checks.yml
@@ -37,11 +44,13 @@ jobs:
 
   rust-ci:
     name: rust-ci
+    if: ${{ github.repository == 'openai/codex' }}
     uses: ./.github/workflows/rust-ci.yml
     secrets: inherit
 
   sdk:
     name: sdk
+    if: ${{ github.repository == 'openai/codex' }}
     uses: ./.github/workflows/sdk.yml
     secrets: inherit
 
@@ -55,6 +64,7 @@ jobs:
       - blob-size-policy
       - cargo-deny
       - codespell
+      - fork-ci
       - repo-checks
       - rust-ci
       - sdk
@@ -76,4 +86,5 @@ jobs:
       - name: Require successful dependencies
         env:
           NEEDS: ${{ toJSON(needs) }}
+          REQUIRED_DEPENDENCIES: ${{ github.repository == 'openai/codex' && 'bazel,blob-size-policy,cargo-deny,codespell,repo-checks,rust-ci,sdk' || 'blob-size-policy,cargo-deny,codespell,fork-ci,repo-checks' }}
         run: python3 .github/scripts/check_ci_results.py

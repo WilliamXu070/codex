@@ -2,12 +2,18 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use serde::Deserialize;
+use serde::Serialize;
+use tracing::debug;
+use tracing::info;
 
 use crate::Embedding;
-use crate::error::{EmbeddingError, Result};
-use crate::similarity::{SimilarityResult, cosine_similarity, find_top_k, normalize};
+use crate::error::EmbeddingError;
+use crate::error::Result;
+use crate::similarity::SimilarityResult;
+use crate::similarity::cosine_similarity;
+use crate::similarity::find_top_k;
+use crate::similarity::normalize;
 
 /// An entry in the similarity index.
 #[derive(Debug, Clone, Serialize, Deserialize)]

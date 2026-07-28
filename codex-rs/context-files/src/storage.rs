@@ -4,13 +4,18 @@
 //! maintaining an index, and ensuring atomic updates.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 use tokio::fs;
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 use crate::context_file::ContextFile;
-use crate::error::{ContextError, Result, StorageError};
+use crate::error::ContextError;
+use crate::error::Result;
+use crate::error::StorageError;
 
 /// Storage backend for context files.
 ///

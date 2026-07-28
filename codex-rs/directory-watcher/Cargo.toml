@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "Directory watching and file indexing for Codex context system"
 
+[lib]
+doctest = false
+
 [dependencies]
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
@@ -18,7 +21,6 @@ serde_json.workspace = true
 
 # Error handling
 thiserror.workspace = true
-anyhow.workspace = true
 
 # Time handling
 chrono.workspace = true
@@ -31,7 +33,6 @@ walkdir.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-tokio-test.workspace = true
 tempfile.workspace = true
 pretty_assertions.workspace = true
 

@@ -6,13 +6,17 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use tracing::{debug, info};
+use tracing::debug;
+use tracing::info;
 
 use crate::context_file::ContextFile;
 use crate::error::Result;
 use crate::extraction::ConceptExtractor;
 use crate::index::ConceptIndex;
-use crate::query::{MatchReason, Query, QueryResult, ScoredResult};
+use crate::query::MatchReason;
+use crate::query::Query;
+use crate::query::QueryResult;
+use crate::query::ScoredResult;
 use crate::storage::ContextStore;
 
 /// Configuration for the retrieval engine.

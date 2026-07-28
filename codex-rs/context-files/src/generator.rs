@@ -3,11 +3,14 @@
 //! This module takes the output from entity and relationship extraction
 //! and generates structured context files that can be used for retrieval.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::context_file::ContextFile;
-use crate::entity::{Entity, EntityType};
-use crate::relationship::{Relationship, RelationshipType};
+use crate::entity::Entity;
+use crate::entity::EntityType;
+use crate::relationship::Relationship;
+use crate::relationship::RelationshipType;
 
 /// Configuration for context file generation.
 #[derive(Debug, Clone)]
@@ -599,7 +602,8 @@ mod tests {
         target: &Entity,
         rel_type: RelationshipType,
     ) -> Relationship {
-        use crate::relationship::{EvidenceType, RelationshipEvidence};
+        use crate::relationship::EvidenceType;
+        use crate::relationship::RelationshipEvidence;
 
         Relationship {
             id: format!("{}-{}", source.id, target.id),

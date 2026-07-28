@@ -6,10 +6,17 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
-use crate::error::{ContextError, Result};
-use crate::node::{ContextNode, CrossLinkType, DomainDetection, NodeType, RelatedNode};
+use crate::error::ContextError;
+use crate::error::Result;
+use crate::node::ContextNode;
+use crate::node::CrossLinkType;
+use crate::node::DomainDetection;
+use crate::node::NodeType;
+use crate::node::RelatedNode;
 
 /// The main hierarchical context tree.
 ///

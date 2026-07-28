@@ -7,16 +7,23 @@
 //! - Context file updates
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use tokio::sync::{RwLock, mpsc};
-use tracing::{debug, info, warn};
+use chrono::DateTime;
+use chrono::Utc;
+use serde::Deserialize;
+use serde::Serialize;
+use tokio::sync::RwLock;
+use tokio::sync::mpsc;
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 use crate::context_file::ContextFile;
-use crate::error::{ContextError, Result};
+use crate::error::ContextError;
+use crate::error::Result;
 use crate::storage::ContextStore;
 
 /// Synchronization event types.
@@ -330,7 +337,8 @@ impl SyncManager {
     /// Compute a hash of the context file content.
     fn compute_hash(cf: &ContextFile) -> String {
         use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use std::hash::Hash;
+        use std::hash::Hasher;
 
         let mut hasher = DefaultHasher::new();
         cf.summary.hash(&mut hasher);

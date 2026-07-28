@@ -4,8 +4,10 @@
 //! Each context file contains structured metadata, content references, and
 //! semantic embeddings for retrieval.
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::DateTime;
+use chrono::Utc;
+use serde::Deserialize;
+use serde::Serialize;
 use uuid::Uuid;
 
 /// A context file represents a single concept in the AI's memory.

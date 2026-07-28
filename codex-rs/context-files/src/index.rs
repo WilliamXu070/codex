@@ -3,12 +3,16 @@
 //! The `ConceptIndex` maintains an inverted index of concepts for
 //! efficient retrieval based on keywords, tags, and relationships.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use tracing::debug;
 
-use crate::concept::{Concept, ConceptRelation, RelationType};
+use crate::concept::Concept;
+use crate::concept::ConceptRelation;
+use crate::concept::RelationType;
 
 /// An inverted index for concept lookup.
 ///

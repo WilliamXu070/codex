@@ -2,7 +2,8 @@
 
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 /// Configuration for the unified retrieval engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]

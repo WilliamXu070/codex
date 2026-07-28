@@ -1,13 +1,16 @@
 //! Embedding cache for efficient retrieval.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use tokio::fs;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::debug;
+use tracing::info;
 
 use crate::Embedding;
 use crate::error::Result;
@@ -71,7 +74,8 @@ impl EmbeddingCache {
     /// Compute a hash for cache lookup.
     fn hash_key(text: &str, model: &str) -> String {
         use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use std::hash::Hash;
+        use std::hash::Hasher;
 
         let mut hasher = DefaultHasher::new();
         text.hash(&mut hasher);

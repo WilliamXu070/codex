@@ -1,12 +1,16 @@
 //! File indexing for directory scanning.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::DateTime;
+use chrono::Utc;
+use serde::Deserialize;
+use serde::Serialize;
 use tokio::fs;
-use tracing::{debug, info};
+use tracing::debug;
+use tracing::info;
 use walkdir::WalkDir;
 
 use crate::config::DirectoryConfig;
@@ -54,7 +58,8 @@ impl IndexedFile {
     /// Compute content hash.
     pub async fn compute_hash(&mut self) -> Result<()> {
         use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use std::hash::Hash;
+        use std::hash::Hasher;
 
         if self.attributes.is_file {
             let content = fs::read(&self.path).await?;

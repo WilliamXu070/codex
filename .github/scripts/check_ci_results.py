@@ -15,10 +15,23 @@ def main() -> None:
     # Keep result policy in one script so blocking-ci and postmerge-ci cannot
     # drift in how they interpret dependency conclusions.
     needs = json.loads(os.environ["NEEDS"])
+    required_raw = os.environ.get("REQUIRED_DEPENDENCIES", "")
+    required = (
+        {name.strip() for name in required_raw.split(",") if name.strip()}
+        if required_raw
+        else set(needs)
+    )
+    missing = sorted(required - set(needs))
+    if missing:
+        print("Required CI dependencies were not present:")
+        for name in missing:
+            print(name)
+        raise SystemExit(1)
+
     failures = sorted(
         (name, dependency["result"])
         for name, dependency in needs.items()
-        if dependency["result"] != "success"
+        if name in required and dependency["result"] != "success"
     )
 
     if failures:

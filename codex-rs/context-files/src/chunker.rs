@@ -4,7 +4,8 @@
 //! optimized for RAG-style retrieval. Chunks are split on natural boundaries
 //! (paragraphs, sections) rather than fixed character counts.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::path::Path;
 
 /// A chunk of text extracted from a document.
