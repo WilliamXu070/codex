@@ -17,6 +17,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import textwrap
 import tomllib
 import urllib.request
@@ -29,6 +30,10 @@ DEFAULT_STATE_DIR = Path.home() / ".local/lib/codex/release-agent"
 DEFAULT_UPSTREAM_URL = "https://github.com/openai/codex.git"
 DEFAULT_REPOSITORY = "openai/codex"
 DEFAULT_MAX_REPAIR_ATTEMPTS = 2
+DEFAULT_INSTALL_ROOT = Path.home() / ".local/lib/codex/releases"
+DEFAULT_ACTIVE_CLI = Path.home() / ".local/bin/codex"
+DEFAULT_ACTIVE_TUI = Path.home() / ".local/bin/codex-tui"
+DEFAULT_CURRENT_LINK = Path.home() / ".local/lib/codex/current"
 TAG_RE = re.compile(
     r"^rust-v(?P<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$"
 )
@@ -53,14 +58,27 @@ class RunResult:
     branch: str | None = None
     workspace: str | None = None
     pr_url: str | None = None
+    merge_commit: str | None = None
+    installed_cli: str | None = None
+    previous_cli: str | None = None
     reason: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class InstalledRelease:
+    release_dir: Path
+    cli: Path
+    tui: Path
+    previous_cli: str | None
+    previous_tui: str | None
+    previous_current: str | None
 
 
 class ReleaseLedger:
     def __init__(self, path: Path):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.connect() as conn:
+        with contextlib.closing(self.connect()) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS release_runs (
@@ -74,11 +92,23 @@ class ReleaseLedger:
                     branch TEXT,
                     workspace TEXT,
                     pr_url TEXT,
+                    merge_commit TEXT,
+                    installed_cli TEXT,
+                    previous_cli TEXT,
                     error TEXT,
                     PRIMARY KEY (repository, tag)
                 )
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(release_runs)")
+            }
+            for column in ("merge_commit", "installed_cli", "previous_cli"):
+                if column not in columns:
+                    conn.execute(
+                        f"ALTER TABLE release_runs ADD COLUMN {column} TEXT"
+                    )
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30)
@@ -94,7 +124,7 @@ class ReleaseLedger:
         retry_failed: bool,
     ) -> Claim:
         now = utc_now()
-        with self.connect() as conn:
+        with contextlib.closing(self.connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 """
@@ -143,8 +173,11 @@ class ReleaseLedger:
         branch: str,
         workspace: Path,
         pr_url: str | None,
+        merge_commit: str | None = None,
+        installed_cli: Path | None = None,
+        previous_cli: str | None = None,
     ) -> None:
-        with self.connect() as conn:
+        with contextlib.closing(self.connect()) as conn, conn:
             conn.execute(
                 """
                 UPDATE release_runs
@@ -153,6 +186,9 @@ class ReleaseLedger:
                     branch = ?,
                     workspace = ?,
                     pr_url = ?,
+                    merge_commit = ?,
+                    installed_cli = ?,
+                    previous_cli = ?,
                     error = NULL
                 WHERE repository = ? AND tag = ?
                 """,
@@ -161,6 +197,9 @@ class ReleaseLedger:
                     branch,
                     str(workspace),
                     pr_url,
+                    merge_commit,
+                    str(installed_cli) if installed_cli else None,
+                    previous_cli,
                     repository,
                     tag,
                 ),
@@ -175,7 +214,7 @@ class ReleaseLedger:
         branch: str | None = None,
         workspace: Path | None = None,
     ) -> None:
-        with self.connect() as conn:
+        with contextlib.closing(self.connect()) as conn, conn:
             conn.execute(
                 """
                 UPDATE release_runs
@@ -197,7 +236,7 @@ class ReleaseLedger:
             )
 
     def get(self, repository: str, tag: str) -> dict[str, object] | None:
-        with self.connect() as conn:
+        with contextlib.closing(self.connect()) as conn, conn:
             row = conn.execute(
                 """
                 SELECT *
@@ -813,8 +852,9 @@ def publish_branch(
             - `cargo fmt --all -- --check` passed.
             - `cargo build -p codex-cli -p codex-tui` passed.
 
-            This PR was produced by one deduplicated release-agent run. Review before
-            merging; it does not update the live binary automatically.
+            This PR was produced by one deduplicated release-agent run. The
+            orchestrator merges it, installs the validated binaries into a permanent
+            release directory, and atomically activates them.
             """
         ).strip()
         + "\n",
@@ -832,7 +872,6 @@ def publish_branch(
                 "main",
                 "--head",
                 branch,
-                "--draft",
                 "--title",
                 f"Integrate Codex {version}",
                 "--body-file",
@@ -842,6 +881,180 @@ def publish_branch(
         ).stdout.strip()
     finally:
         body_path.unlink(missing_ok=True)
+
+
+def merge_pull_request(
+    *,
+    workspace: Path,
+    pr_url: str,
+) -> str:
+    def pr_state() -> dict[str, object]:
+        output = run_command(
+            [
+                "gh",
+                "pr",
+                "view",
+                pr_url,
+                "--json",
+                "state,isDraft,mergeCommit",
+            ],
+            cwd=workspace,
+        ).stdout
+        return dict(json.loads(output))
+
+    state = pr_state()
+    if state.get("state") != "MERGED":
+        if bool(state.get("isDraft")):
+            run_command(["gh", "pr", "ready", pr_url], cwd=workspace)
+        run_command(["gh", "pr", "merge", pr_url, "--merge"], cwd=workspace)
+        state = pr_state()
+    if state.get("state") != "MERGED":
+        raise ReleaseAgentError(f"pull request did not merge: {pr_url}")
+
+    merge_commit_data = state.get("mergeCommit")
+    if not isinstance(merge_commit_data, dict):
+        raise ReleaseAgentError(f"pull request has no merge commit: {pr_url}")
+    merge_commit = str(merge_commit_data.get("oid", ""))
+    if not merge_commit:
+        raise ReleaseAgentError(f"pull request has no merge commit SHA: {pr_url}")
+
+    run_command(["git", "fetch", "origin", "main"], cwd=workspace)
+    run_command(
+        ["git", "merge-base", "--is-ancestor", "HEAD", "origin/main"],
+        cwd=workspace,
+    )
+    actual_merge_commit = git_output(workspace, "rev-parse", "origin/main")
+    if actual_merge_commit != merge_commit:
+        run_command(
+            ["git", "merge-base", "--is-ancestor", merge_commit, "origin/main"],
+            cwd=workspace,
+        )
+    return merge_commit
+
+
+def symlink_target(path: Path) -> str | None:
+    if path.is_symlink():
+        return os.readlink(path)
+    if path.exists():
+        raise ReleaseAgentError(f"refusing to replace non-symlink path: {path}")
+    return None
+
+
+def replace_symlink(path: Path, target: Path | str | None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.parent / f".{path.name}.release-agent-{os.getpid()}"
+    temporary.unlink(missing_ok=True)
+    if target is None:
+        path.unlink(missing_ok=True)
+        return
+    temporary.symlink_to(target)
+    os.replace(temporary, path)
+
+
+def install_active_cli(
+    *,
+    workspace: Path,
+    tag: str,
+    version: str,
+    merge_commit: str,
+    pr_url: str,
+    install_root: Path,
+    active_cli: Path,
+    active_tui: Path,
+    current_link: Path,
+) -> InstalledRelease:
+    built_cli = workspace / "codex-rs/target/debug/codex"
+    built_tui = workspace / "codex-rs/target/debug/codex-tui"
+    for binary in (built_cli, built_tui):
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            raise ReleaseAgentError(f"validated build artifact is missing: {binary}")
+        output = run_command([str(binary), "--version"], cwd=workspace).stdout
+        if version not in output:
+            raise ReleaseAgentError(
+                f"build artifact reports {output.strip()!r}, expected {version!r}"
+            )
+
+    release_name = f"{tag.removeprefix('rust-v')}-{merge_commit[:12]}"
+    release_dir = install_root / release_name
+    release_debug = release_dir / "debug"
+    cli = release_debug / "codex"
+    tui = release_debug / "codex-tui"
+    install_root.mkdir(parents=True, exist_ok=True)
+    previous_cli = symlink_target(active_cli)
+    previous_tui = symlink_target(active_tui)
+    previous_current = symlink_target(current_link)
+
+    if not release_dir.exists():
+        temporary = Path(
+            tempfile.mkdtemp(
+                prefix=f".install-{safe_tag_name(tag)}-",
+                dir=install_root,
+            )
+        )
+        try:
+            temporary_debug = temporary / "debug"
+            temporary_debug.mkdir()
+            shutil.copy2(built_cli, temporary_debug / "codex")
+            shutil.copy2(built_tui, temporary_debug / "codex-tui")
+            metadata = {
+                "repository": DEFAULT_REPOSITORY,
+                "tag": tag,
+                "version": version,
+                "merge_commit": merge_commit,
+                "pr_url": pr_url,
+                "installed_at": utc_now(),
+                "previous_cli": previous_cli,
+                "previous_tui": previous_tui,
+                "previous_current": previous_current,
+            }
+            (temporary / "release.json").write_text(
+                json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            run_command(
+                [str(temporary_debug / "codex"), "--version"],
+                cwd=workspace,
+            )
+            run_command(
+                [str(temporary_debug / "codex-tui"), "--version"],
+                cwd=workspace,
+            )
+            os.replace(temporary, release_dir)
+        finally:
+            if temporary.exists():
+                shutil.rmtree(temporary)
+
+    for binary in (cli, tui):
+        output = run_command([str(binary), "--version"], cwd=workspace).stdout
+        if version not in output:
+            raise ReleaseAgentError(
+                f"installed binary reports {output.strip()!r}, expected {version!r}"
+            )
+
+    try:
+        replace_symlink(active_cli, cli)
+        replace_symlink(active_tui, tui)
+        replace_symlink(current_link, release_dir)
+        for binary in (active_cli, active_tui):
+            output = run_command([str(binary), "--version"], cwd=workspace).stdout
+            if version not in output:
+                raise ReleaseAgentError(
+                    f"active binary reports {output.strip()!r}, expected {version!r}"
+                )
+    except Exception:
+        replace_symlink(active_cli, previous_cli)
+        replace_symlink(active_tui, previous_tui)
+        replace_symlink(current_link, previous_current)
+        raise
+
+    return InstalledRelease(
+        release_dir=release_dir,
+        cli=cli,
+        tui=tui,
+        previous_cli=previous_cli,
+        previous_tui=previous_tui,
+        previous_current=previous_current,
+    )
 
 
 @contextlib.contextmanager
@@ -920,6 +1133,8 @@ def execute(args: argparse.Namespace) -> RunResult:
                 max_repair_attempts=args.max_repair_attempts,
             )
             pr_url = None
+            merge_commit = None
+            installed = None
             if not args.no_publish:
                 pr_url = publish_branch(
                     workspace=workspace,
@@ -927,12 +1142,31 @@ def execute(args: argparse.Namespace) -> RunResult:
                     tag=args.release_tag,
                     version=version,
                 )
+                merge_commit = merge_pull_request(
+                    workspace=workspace,
+                    pr_url=pr_url,
+                )
+                if not args.no_activate:
+                    installed = install_active_cli(
+                        workspace=workspace,
+                        tag=args.release_tag,
+                        version=version,
+                        merge_commit=merge_commit,
+                        pr_url=pr_url,
+                        install_root=args.install_root.resolve(),
+                        active_cli=args.active_cli.expanduser().absolute(),
+                        active_tui=args.active_tui.expanduser().absolute(),
+                        current_link=args.current_link.expanduser().absolute(),
+                    )
             ledger.complete(
                 args.repository,
                 args.release_tag,
                 branch=branch,
                 workspace=workspace,
                 pr_url=pr_url,
+                merge_commit=merge_commit,
+                installed_cli=installed.cli if installed else None,
+                previous_cli=installed.previous_cli if installed else None,
             )
             return RunResult(
                 repository=args.repository,
@@ -941,6 +1175,9 @@ def execute(args: argparse.Namespace) -> RunResult:
                 branch=branch,
                 workspace=str(workspace),
                 pr_url=pr_url,
+                merge_commit=merge_commit,
+                installed_cli=str(installed.cli) if installed else None,
+                previous_cli=installed.previous_cli if installed else None,
             )
         except Exception as exc:
             ledger.fail(
@@ -1016,7 +1253,36 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-publish",
         action="store_true",
-        help="Validate the integration without pushing or opening a PR.",
+        help="Validate without pushing, merging, installing, or activating.",
+    )
+    parser.add_argument(
+        "--no-activate",
+        action="store_true",
+        help="Push and merge the integration without changing the active CLI.",
+    )
+    parser.add_argument(
+        "--install-root",
+        type=Path,
+        default=Path(
+            os.environ.get("CODEX_RELEASE_INSTALL_ROOT", DEFAULT_INSTALL_ROOT)
+        ),
+    )
+    parser.add_argument(
+        "--active-cli",
+        type=Path,
+        default=Path(os.environ.get("CODEX_ACTIVE_CLI", DEFAULT_ACTIVE_CLI)),
+    )
+    parser.add_argument(
+        "--active-tui",
+        type=Path,
+        default=Path(os.environ.get("CODEX_ACTIVE_TUI", DEFAULT_ACTIVE_TUI)),
+    )
+    parser.add_argument(
+        "--current-link",
+        type=Path,
+        default=Path(
+            os.environ.get("CODEX_RELEASE_CURRENT_LINK", DEFAULT_CURRENT_LINK)
+        ),
     )
     parser.add_argument(
         "--skip-build",

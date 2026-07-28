@@ -121,6 +121,11 @@ class ExecuteDeduplicationTests(unittest.TestCase):
             max_repair_attempts=2,
             skip_build=True,
             no_publish=True,
+            no_activate=False,
+            install_root=state / "releases",
+            active_cli=state / "bin/codex",
+            active_tui=state / "bin/codex-tui",
+            current_link=state / "current",
         )
 
     def test_duplicate_execute_launches_codex_once(self) -> None:
@@ -153,6 +158,65 @@ class ExecuteDeduplicationTests(unittest.TestCase):
             self.assertEqual(first.status, "succeeded")
             self.assertEqual(second.status, "skipped")
             run_agent.assert_called_once()
+
+    def test_release_is_published_merged_and_activated_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            workspace = root / "workspace"
+            source.mkdir()
+            workspace.mkdir()
+            args = self.make_args(source, root / "state")
+            args.no_publish = False
+            installed = agent.InstalledRelease(
+                release_dir=root / "release",
+                cli=root / "release/debug/codex",
+                tui=root / "release/debug/codex-tui",
+                previous_cli="/previous/codex",
+                previous_tui="/previous/codex-tui",
+                previous_current="/previous",
+            )
+
+            with (
+                mock.patch.object(agent, "source_fingerprint", return_value="same"),
+                mock.patch.object(
+                    agent,
+                    "prepare_workspace",
+                    return_value=(
+                        workspace,
+                        "agent/upstream-0.146.0-alpha.14",
+                        "abc123",
+                        workspace / ".codex-release-context",
+                    ),
+                ),
+                mock.patch.object(agent, "run_codex_agent"),
+                mock.patch.object(agent, "verify_with_repairs"),
+                mock.patch.object(
+                    agent,
+                    "publish_branch",
+                    return_value="https://example.test/pr/1",
+                ) as publish,
+                mock.patch.object(
+                    agent,
+                    "merge_pull_request",
+                    return_value="abc123def456",
+                ) as merge,
+                mock.patch.object(
+                    agent,
+                    "install_active_cli",
+                    return_value=installed,
+                ) as install,
+            ):
+                first = agent.execute(args)
+                second = agent.execute(args)
+
+            self.assertEqual(first.status, "succeeded")
+            self.assertEqual(first.merge_commit, "abc123def456")
+            self.assertEqual(first.installed_cli, str(installed.cli))
+            self.assertEqual(second.status, "skipped")
+            publish.assert_called_once()
+            merge.assert_called_once()
+            install.assert_called_once()
 
 
 class AgentSandboxTests(unittest.TestCase):
@@ -270,6 +334,69 @@ class RepairLoopTests(unittest.TestCase):
             self.assertEqual(
                 agent.git_output(workspace, "log", "-1", "--format=%s"),
                 "Update Cargo lockfile for integrated release",
+            )
+
+
+class ActiveInstallTests(unittest.TestCase):
+    def make_binary(self, path: Path, name: str, version: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"#!/bin/sh\nprintf '%s\\n' '{name} {version}'\n",
+            encoding="utf-8",
+        )
+        path.chmod(0o755)
+
+    def test_install_is_permanent_atomic_and_records_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "workspace"
+            built = workspace / "codex-rs/target/debug"
+            self.make_binary(built / "codex", "codex-cli", "0.146.0-alpha.14")
+            self.make_binary(
+                built / "codex-tui",
+                "codex-tui",
+                "0.146.0-alpha.14",
+            )
+
+            old_release = root / "releases/old/debug"
+            self.make_binary(old_release / "codex", "codex-cli", "0.144.6")
+            self.make_binary(old_release / "codex-tui", "codex-tui", "0.144.6")
+            active_cli = root / "bin/codex"
+            active_tui = root / "bin/codex-tui"
+            current = root / "current"
+            active_cli.parent.mkdir()
+            active_cli.symlink_to(old_release / "codex")
+            active_tui.symlink_to(old_release / "codex-tui")
+            current.symlink_to(old_release.parent)
+
+            installed = agent.install_active_cli(
+                workspace=workspace,
+                tag="rust-v0.146.0-alpha.14",
+                version="0.146.0-alpha.14",
+                merge_commit="abc123def4567890",
+                pr_url="https://example.test/pr/1",
+                install_root=root / "releases",
+                active_cli=active_cli,
+                active_tui=active_tui,
+                current_link=current,
+            )
+
+            self.assertEqual(installed.previous_cli, str(old_release / "codex"))
+            self.assertEqual(
+                installed.previous_tui,
+                str(old_release / "codex-tui"),
+            )
+            self.assertEqual(os.readlink(active_cli), str(installed.cli))
+            self.assertEqual(os.readlink(active_tui), str(installed.tui))
+            self.assertEqual(os.readlink(current), str(installed.release_dir))
+            metadata = (installed.release_dir / "release.json").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(str(old_release / "codex"), metadata)
+            self.assertIn(str(old_release / "codex-tui"), metadata)
+            self.assertIn(
+                "0.146.0-alpha.14",
+                subprocess.check_output([active_cli, "--version"], text=True),
             )
 
 

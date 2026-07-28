@@ -8,6 +8,7 @@ RELEASE_TAG=""
 DELIVERY="manual"
 RETRY_FAILED=0
 NO_PUBLISH=0
+NO_ACTIVATE=0
 
 usage() {
   cat <<'EOF'
@@ -18,7 +19,8 @@ Usage: update-codex-local.sh [--watch] [--release-tag TAG] [options]
   --channel CHANNEL    all, stable, or prerelease (default: all).
   --delivery ID        GitHub delivery or manual request identifier.
   --retry-failed       Explicitly retry a previously failed tag.
-  --no-publish         Validate without pushing or opening a PR.
+  --no-publish         Validate without pushing, merging, or activating.
+  --no-activate        Push and merge without replacing the active CLI.
 
 The durable release ledger prevents polling and duplicate webhook deliveries
 from launching Codex more than once for the same tag.
@@ -64,6 +66,10 @@ while [[ $# -gt 0 ]]; do
       NO_PUBLISH=1
       shift
       ;;
+    --no-activate)
+      NO_ACTIVATE=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -105,6 +111,9 @@ if [[ "$RETRY_FAILED" -eq 1 ]]; then
 fi
 if [[ "$NO_PUBLISH" -eq 1 ]]; then
   args+=(--no-publish)
+fi
+if [[ "$NO_ACTIVATE" -eq 1 ]]; then
+  args+=(--no-activate)
 fi
 
 exec "$AGENT_SCRIPT" "${args[@]}"
