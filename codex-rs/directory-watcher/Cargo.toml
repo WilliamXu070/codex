@@ -1,0 +1,38 @@
+[package]
+name = "codex-directory-watcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Directory watching and file indexing for Codex context system"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+
+# File system watching
+notify.workspace = true
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Time handling
+chrono.workspace = true
+
+# File system utilities
+walkdir.workspace = true
+
+# Logging
+tracing.workspace = true
+
+[dev-dependencies]
+tokio-test.workspace = true
+tempfile.workspace = true
+pretty_assertions.workspace = true
+
+[lints]
+workspace = true
