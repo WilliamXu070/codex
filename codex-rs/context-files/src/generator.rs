@@ -174,7 +174,7 @@ impl ContextGenerator {
                     id: format!("single-{}", entity.id),
                     name: entity.normalized_name.clone(),
                     entity_ids: vec![entity.id.clone()],
-                    primary_type: Some(entity.entity_type.clone()),
+                    primary_type: Some(entity.entity_type),
                     cluster_method: ClusterMethod::SingleEntity,
                     confidence: entity.confidence,
                 };
@@ -194,7 +194,7 @@ impl ContextGenerator {
 
         for entity in entities {
             type_groups
-                .entry(entity.entity_type.clone())
+                .entry(entity.entity_type)
                 .or_default()
                 .push(entity);
         }
@@ -225,7 +225,7 @@ impl ContextGenerator {
                     id: format!("type-{:?}{}", entity_type, suffix),
                     name: format!("{}{}", cluster_name, suffix),
                     entity_ids: chunk.iter().map(|e| e.id.clone()).collect(),
-                    primary_type: Some(entity_type.clone()),
+                    primary_type: Some(entity_type),
                     cluster_method: ClusterMethod::TypeBased,
                     confidence: avg_confidence,
                 });
@@ -326,7 +326,7 @@ impl ContextGenerator {
                 id: format!("rel-{}", central_entity.id),
                 name: format!("{}-context", central_entity.normalized_name),
                 entity_ids: cluster_entities.iter().map(|e| e.id.clone()).collect(),
-                primary_type: Some(central_entity.entity_type.clone()),
+                primary_type: Some(central_entity.entity_type),
                 cluster_method: ClusterMethod::RelationshipBased,
                 confidence: avg_confidence,
             });
@@ -657,9 +657,11 @@ mod tests {
             create_test_relationship(&entities[1], &entities[2], RelationshipType::Uses),
         ];
 
-        let mut config = GeneratorConfig::default();
-        config.create_type_contexts = false;
-        config.create_relationship_clusters = true;
+        let config = GeneratorConfig {
+            create_type_contexts: false,
+            create_relationship_clusters: true,
+            ..Default::default()
+        };
 
         let generator = ContextGenerator::with_config(config);
         let contexts = generator.generate(&entities, &relationships);

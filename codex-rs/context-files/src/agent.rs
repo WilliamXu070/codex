@@ -9,11 +9,11 @@ use std::time::Instant;
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 
-use crate::chunker::{Chunk, SemanticChunker};
+use crate::chunker::SemanticChunker;
 use crate::entity::EntityExtractor;
 use crate::error::{ContextError, Result};
 use crate::llm::{AnalysisContext, LlmAnalyzer, LlmConfig};
-use crate::node::{ContextNode, DomainDetection, NodeType};
+use crate::node::ContextNode;
 use crate::tree::ContextTree;
 
 /// Configuration for the context agent.
@@ -130,10 +130,10 @@ pub struct ContextAgent {
     config: AgentConfig,
 
     /// Chunker for document processing.
-    chunker: SemanticChunker,
+    _chunker: SemanticChunker,
 
     /// Entity extractor.
-    entity_extractor: EntityExtractor,
+    _entity_extractor: EntityExtractor,
 }
 
 impl Default for ContextAgent {
@@ -149,8 +149,8 @@ impl ContextAgent {
             tree: ContextTree::new(),
             analyzer: LlmAnalyzer::new(llm_config),
             config,
-            chunker: SemanticChunker::new(),
-            entity_extractor: EntityExtractor::new(),
+            _chunker: SemanticChunker::new(),
+            _entity_extractor: EntityExtractor::new(),
         }
     }
 
@@ -160,8 +160,8 @@ impl ContextAgent {
             tree: ContextTree::new(),
             analyzer: LlmAnalyzer::heuristic_only(),
             config: AgentConfig::default(),
-            chunker: SemanticChunker::new(),
-            entity_extractor: EntityExtractor::new(),
+            _chunker: SemanticChunker::new(),
+            _entity_extractor: EntityExtractor::new(),
         }
     }
 
@@ -171,8 +171,8 @@ impl ContextAgent {
             tree,
             analyzer: LlmAnalyzer::new(llm_config),
             config,
-            chunker: SemanticChunker::new(),
-            entity_extractor: EntityExtractor::new(),
+            _chunker: SemanticChunker::new(),
+            _entity_extractor: EntityExtractor::new(),
         }
     }
 
@@ -314,10 +314,10 @@ impl ContextAgent {
             let path = entry.path();
 
             // Check extension
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if self.config.extensions.contains(&ext.to_lowercase()) {
-                    files.push(path.to_path_buf());
-                }
+            if let Some(ext) = path.extension().and_then(|e| e.to_str())
+                && self.config.extensions.contains(&ext.to_lowercase())
+            {
+                files.push(path.to_path_buf());
             }
 
             // Respect max files limit
@@ -340,10 +340,10 @@ impl ContextAgent {
 
         for file in files.iter().take(10) {
             // Sample first 10 files
-            if let Some(ext) = file.extension().and_then(|e| e.to_str()) {
-                if !extensions.contains(&ext.to_string()) {
-                    extensions.push(ext.to_string());
-                }
+            if let Some(ext) = file.extension().and_then(|e| e.to_str())
+                && !extensions.contains(&ext.to_string())
+            {
+                extensions.push(ext.to_string());
             }
 
             // Read and summarize file
@@ -584,6 +584,7 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node::NodeType;
     use std::fs;
     use tempfile::TempDir;
 

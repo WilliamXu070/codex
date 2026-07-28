@@ -15,9 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing .docx file processing\n");
 
     // Create an agent with heuristic-only mode
-    let mut agent = AgentBuilder::new()
-        .heuristic_only()
-        .build();
+    let mut agent = AgentBuilder::new().heuristic_only().build();
 
     // Process the Gambling folder
     let gambling_path = PathBuf::from(r"C:\Users\William\Desktop\Testing\Gambling");
@@ -57,7 +55,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Show all nodes
     println!("\nAll nodes:");
     for node in agent.tree().all_nodes() {
-        println!("  {} ({}) - children: {:?}",
+        println!(
+            "  {} ({}) - children: {:?}",
             node.name,
             node.node_type.label(),
             node.children.len()

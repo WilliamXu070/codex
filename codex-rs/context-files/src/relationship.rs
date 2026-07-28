@@ -431,24 +431,24 @@ impl RelationshipExtractor {
             entities.iter().map(|e| (e.id.clone(), e)).collect();
 
         for ((id1, id2), score) in pair_scores {
-            if score >= self.config.cooccurrence_threshold {
-                if let (Some(e1), Some(e2)) = (entity_map.get(&id1), entity_map.get(&id2)) {
-                    let normalized_score = (score / 2.0).min(1.0);
+            if score >= self.config.cooccurrence_threshold
+                && let (Some(e1), Some(e2)) = (entity_map.get(&id1), entity_map.get(&id2))
+            {
+                let normalized_score = (score / 2.0).min(1.0);
 
-                    let mut rel =
-                        Relationship::new(e1, e2, RelationshipType::RelatedTo, normalized_score);
+                let mut rel =
+                    Relationship::new(e1, e2, RelationshipType::RelatedTo, normalized_score);
 
-                    if let Some(chunk_ids) = pair_chunks.get(&(id1.clone(), id2.clone())) {
-                        rel.add_evidence(RelationshipEvidence {
-                            evidence_type: EvidenceType::CoOccurrence,
-                            text: format!("Co-occurred in {} chunks", chunk_ids.len()),
-                            chunk_id: chunk_ids.first().cloned(),
-                            confidence_contribution: normalized_score,
-                        });
-                    }
-
-                    relationships.push(rel);
+                if let Some(chunk_ids) = pair_chunks.get(&(id1.clone(), id2.clone())) {
+                    rel.add_evidence(RelationshipEvidence {
+                        evidence_type: EvidenceType::CoOccurrence,
+                        text: format!("Co-occurred in {} chunks", chunk_ids.len()),
+                        chunk_id: chunk_ids.first().cloned(),
+                        confidence_contribution: normalized_score,
+                    });
                 }
+
+                relationships.push(rel);
             }
         }
 
@@ -458,7 +458,7 @@ impl RelationshipExtractor {
     /// Infer relationships based on entity types.
     fn infer_type_relationships(
         &self,
-        entities: &[Entity],
+        _entities: &[Entity],
         chunk_entities: &HashMap<String, Vec<&Entity>>,
     ) -> Vec<Relationship> {
         let mut relationships = Vec::new();

@@ -1,10 +1,28 @@
+#![allow(clippy::unwrap_used)]
+
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use anyhow::Result;
 use base64::Engine;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelsResponse;
+use futures::SinkExt;
+use futures::StreamExt;
 use serde_json::Value;
+use tokio::net::TcpListener;
+use tokio::sync::Notify;
+use tokio::sync::oneshot;
+use tokio_tungstenite::accept_hdr_async_with_config;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::extensions::ExtensionsConfig;
+use tokio_tungstenite::tungstenite::extensions::compression::deflate::DeflateConfig;
+use tokio_tungstenite::tungstenite::handshake::server::Request;
+use tokio_tungstenite::tungstenite::handshake::server::Response;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use wiremock::BodyPrintLimit;
 use wiremock::Match;
 use wiremock::Mock;
@@ -12,10 +30,10 @@ use wiremock::MockBuilder;
 use wiremock::MockServer;
 use wiremock::Respond;
 use wiremock::ResponseTemplate;
+use wiremock::http::HeaderName;
+use wiremock::http::HeaderValue;
 use wiremock::matchers::method;
 use wiremock::matchers::path_regex;
-
-use crate::test_codex::ApplyPatchModelOutput;
 
 #[derive(Debug, Clone)]
 pub struct ResponseMock {
@@ -65,9 +83,120 @@ impl ResponseMock {
 #[derive(Debug, Clone)]
 pub struct ResponsesRequest(wiremock::Request);
 
+fn is_zstd_encoding(value: &str) -> bool {
+    value
+        .split(',')
+        .any(|entry| entry.trim().eq_ignore_ascii_case("zstd"))
+}
+
+fn decode_body_bytes(body: &[u8], content_encoding: Option<&str>) -> Vec<u8> {
+    if content_encoding.is_some_and(is_zstd_encoding) {
+        zstd::stream::decode_all(std::io::Cursor::new(body))
+            .expect("failed to decode zstd request body")
+    } else {
+        body.to_vec()
+    }
+}
+
+/// Returns a response item without internal transport metadata for semantic assertions.
+pub fn strip_metadata(mut item: ResponseItem) -> ResponseItem {
+    item.clear_internal_chat_message_metadata_passthrough();
+    item
+}
+
+/// Returns response items without internal transport metadata for semantic assertions.
+pub fn strip_metadata_from_items(items: &[ResponseItem]) -> Vec<ResponseItem> {
+    items.iter().cloned().map(strip_metadata).collect()
+}
+
+/// Returns a response item without its Responses API item ID for semantic assertions.
+pub fn strip_response_item_id(mut item: ResponseItem) -> ResponseItem {
+    item.set_id(/*new_id*/ None);
+    item
+}
+
+/// Returns response items without their Responses API item IDs for semantic assertions.
+pub fn strip_response_item_ids(items: &[ResponseItem]) -> Vec<ResponseItem> {
+    items.iter().cloned().map(strip_response_item_id).collect()
+}
+
+/// Returns JSON without IDs on recognized Responses API items.
+pub fn strip_response_item_ids_from_json(value: Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(strip_response_item_ids_from_json)
+                .collect(),
+        ),
+        Value::Object(mut map) => {
+            let is_response_item =
+                serde_json::from_value::<ResponseItem>(Value::Object(map.clone()))
+                    .is_ok_and(|item| !matches!(item, ResponseItem::Other));
+            if is_response_item {
+                map.remove("id");
+            }
+            Value::Object(
+                map.into_iter()
+                    .map(|(key, value)| (key, strip_response_item_ids_from_json(value)))
+                    .collect(),
+            )
+        }
+        value => value,
+    }
+}
+
+/// Returns JSON without internal transport metadata for semantic assertions.
+pub fn strip_metadata_from_json(value: Value) -> Value {
+    match value {
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(strip_metadata_from_json).collect())
+        }
+        Value::Object(mut map) => {
+            map.remove("internal_chat_message_metadata_passthrough");
+            Value::Object(
+                map.into_iter()
+                    .map(|(key, value)| (key, strip_metadata_from_json(value)))
+                    .collect(),
+            )
+        }
+        value => value,
+    }
+}
+
 impl ResponsesRequest {
     pub fn body_json(&self) -> Value {
-        self.0.body_json().unwrap()
+        let body = decode_body_bytes(
+            &self.0.body,
+            self.0
+                .headers
+                .get("content-encoding")
+                .and_then(|value| value.to_str().ok()),
+        );
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    pub fn body_bytes(&self) -> Vec<u8> {
+        self.0.body.clone()
+    }
+
+    pub fn body_contains_text(&self, text: &str) -> bool {
+        let json_fragment = serde_json::to_string(text)
+            .expect("serialize text to JSON")
+            .trim_matches('"')
+            .to_string();
+        self.body_json().to_string().contains(&json_fragment)
+    }
+
+    pub fn tool_by_name(&self, namespace: &str, tool_name: &str) -> Option<Value> {
+        namespace_child_tool(&self.body_json(), namespace, tool_name).cloned()
+    }
+
+    pub fn instructions_text(&self) -> String {
+        self.body_json()["instructions"]
+            .as_str()
+            .unwrap()
+            .to_string()
     }
 
     /// Returns all `input_text` spans from `message` inputs for the provided role.
@@ -82,8 +211,66 @@ impl ResponsesRequest {
             .collect()
     }
 
+    /// Returns `input_text` spans grouped by `message` input for the provided role.
+    pub fn message_input_text_groups(&self, role: &str) -> Vec<Vec<String>> {
+        self.inputs_of_type("message")
+            .into_iter()
+            .filter(|item| item.get("role").and_then(Value::as_str) == Some(role))
+            .filter_map(|item| item.get("content").and_then(Value::as_array).cloned())
+            .map(|content| {
+                content
+                    .into_iter()
+                    .filter(|span| span.get("type").and_then(Value::as_str) == Some("input_text"))
+                    .filter_map(|span| span.get("text").and_then(Value::as_str).map(str::to_owned))
+                    .collect()
+            })
+            .collect()
+    }
+
+    pub fn has_message_with_input_texts(
+        &self,
+        role: &str,
+        predicate: impl Fn(&[String]) -> bool,
+    ) -> bool {
+        self.message_input_text_groups(role)
+            .iter()
+            .any(|texts| predicate(texts))
+    }
+
+    /// Returns all `input_image` `image_url` spans from `message` inputs for the provided role.
+    pub fn message_input_image_urls(&self, role: &str) -> Vec<String> {
+        self.inputs_of_type("message")
+            .into_iter()
+            .filter(|item| item.get("role").and_then(Value::as_str) == Some(role))
+            .filter_map(|item| item.get("content").and_then(Value::as_array).cloned())
+            .flatten()
+            .filter(|span| span.get("type").and_then(Value::as_str) == Some("input_image"))
+            .filter_map(|span| {
+                span.get("image_url")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+
+    /// Returns all `input_audio` `audio_url` spans from `message` inputs for the provided role.
+    pub fn message_input_audio_urls(&self, role: &str) -> Vec<String> {
+        self.inputs_of_type("message")
+            .into_iter()
+            .filter(|item| item.get("role").and_then(Value::as_str) == Some(role))
+            .filter_map(|item| item.get("content").and_then(Value::as_array).cloned())
+            .flatten()
+            .filter(|span| span.get("type").and_then(Value::as_str) == Some("input_audio"))
+            .filter_map(|span| {
+                span.get("audio_url")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+
     pub fn input(&self) -> Vec<Value> {
-        self.0.body_json::<Value>().unwrap()["input"]
+        self.body_json()["input"]
             .as_array()
             .expect("input array not found in request")
             .clone()
@@ -105,6 +292,10 @@ impl ResponsesRequest {
         self.call_output(call_id, "custom_tool_call_output")
     }
 
+    pub fn tool_search_output(&self, call_id: &str) -> Value {
+        self.call_output(call_id, "tool_search_output")
+    }
+
     pub fn call_output(&self, call_id: &str, call_type: &str) -> Value {
         self.input()
             .iter()
@@ -112,7 +303,7 @@ impl ResponsesRequest {
                 item.get("type").unwrap() == call_type && item.get("call_id").unwrap() == call_id
             })
             .cloned()
-            .unwrap_or_else(|| panic!("function call output {call_id} item not found in request"))
+            .expect("function call output item not found in request")
     }
 
     /// Returns true if this request's `input` contains a `function_call` with
@@ -162,7 +353,7 @@ impl ResponsesRequest {
             .cloned()
             .unwrap_or(Value::Null);
         match output {
-            Value::String(text) => Some((Some(text), None)),
+            Value::String(_) | Value::Array(_) => Some((output_value_to_text(&output), None)),
             Value::Object(obj) => Some((
                 obj.get("content")
                     .and_then(Value::as_str)
@@ -191,6 +382,252 @@ impl ResponsesRequest {
             .query_pairs()
             .find(|(k, _)| k == name)
             .map(|(_, v)| v.to_string())
+    }
+}
+
+pub(crate) fn output_value_to_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(items) => match items.as_slice() {
+            [item] if item.get("type").and_then(Value::as_str) == Some("input_text") => {
+                item.get("text").and_then(Value::as_str).map(str::to_string)
+            }
+            [_] | [] | [_, _, ..] => None,
+        },
+        Value::Object(_) | Value::Number(_) | Value::Bool(_) | Value::Null => None,
+    }
+}
+
+pub fn namespace_child_tool<'a>(
+    body: &'a Value,
+    namespace: &str,
+    tool_name: &str,
+) -> Option<&'a Value> {
+    let tools = body.get("tools")?.as_array()?;
+    for tool in tools {
+        if tool.get("name").and_then(Value::as_str) != Some(namespace)
+            || tool.get("type").and_then(Value::as_str) != Some("namespace")
+        {
+            continue;
+        }
+
+        let child_tools = tool.get("tools")?.as_array()?;
+        if let Some(child_tool) = child_tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some(tool_name))
+        {
+            return Some(child_tool);
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use wiremock::http::HeaderMap;
+    use wiremock::http::Method;
+
+    fn request_with_input(input: Value) -> ResponsesRequest {
+        ResponsesRequest(wiremock::Request {
+            url: "http://localhost/v1/responses"
+                .parse()
+                .expect("valid request url"),
+            method: Method::POST,
+            headers: HeaderMap::new(),
+            body: serde_json::to_vec(&serde_json::json!({ "input": input }))
+                .expect("serialize request body"),
+        })
+    }
+
+    #[test]
+    fn call_output_content_and_success_returns_only_single_text_content_item() {
+        let single_text = request_with_input(serde_json::json!([
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": [{ "type": "input_text", "text": "hello" }]
+            },
+            {
+                "type": "custom_tool_call_output",
+                "call_id": "call-2",
+                "output": [{ "type": "input_text", "text": "world" }]
+            }
+        ]));
+        assert_eq!(
+            single_text.function_call_output_content_and_success("call-1"),
+            Some((Some("hello".to_string()), None))
+        );
+        assert_eq!(
+            single_text.custom_tool_call_output_content_and_success("call-2"),
+            Some((Some("world".to_string()), None))
+        );
+
+        let mixed_content = request_with_input(serde_json::json!([
+            {
+                "type": "function_call_output",
+                "call_id": "call-3",
+                "output": [
+                    { "type": "input_text", "text": "hello" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                ]
+            },
+            {
+                "type": "custom_tool_call_output",
+                "call_id": "call-4",
+                "output": [{ "type": "input_image", "image_url": "data:image/png;base64,abc" }]
+            }
+        ]));
+        assert_eq!(
+            mixed_content.function_call_output_content_and_success("call-3"),
+            Some((None, None))
+        );
+        assert_eq!(
+            mixed_content.custom_tool_call_output_content_and_success("call-4"),
+            Some((None, None))
+        );
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WebSocketRequest {
+    body: Value,
+}
+
+impl WebSocketRequest {
+    pub fn body_json(&self) -> Value {
+        self.body.clone()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WebSocketHandshake {
+    uri: String,
+    headers: Vec<(String, String)>,
+}
+
+impl WebSocketHandshake {
+    pub fn uri(&self) -> &str {
+        &self.uri
+    }
+
+    pub fn header(&self, name: &str) -> Option<String> {
+        self.headers
+            .iter()
+            .find(|(header, _)| header.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WebSocketConnectionConfig {
+    pub requests: Vec<Vec<Value>>,
+    pub response_headers: Vec<(String, String)>,
+    /// Optional delay inserted before accepting the websocket handshake.
+    ///
+    /// Tests use this to force websocket setup into an in-flight state so first-turn warmup paths
+    /// can be exercised deterministically.
+    pub accept_delay: Option<Duration>,
+    /// Whether the server should send a websocket close frame after all scripted responses.
+    ///
+    /// Tests can disable this to simulate a peer that surfaces a terminal event but never
+    /// completes the close handshake.
+    pub close_after_requests: bool,
+}
+
+pub struct WebSocketTestServer {
+    uri: String,
+    connections: Arc<Mutex<Vec<Vec<WebSocketRequest>>>>,
+    handshakes: Arc<Mutex<Vec<WebSocketHandshake>>>,
+    request_log_updated: Arc<Notify>,
+    shutdown: oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl WebSocketTestServer {
+    pub fn uri(&self) -> &str {
+        &self.uri
+    }
+
+    pub fn connections(&self) -> Vec<Vec<WebSocketRequest>> {
+        self.connections.lock().unwrap().clone()
+    }
+
+    pub fn single_connection(&self) -> Vec<WebSocketRequest> {
+        let connections = self.connections.lock().unwrap();
+        if connections.len() != 1 {
+            panic!("expected 1 connection, got {}", connections.len());
+        }
+        connections.first().cloned().unwrap_or_default()
+    }
+
+    pub async fn wait_for_request(
+        &self,
+        connection_index: usize,
+        request_index: usize,
+    ) -> WebSocketRequest {
+        loop {
+            if let Some(request) = self
+                .connections
+                .lock()
+                .unwrap()
+                .get(connection_index)
+                .and_then(|connection| connection.get(request_index))
+                .cloned()
+            {
+                return request;
+            }
+            self.request_log_updated.notified().await;
+        }
+    }
+
+    pub fn handshakes(&self) -> Vec<WebSocketHandshake> {
+        self.handshakes.lock().unwrap().clone()
+    }
+
+    /// Waits until at least `expected` websocket handshakes have been observed or timeout elapses.
+    ///
+    /// Uses a short bounded polling interval so tests can deterministically wait for background
+    /// websocket activity without busy-spinning.
+    pub async fn wait_for_handshakes(&self, expected: usize, timeout: Duration) -> bool {
+        if self.handshakes.lock().unwrap().len() >= expected {
+            return true;
+        }
+
+        let deadline = tokio::time::Instant::now() + timeout;
+        let poll_interval = Duration::from_millis(10);
+        loop {
+            if self.handshakes.lock().unwrap().len() >= expected {
+                return true;
+            }
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            let sleep_for = std::cmp::min(poll_interval, deadline.saturating_duration_since(now));
+            tokio::time::sleep(sleep_for).await;
+        }
+    }
+    pub fn single_handshake(&self) -> WebSocketHandshake {
+        let handshakes = self.handshakes.lock().unwrap();
+        if handshakes.len() != 1 {
+            panic!("expected 1 handshake, got {}", handshakes.len());
+        }
+        handshakes.first().cloned().unwrap()
+    }
+
+    pub async fn shutdown(self) {
+        let _ = self.shutdown.send(());
+        let mut task = self.task;
+        if tokio::time::timeout(Duration::from_secs(10), &mut task)
+            .await
+            .is_err()
+        {
+            task.abort();
+            let _ = task.await;
+        }
     }
 }
 
@@ -256,6 +693,10 @@ pub fn sse(events: Vec<Value>) -> String {
     out
 }
 
+pub fn sse_completed(id: &str) -> String {
+    sse(vec![ev_response_created(id), ev_completed(id)])
+}
+
 /// Convenience: SSE event for a completed response with a specific id.
 pub fn ev_completed(id: &str) -> Value {
     serde_json::json!({
@@ -273,6 +714,17 @@ pub fn ev_response_created(id: &str) -> Value {
         "type": "response.created",
         "response": {
             "id": id,
+        }
+    })
+}
+
+pub fn ev_model_verification_metadata(id: &str, verifications: Vec<&str>) -> Value {
+    serde_json::json!({
+        "type": "response.metadata",
+        "sequence_number": 1,
+        "response_id": id,
+        "metadata": {
+            "openai_verification_recommendation": verifications,
         }
     })
 }
@@ -304,6 +756,18 @@ pub fn ev_assistant_message(id: &str, text: &str) -> Value {
             "content": [{"type": "output_text", "text": text}]
         }
     })
+}
+
+pub fn user_message_item(text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: text.to_string(),
+        }],
+        phase: None,
+        internal_chat_message_metadata_passthrough: None,
+    }
 }
 
 pub fn ev_message_item_added(id: &str, text: &str) -> Value {
@@ -389,14 +853,13 @@ pub fn ev_reasoning_text_delta(delta: &str) -> Value {
     })
 }
 
-pub fn ev_web_search_call_added(id: &str, status: &str, query: &str) -> Value {
+pub fn ev_web_search_call_added_partial(id: &str, status: &str) -> Value {
     serde_json::json!({
         "type": "response.output_item.added",
         "item": {
             "type": "web_search_call",
             "id": id,
-            "status": status,
-            "action": {"type": "search", "query": query}
+            "status": status
         }
     })
 }
@@ -413,6 +876,24 @@ pub fn ev_web_search_call_done(id: &str, status: &str, query: &str) -> Value {
     })
 }
 
+pub fn ev_image_generation_call(
+    id: &str,
+    status: &str,
+    revised_prompt: &str,
+    result: &str,
+) -> Value {
+    serde_json::json!({
+        "type": "response.output_item.done",
+        "item": {
+            "type": "image_generation_call",
+            "id": id,
+            "status": status,
+            "revised_prompt": revised_prompt,
+            "result": result,
+        }
+    })
+}
+
 pub fn ev_function_call(call_id: &str, name: &str, arguments: &str) -> Value {
     serde_json::json!({
         "type": "response.output_item.done",
@@ -421,6 +902,36 @@ pub fn ev_function_call(call_id: &str, name: &str, arguments: &str) -> Value {
             "call_id": call_id,
             "name": name,
             "arguments": arguments
+        }
+    })
+}
+
+pub fn ev_function_call_with_namespace(
+    call_id: &str,
+    namespace: &str,
+    name: &str,
+    arguments: &str,
+) -> Value {
+    serde_json::json!({
+        "type": "response.output_item.done",
+        "item": {
+            "type": "function_call",
+            "call_id": call_id,
+            "namespace": namespace,
+            "name": name,
+            "arguments": arguments
+        }
+    })
+}
+
+pub fn ev_tool_search_call(call_id: &str, arguments: &serde_json::Value) -> Value {
+    serde_json::json!({
+        "type": "response.output_item.done",
+        "item": {
+            "type": "tool_search_call",
+            "call_id": call_id,
+            "execution": "client",
+            "arguments": arguments,
         }
     })
 }
@@ -437,42 +948,27 @@ pub fn ev_custom_tool_call(call_id: &str, name: &str, input: &str) -> Value {
     })
 }
 
-pub fn ev_local_shell_call(call_id: &str, status: &str, command: Vec<&str>) -> Value {
+pub fn ev_custom_tool_call_with_namespace(
+    call_id: &str,
+    namespace: &str,
+    name: &str,
+    input: &str,
+) -> Value {
     serde_json::json!({
         "type": "response.output_item.done",
         "item": {
-            "type": "local_shell_call",
+            "type": "custom_tool_call",
             "call_id": call_id,
-            "status": status,
-            "action": {
-                "type": "exec",
-                "command": command,
-            }
+            "namespace": namespace,
+            "name": name,
+            "input": input
         }
     })
 }
 
-pub fn ev_apply_patch_call(
-    call_id: &str,
-    patch: &str,
-    output_type: ApplyPatchModelOutput,
-) -> Value {
-    match output_type {
-        ApplyPatchModelOutput::Freeform => ev_apply_patch_custom_tool_call(call_id, patch),
-        ApplyPatchModelOutput::Function => ev_apply_patch_function_call(call_id, patch),
-        ApplyPatchModelOutput::Shell => ev_apply_patch_shell_call(call_id, patch),
-        ApplyPatchModelOutput::ShellViaHeredoc => {
-            ev_apply_patch_shell_call_via_heredoc(call_id, patch)
-        }
-        ApplyPatchModelOutput::ShellCommandViaHeredoc => {
-            ev_apply_patch_shell_command_call_via_heredoc(call_id, patch)
-        }
-    }
-}
-
 /// Convenience: SSE event for an `apply_patch` custom tool call with raw patch
 /// text. This mirrors the payload produced by the Responses API when the model
-/// invokes `apply_patch` directly (before we convert it to a function call).
+/// invokes `apply_patch` directly.
 pub fn ev_apply_patch_custom_tool_call(call_id: &str, patch: &str) -> Value {
     serde_json::json!({
         "type": "response.output_item.done",
@@ -480,24 +976,6 @@ pub fn ev_apply_patch_custom_tool_call(call_id: &str, patch: &str) -> Value {
             "type": "custom_tool_call",
             "name": "apply_patch",
             "input": patch,
-            "call_id": call_id
-        }
-    })
-}
-
-/// Convenience: SSE event for an `apply_patch` function call. The Responses API
-/// wraps the patch content in a JSON string under the `input` key; we recreate
-/// the same structure so downstream code exercises the full parsing path.
-pub fn ev_apply_patch_function_call(call_id: &str, patch: &str) -> Value {
-    let arguments = serde_json::json!({ "input": patch });
-    let arguments = serde_json::to_string(&arguments).expect("serialize apply_patch arguments");
-
-    serde_json::json!({
-        "type": "response.output_item.done",
-        "item": {
-            "type": "function_call",
-            "name": "apply_patch",
-            "arguments": arguments,
             "call_id": call_id
         }
     })
@@ -511,21 +989,6 @@ pub fn ev_shell_command_call(call_id: &str, command: &str) -> Value {
 pub fn ev_shell_command_call_with_args(call_id: &str, args: &serde_json::Value) -> Value {
     let arguments = serde_json::to_string(args).expect("serialize shell command arguments");
     ev_function_call(call_id, "shell_command", &arguments)
-}
-
-pub fn ev_apply_patch_shell_call(call_id: &str, patch: &str) -> Value {
-    let args = serde_json::json!({ "command": ["apply_patch", patch] });
-    let arguments = serde_json::to_string(&args).expect("serialize apply_patch arguments");
-
-    ev_function_call(call_id, "shell", &arguments)
-}
-
-pub fn ev_apply_patch_shell_call_via_heredoc(call_id: &str, patch: &str) -> Value {
-    let script = format!("apply_patch <<'EOF'\n{patch}\nEOF\n");
-    let args = serde_json::json!({ "command": ["bash", "-lc", script] });
-    let arguments = serde_json::to_string(&args).expect("serialize apply_patch arguments");
-
-    ev_function_call(call_id, "shell", &arguments)
 }
 
 pub fn ev_apply_patch_shell_command_call_via_heredoc(call_id: &str, patch: &str) -> Value {
@@ -623,37 +1086,116 @@ pub async fn mount_sse_once(server: &MockServer, body: String) -> ResponseMock {
     response_mock
 }
 
-pub async fn mount_compact_json_once_match<M>(
+pub async fn mount_compact_json_once(server: &MockServer, body: serde_json::Value) -> ResponseMock {
+    mount_compact_response_once(
+        server,
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "application/json")
+            .set_body_json(body),
+    )
+    .await
+}
+
+/// Mount a `/responses/compact` mock that mirrors the default remote compaction shape:
+/// keep user+developer messages from the request, drop assistant/tool artifacts, and append one
+/// compaction item carrying the provided summary text.
+pub async fn mount_compact_user_history_with_summary_once(
     server: &MockServer,
-    matcher: M,
-    body: serde_json::Value,
-) -> ResponseMock
-where
-    M: wiremock::Match + Send + Sync + 'static,
-{
-    let (mock, response_mock) = compact_mock();
-    mock.and(matcher)
-        .respond_with(
+    summary_text: &str,
+) -> ResponseMock {
+    mount_compact_user_history_with_summary_sequence(server, vec![summary_text.to_string()]).await
+}
+
+/// Same as [`mount_compact_user_history_with_summary_once`], but for multiple compact calls.
+/// Each incoming compact request receives the next summary text in order.
+pub async fn mount_compact_user_history_with_summary_sequence(
+    server: &MockServer,
+    summary_texts: Vec<String>,
+) -> ResponseMock {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    #[derive(Debug)]
+    struct UserHistorySummaryResponder {
+        num_calls: AtomicUsize,
+        summary_texts: Vec<String>,
+    }
+
+    impl Respond for UserHistorySummaryResponder {
+        fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+            let call_num = self.num_calls.fetch_add(1, Ordering::SeqCst);
+            let summary_text = self
+                .summary_texts
+                .get(call_num)
+                .expect("missing summary text for compact request");
+            let body_bytes = decode_body_bytes(
+                &request.body,
+                request
+                    .headers
+                    .get("content-encoding")
+                    .and_then(|value| value.to_str().ok()),
+            );
+            let body_json: Value =
+                serde_json::from_slice(&body_bytes).expect("failed to parse compact request body");
+            let mut output = body_json
+                .get("input")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                // TODO(ccunningham): Update this mock to match future compaction model behavior:
+                // return user/developer/assistant messages since the last compaction item, then
+                // append a single newest compaction item.
+                // Match current remote compaction behavior: keep user/developer messages and
+                // omit assistant/tool history entries.
+                .filter(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("message")
+                        && matches!(
+                            item.get("role").and_then(Value::as_str),
+                            Some("user") | Some("developer")
+                        )
+                })
+                .collect::<Vec<Value>>();
+            let compaction_turn_id = body_json["client_metadata"]["turn_id"].as_str();
+            // Match Responses API: generated compaction items inherit the compact request turn.
+            let mut compaction_item = serde_json::json!({
+                "type": "compaction",
+                "encrypted_content": summary_text,
+            });
+            if let Some(turn_id) = compaction_turn_id {
+                compaction_item["internal_chat_message_metadata_passthrough"] =
+                    serde_json::json!({ "turn_id": turn_id });
+            }
+            output.push(compaction_item);
             ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
-                .set_body_json(body.clone()),
-        )
-        .up_to_n_times(1)
+                .set_body_json(serde_json::json!({ "output": output }))
+        }
+    }
+
+    let num_calls = summary_texts.len();
+    let responder = UserHistorySummaryResponder {
+        num_calls: AtomicUsize::new(0),
+        summary_texts,
+    };
+    let (mock, response_mock) = compact_mock();
+    mock.respond_with(responder)
+        .up_to_n_times(num_calls as u64)
+        .expect(num_calls as u64)
         .mount(server)
         .await;
     response_mock
 }
 
-pub async fn mount_compact_json_once(server: &MockServer, body: serde_json::Value) -> ResponseMock {
+pub async fn mount_compact_response_once(
+    server: &MockServer,
+    response: ResponseTemplate,
+) -> ResponseMock {
     let (mock, response_mock) = compact_mock();
-    mock.respond_with(
-        ResponseTemplate::new(200)
-            .insert_header("content-type", "application/json")
-            .set_body_json(body.clone()),
-    )
-    .up_to_n_times(1)
-    .mount(server)
-    .await;
+    mock.respond_with(response)
+        .up_to_n_times(1)
+        .mount(server)
+        .await;
     response_mock
 }
 
@@ -663,6 +1205,24 @@ pub async fn mount_models_once(server: &MockServer, body: ModelsResponse) -> Mod
         ResponseTemplate::new(200)
             .insert_header("content-type", "application/json")
             .set_body_json(body.clone()),
+    )
+    .up_to_n_times(1)
+    .mount(server)
+    .await;
+    models_mock
+}
+
+pub async fn mount_models_once_with_delay(
+    server: &MockServer,
+    body: ModelsResponse,
+    delay: Duration,
+) -> ModelsMock {
+    let (mock, models_mock) = models_mock();
+    mock.respond_with(
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "application/json")
+            .set_body_json(body.clone())
+            .set_delay(delay),
     )
     .up_to_n_times(1)
     .mount(server)
@@ -701,31 +1261,217 @@ pub async fn start_mock_server() -> MockServer {
     server
 }
 
-// todo(aibrahim): remove this and use our search matching patterns directly
-/// Get all POST requests to `/responses` endpoints from the mock server.
-/// Filters out GET requests (e.g., `/models`) .
-pub async fn get_responses_requests(server: &MockServer) -> Vec<wiremock::Request> {
-    server
-        .received_requests()
-        .await
-        .expect("mock server should not fail")
+/// Starts a lightweight WebSocket server for `/v1/responses` tests.
+///
+/// Each connection consumes a queue of request/event sequences. For each
+/// request message, the server records the payload and streams the matching
+/// events as WebSocket text frames before moving to the next request.
+pub async fn start_websocket_server(connections: Vec<Vec<Vec<Value>>>) -> WebSocketTestServer {
+    let connections = connections
         .into_iter()
-        .filter(|req| req.method == "POST" && req.url.path().ends_with("/responses"))
-        .collect()
+        .map(|requests| WebSocketConnectionConfig {
+            requests,
+            response_headers: Vec::new(),
+            accept_delay: None,
+            close_after_requests: true,
+        })
+        .collect();
+    start_websocket_server_with_headers(connections).await
 }
 
-// todo(aibrahim): remove this and use our search matching patterns directly
-/// Get request bodies as JSON values from POST requests to `/responses` endpoints.
-/// Filters out GET requests (e.g., `/models`) .
-pub async fn get_responses_request_bodies(server: &MockServer) -> Vec<Value> {
-    get_responses_requests(server)
+pub async fn start_websocket_server_with_headers(
+    connections: Vec<WebSocketConnectionConfig>,
+) -> WebSocketTestServer {
+    let start = std::time::Instant::now();
+    let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .into_iter()
-        .map(|req| {
-            req.body_json::<Value>()
-                .expect("request body to be valid JSON")
-        })
-        .collect()
+        .expect("bind websocket server");
+    let addr = listener.local_addr().expect("websocket server address");
+    let uri = format!("ws://{addr}");
+    let connections_log = Arc::new(Mutex::new(Vec::new()));
+    let handshakes_log = Arc::new(Mutex::new(Vec::new()));
+    let request_log_updated = Arc::new(Notify::new());
+    let requests = Arc::clone(&connections_log);
+    let handshakes = Arc::clone(&handshakes_log);
+    let request_log = Arc::clone(&request_log_updated);
+    let connections = Arc::new(Mutex::new(VecDeque::from(connections)));
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+
+    let task = tokio::spawn(async move {
+        loop {
+            let accept_res = tokio::select! {
+                _ = &mut shutdown_rx => return,
+                accept_res = listener.accept() => accept_res,
+            };
+            let (stream, _) = match accept_res {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            // Ordinary HTTP probes can share this listener with websocket tests. Only a
+            // successful websocket handshake should consume a scripted connection.
+            let connection = {
+                let pending = connections.lock().unwrap();
+                pending.front().cloned()
+            };
+
+            let Some(connection) = connection else {
+                continue;
+            };
+
+            if let Some(delay) = connection.accept_delay {
+                tokio::time::sleep(delay).await;
+            }
+
+            let response_headers = connection.response_headers.clone();
+            let handshake_log = Arc::clone(&handshakes);
+            let callback = move |req: &Request, mut response: Response| {
+                let headers = req
+                    .headers()
+                    .iter()
+                    .filter_map(|(name, value)| {
+                        value
+                            .to_str()
+                            .ok()
+                            .map(|value| (name.as_str().to_string(), value.to_string()))
+                    })
+                    .collect();
+                handshake_log.lock().unwrap().push(WebSocketHandshake {
+                    uri: req.uri().to_string(),
+                    headers,
+                });
+
+                let headers_mut = response.headers_mut();
+                for (name, value) in &response_headers {
+                    if let (Ok(name), Ok(value)) = (
+                        HeaderName::from_bytes(name.as_bytes()),
+                        HeaderValue::from_str(value),
+                    ) {
+                        headers_mut.insert(name, value);
+                    }
+                }
+
+                Ok(response)
+            };
+
+            let mut ws_stream = match accept_hdr_async_with_config(
+                stream,
+                callback,
+                Some(websocket_accept_config()),
+            )
+            .await
+            {
+                Ok(ws) => ws,
+                Err(_) => continue,
+            };
+            connections.lock().unwrap().pop_front();
+
+            let connection_index = {
+                let mut log = requests.lock().unwrap();
+                log.push(Vec::new());
+                log.len() - 1
+            };
+            let close_after_requests = connection.close_after_requests;
+            for request_events in connection.requests {
+                let Some(Ok(message)) = ws_stream.next().await else {
+                    break;
+                };
+                if let Some(body) = parse_ws_request_body(message) {
+                    let mut log = requests.lock().unwrap();
+                    if let Some(connection_log) = log.get_mut(connection_index) {
+                        connection_log.push(WebSocketRequest { body });
+                        let request_index = connection_log.len() - 1;
+                        let request = &connection_log[request_index];
+                        let request_body = request.body_json();
+                        eprintln!(
+                            "[ws test server +{}ms] connection={} received request={} type={:?} role={:?} text={:?} data={:?}",
+                            start.elapsed().as_millis(),
+                            connection_index,
+                            request_index,
+                            request_body.get("type").and_then(Value::as_str),
+                            request_body
+                                .get("item")
+                                .and_then(|item| item.get("role"))
+                                .and_then(Value::as_str),
+                            request_body
+                                .get("item")
+                                .and_then(|item| item.get("content"))
+                                .and_then(Value::as_array)
+                                .and_then(|content| content.first())
+                                .and_then(|content| content.get("text"))
+                                .and_then(Value::as_str),
+                            request_body
+                                .get("item")
+                                .and_then(|item| item.get("content"))
+                                .and_then(Value::as_array)
+                                .and_then(|content| content.first())
+                                .and_then(|content| content.get("data"))
+                                .and_then(Value::as_str),
+                        );
+                    }
+                    request_log.notify_waiters();
+                }
+
+                eprintln!(
+                    "[ws test server +{}ms] connection={} sending batch_size={} event_types={:?} audio_data={:?}",
+                    start.elapsed().as_millis(),
+                    connection_index,
+                    request_events.len(),
+                    request_events
+                        .iter()
+                        .map(|event| event.get("type").and_then(Value::as_str))
+                        .collect::<Vec<_>>(),
+                    request_events
+                        .iter()
+                        .find_map(|event| event.get("delta").and_then(Value::as_str)),
+                );
+                for event in &request_events {
+                    let Ok(payload) = serde_json::to_string(event) else {
+                        continue;
+                    };
+                    if ws_stream.send(Message::Text(payload.into())).await.is_err() {
+                        break;
+                    }
+                }
+            }
+
+            if close_after_requests {
+                let _ = ws_stream.close(None).await;
+            } else {
+                let _ = shutdown_rx.await;
+                return;
+            }
+
+            if connections.lock().unwrap().is_empty() {
+                return;
+            }
+        }
+    });
+
+    WebSocketTestServer {
+        uri,
+        connections: connections_log,
+        handshakes: handshakes_log,
+        request_log_updated,
+        shutdown: shutdown_tx,
+        task,
+    }
+}
+
+fn parse_ws_request_body(message: Message) -> Option<Value> {
+    match message {
+        Message::Text(text) => serde_json::from_str(&text).ok(),
+        Message::Binary(bytes) => serde_json::from_slice(&bytes).ok(),
+        _ => None,
+    }
+}
+
+fn websocket_accept_config() -> WebSocketConfig {
+    let mut extensions = ExtensionsConfig::default();
+    extensions.permessage_deflate = Some(DeflateConfig::default());
+
+    let mut config = WebSocketConfig::default();
+    config.extensions = extensions;
+    config
 }
 
 #[derive(Clone)]
@@ -774,12 +1520,14 @@ pub async fn mount_sse_sequence(server: &MockServer, bodies: Vec<String>) -> Res
     impl Respond for SeqResponder {
         fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
             let call_num = self.num_calls.fetch_add(1, Ordering::SeqCst);
-            match self.responses.get(call_num) {
-                Some(body) => ResponseTemplate::new(200)
-                    .insert_header("content-type", "text/event-stream")
-                    .set_body_string(body.clone()),
-                None => panic!("no response for {call_num}"),
-            }
+            let missing_response_message = format!("no response for {call_num}");
+            let body = self
+                .responses
+                .get(call_num)
+                .expect(&missing_response_message);
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(body.clone())
         }
     }
 
@@ -799,25 +1547,113 @@ pub async fn mount_sse_sequence(server: &MockServer, bodies: Vec<String>) -> Res
     response_mock
 }
 
+/// Mounts a sequence of responses for each POST to `/v1/responses`.
+/// Panics if more requests are received than responses provided.
+pub async fn mount_response_sequence(
+    server: &MockServer,
+    responses: Vec<ResponseTemplate>,
+) -> ResponseMock {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    struct SeqResponder {
+        num_calls: AtomicUsize,
+        responses: Vec<ResponseTemplate>,
+    }
+
+    impl Respond for SeqResponder {
+        fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
+            let call_num = self.num_calls.fetch_add(1, Ordering::SeqCst);
+            self.responses
+                .get(call_num)
+                .expect("missing response for call")
+                .clone()
+        }
+    }
+
+    let num_calls = responses.len();
+    let responder = SeqResponder {
+        num_calls: AtomicUsize::new(0),
+        responses,
+    };
+
+    let (mock, response_mock) = base_mock();
+    mock.respond_with(responder)
+        .up_to_n_times(num_calls as u64)
+        .expect(num_calls as u64)
+        .mount(server)
+        .await;
+    response_mock
+}
+
+/// Mounts a sequence of responses for each POST to `/v1/responses/compact`.
+/// Panics if more requests are received than responses provided.
+pub async fn mount_compact_response_sequence(
+    server: &MockServer,
+    responses: Vec<ResponseTemplate>,
+) -> ResponseMock {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    struct SeqResponder {
+        num_calls: AtomicUsize,
+        responses: Vec<ResponseTemplate>,
+    }
+
+    impl Respond for SeqResponder {
+        fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
+            let call_num = self.num_calls.fetch_add(1, Ordering::SeqCst);
+            self.responses
+                .get(call_num)
+                .expect("missing response for compact call")
+                .clone()
+        }
+    }
+
+    let num_calls = responses.len();
+    let responder = SeqResponder {
+        num_calls: AtomicUsize::new(0),
+        responses,
+    };
+
+    let (mock, response_mock) = compact_mock();
+    mock.respond_with(responder)
+        .up_to_n_times(num_calls as u64)
+        .expect(num_calls as u64)
+        .mount(server)
+        .await;
+    response_mock
+}
+
 /// Validate invariants on the request body sent to `/v1/responses`.
 ///
 /// - No `function_call_output`/`custom_tool_call_output` with missing/empty `call_id`.
+/// - `tool_search_output` must have a `call_id` unless it is a server-executed legacy item.
 /// - Every `function_call_output` must match a prior `function_call` or
 ///   `local_shell_call` with the same `call_id` in the same `input`.
 /// - Every `custom_tool_call_output` must match a prior `custom_tool_call`.
-/// - Additionally, enforce symmetry: every `function_call`/`custom_tool_call`
-///   in the `input` must have a matching output entry.
+/// - Every `tool_search_output` must match a prior `tool_search_call`.
+/// - Additionally, enforce symmetry: every `function_call`/`custom_tool_call`/
+///   `tool_search_call` in the `input` must have a matching output entry.
 fn validate_request_body_invariants(request: &wiremock::Request) {
     // Skip GET requests (e.g., /models)
     if request.method != "POST" || !request.url.path().ends_with("/responses") {
         return;
     }
-    let Ok(body): Result<Value, _> = request.body_json() else {
+    let body_bytes = decode_body_bytes(
+        &request.body,
+        request
+            .headers
+            .get("content-encoding")
+            .and_then(|value| value.to_str().ok()),
+    );
+    let Ok(body): Result<Value, _> = serde_json::from_slice(&body_bytes) else {
         return;
     };
-    let Some(items) = body.get("input").and_then(Value::as_array) else {
-        panic!("input array not found in request");
-    };
+    let items = body
+        .get("input")
+        .and_then(Value::as_array)
+        .expect("input array not found in request");
 
     use std::collections::HashSet;
 
@@ -841,15 +1677,30 @@ fn validate_request_body_invariants(request: &wiremock::Request) {
             .iter()
             .filter(|item| item.get("type").and_then(Value::as_str) == Some(kind))
             .map(|item| {
-                let Some(id) = get_call_id(item) else {
-                    panic!("{missing_msg}");
-                };
+                let id = get_call_id(item).expect(missing_msg);
                 id.to_string()
             })
             .collect()
     }
 
+    fn gather_tool_search_output_ids(items: &[Value]) -> HashSet<String> {
+        items
+            .iter()
+            .filter(|item| item.get("type").and_then(Value::as_str) == Some("tool_search_output"))
+            .filter_map(|item| {
+                if let Some(id) = get_call_id(item) {
+                    return Some(id.to_string());
+                }
+                if item.get("execution").and_then(Value::as_str) == Some("server") {
+                    return None;
+                }
+                panic!("orphan tool_search_output with empty call_id should be dropped");
+            })
+            .collect()
+    }
+
     let function_calls = gather_ids(items, "function_call");
+    let tool_search_calls = gather_ids(items, "tool_search_call");
     let custom_tool_calls = gather_ids(items, "custom_tool_call");
     let local_shell_calls = gather_ids(items, "local_shell_call");
     let function_call_outputs = gather_output_ids(
@@ -857,6 +1708,7 @@ fn validate_request_body_invariants(request: &wiremock::Request) {
         "function_call_output",
         "orphan function_call_output with empty call_id should be dropped",
     );
+    let tool_search_outputs = gather_tool_search_output_ids(items);
     let custom_tool_call_outputs = gather_output_ids(
         items,
         "custom_tool_call_output",
@@ -875,6 +1727,12 @@ fn validate_request_body_invariants(request: &wiremock::Request) {
             "custom_tool_call_output without matching call in input: {cid}",
         );
     }
+    for cid in &tool_search_outputs {
+        assert!(
+            tool_search_calls.contains(cid),
+            "tool_search_output without matching call in input: {cid}",
+        );
+    }
 
     for cid in &function_calls {
         assert!(
@@ -886,6 +1744,12 @@ fn validate_request_body_invariants(request: &wiremock::Request) {
         assert!(
             custom_tool_call_outputs.contains(cid),
             "Custom tool call output is missing for call id: {cid}",
+        );
+    }
+    for cid in &tool_search_calls {
+        assert!(
+            tool_search_outputs.contains(cid),
+            "Tool search output is missing for call id: {cid}",
         );
     }
 }

@@ -65,8 +65,11 @@ impl ContextTree {
                     self.nodes.len(),
                     self.nodes.keys().collect::<Vec<_>>()
                 );
-                panic!("Root node '{}' must exist but was not found in tree with {} nodes",
-                    self.root_id, self.nodes.len());
+                panic!(
+                    "Root node '{}' must exist but was not found in tree with {} nodes",
+                    self.root_id,
+                    self.nodes.len()
+                );
             }
         }
     }
@@ -80,8 +83,7 @@ impl ContextTree {
             None => {
                 warn!(
                     "Root node '{}' missing! Tree has {} nodes.",
-                    root_id,
-                    node_count
+                    root_id, node_count
                 );
                 panic!("Root node '{}' must exist but was not found", root_id);
             }
@@ -158,10 +160,10 @@ impl ContextTree {
         let node = self.nodes.remove(id)?;
 
         // Remove from parent's children
-        if let Some(ref parent_id) = node.parent_id {
-            if let Some(parent) = self.nodes.get_mut(parent_id) {
-                parent.children.retain(|c| c != id);
-            }
+        if let Some(ref parent_id) = node.parent_id
+            && let Some(parent) = self.nodes.get_mut(parent_id)
+        {
+            parent.children.retain(|c| c != id);
         }
 
         // Remove from path index
@@ -341,15 +343,15 @@ impl ContextTree {
                             let link_b =
                                 RelatedNode::new(id_a.clone(), CrossLinkType::SameTechnology, 0.7);
 
-                            if let Some(node_a) = self.nodes.get_mut(id_a) {
-                                if !node_a.related_nodes.iter().any(|r| r.node_id == *id_b) {
-                                    node_a.add_related(link_a);
-                                }
+                            if let Some(node_a) = self.nodes.get_mut(id_a)
+                                && !node_a.related_nodes.iter().any(|r| r.node_id == *id_b)
+                            {
+                                node_a.add_related(link_a);
                             }
-                            if let Some(node_b) = self.nodes.get_mut(id_b) {
-                                if !node_b.related_nodes.iter().any(|r| r.node_id == *id_a) {
-                                    node_b.add_related(link_b);
-                                }
+                            if let Some(node_b) = self.nodes.get_mut(id_b)
+                                && !node_b.related_nodes.iter().any(|r| r.node_id == *id_a)
+                            {
+                                node_b.add_related(link_b);
                             }
                         }
                     }
@@ -402,12 +404,11 @@ impl ContextTree {
         // Check if category already exists
         if let Some(domain) = self.nodes.get(domain_id) {
             for child_id in &domain.children {
-                if let Some(child) = self.nodes.get(child_id) {
-                    if child.node_type == NodeType::Category
-                        && child.name.to_lowercase() == category.to_lowercase()
-                    {
-                        return Ok(child_id.clone());
-                    }
+                if let Some(child) = self.nodes.get(child_id)
+                    && child.node_type == NodeType::Category
+                    && child.name.to_lowercase() == category.to_lowercase()
+                {
+                    return Ok(child_id.clone());
                 }
             }
         }
@@ -419,11 +420,12 @@ impl ContextTree {
 
     /// Get statistics about the tree.
     pub fn stats(&self) -> TreeStats {
-        let mut stats = TreeStats::default();
-
-        stats.total_nodes = self.nodes.len();
-        stats.max_depth = self.max_depth();
-        stats.domain_count = self.domain_index.len();
+        let mut stats = TreeStats {
+            total_nodes: self.nodes.len(),
+            max_depth: self.max_depth(),
+            domain_count: self.domain_index.len(),
+            ..Default::default()
+        };
 
         for node in self.nodes.values() {
             match node.node_type {
@@ -452,12 +454,14 @@ impl ContextTree {
 
         // Filter out common stop words for better matching
         let stop_words: std::collections::HashSet<&str> = [
-            "a", "an", "the", "is", "are", "was", "were", "be", "been", "have", "has",
-            "had", "do", "does", "did", "will", "would", "could", "should", "can",
-            "to", "of", "in", "for", "on", "with", "at", "by", "from", "as",
-            "and", "but", "if", "or", "what", "who", "whom", "which", "when", "where",
-            "why", "how", "i", "my", "me", "we", "our", "you", "your", "that", "this",
-        ].into_iter().collect();
+            "a", "an", "the", "is", "are", "was", "were", "be", "been", "have", "has", "had", "do",
+            "does", "did", "will", "would", "could", "should", "can", "to", "of", "in", "for",
+            "on", "with", "at", "by", "from", "as", "and", "but", "if", "or", "what", "who",
+            "whom", "which", "when", "where", "why", "how", "i", "my", "me", "we", "our", "you",
+            "your", "that", "this",
+        ]
+        .into_iter()
+        .collect();
 
         let terms: Vec<&str> = query_lower
             .split_whitespace()
@@ -466,7 +470,8 @@ impl ContextTree {
 
         if terms.is_empty() {
             // If no meaningful terms, return top-level content nodes
-            return self.nodes
+            return self
+                .nodes
                 .values()
                 .filter(|n| matches!(n.node_type, NodeType::Project | NodeType::Document))
                 .take(10)
@@ -474,17 +479,24 @@ impl ContextTree {
         }
 
         // Score nodes by how many terms they match
-        let mut scored: Vec<(&ContextNode, usize)> = self.nodes
+        let mut scored: Vec<(&ContextNode, usize)> = self
+            .nodes
             .values()
             .filter_map(|node| {
                 let name_lower = node.name.to_lowercase();
                 let summary_lower = node.summary.to_lowercase();
 
-                let match_count = terms.iter().filter(|term| {
-                    name_lower.contains(*term)
-                        || summary_lower.contains(*term)
-                        || node.keywords.iter().any(|k| k.to_lowercase().contains(*term))
-                }).count();
+                let match_count = terms
+                    .iter()
+                    .filter(|term| {
+                        name_lower.contains(*term)
+                            || summary_lower.contains(*term)
+                            || node
+                                .keywords
+                                .iter()
+                                .any(|k| k.to_lowercase().contains(*term))
+                    })
+                    .count();
 
                 if match_count > 0 {
                     Some((node, match_count))

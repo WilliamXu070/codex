@@ -219,21 +219,21 @@ impl TreeOptimizer {
             }
 
             // Merge file references if there are many
-            if let Some(file_refs) = by_type.get(&NodeType::FileReference) {
-                if file_refs.len() >= self.config.min_siblings_for_merge {
-                    let (merged, removed) = self
-                        .merge_file_refs(tree, &parent_id, file_refs, analyzer)
-                        .await;
-                    if let Some(merged_node) = merged {
-                        created_ids.push(merged_node.id.clone());
-                        tree.add_child(&parent_id, merged_node).ok();
-                        merged_count += 1;
-                    }
-                    for id in &removed {
-                        tree.remove(id);
-                    }
-                    removed_ids.extend(removed);
+            if let Some(file_refs) = by_type.get(&NodeType::FileReference)
+                && file_refs.len() >= self.config.min_siblings_for_merge
+            {
+                let (merged, removed) = self
+                    .merge_file_refs(tree, &parent_id, file_refs, analyzer)
+                    .await;
+                if let Some(merged_node) = merged {
+                    created_ids.push(merged_node.id.clone());
+                    tree.add_child(&parent_id, merged_node).ok();
+                    merged_count += 1;
                 }
+                for id in &removed {
+                    tree.remove(id);
+                }
+                removed_ids.extend(removed);
             }
         }
 

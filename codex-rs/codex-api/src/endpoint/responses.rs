@@ -1,44 +1,48 @@
-use crate::auth::AuthProvider;
-use crate::common::Prompt as ApiPrompt;
-use crate::common::Reasoning;
+use crate::auth::SharedAuthProvider;
 use crate::common::ResponseStream;
-use crate::common::TextControls;
-use crate::endpoint::streaming::StreamingClient;
+use crate::common::ResponsesApiRequest;
+use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
-use crate::provider::WireApi;
-use crate::requests::ResponsesRequest;
-use crate::requests::ResponsesRequestBuilder;
+use crate::requests::Compression;
+use crate::requests::headers::build_session_headers;
+use crate::requests::headers::insert_header;
+use crate::requests::headers::subagent_header;
 use crate::sse::spawn_response_stream;
 use crate::telemetry::SseTelemetry;
+use codex_client::EncodedJsonBody;
 use codex_client::HttpTransport;
+use codex_client::RequestCompression;
 use codex_client::RequestTelemetry;
 use codex_protocol::protocol::SessionSource;
 use http::HeaderMap;
+use http::HeaderValue;
+use http::Method;
 use serde_json::Value;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tracing::instrument;
 
-pub struct ResponsesClient<T: HttpTransport, A: AuthProvider> {
-    streaming: StreamingClient<T, A>,
+pub struct ResponsesClient<T: HttpTransport> {
+    session: EndpointSession<T>,
+    sse_telemetry: Option<Arc<dyn SseTelemetry>>,
 }
 
 #[derive(Default)]
 pub struct ResponsesOptions {
-    pub reasoning: Option<Reasoning>,
-    pub include: Vec<String>,
-    pub prompt_cache_key: Option<String>,
-    pub text: Option<TextControls>,
-    pub store_override: Option<bool>,
-    pub conversation_id: Option<String>,
+    pub session_id: Option<String>,
+    pub thread_id: Option<String>,
     pub session_source: Option<SessionSource>,
     pub extra_headers: HeaderMap,
+    pub compression: Compression,
+    pub turn_state: Option<Arc<OnceLock<String>>>,
 }
 
-impl<T: HttpTransport, A: AuthProvider> ResponsesClient<T, A> {
-    pub fn new(transport: T, provider: Provider, auth: A) -> Self {
+impl<T: HttpTransport> ResponsesClient<T> {
+    pub fn new(transport: T, provider: Provider, auth: SharedAuthProvider) -> Self {
         Self {
-            streaming: StreamingClient::new(transport, provider, auth),
+            session: EndpointSession::new(transport, provider, auth),
+            sse_telemetry: None,
         }
     }
 
@@ -48,65 +52,113 @@ impl<T: HttpTransport, A: AuthProvider> ResponsesClient<T, A> {
         sse: Option<Arc<dyn SseTelemetry>>,
     ) -> Self {
         Self {
-            streaming: self.streaming.with_telemetry(request, sse),
+            session: self.session.with_request_telemetry(request),
+            sse_telemetry: sse,
         }
     }
 
+    #[instrument(
+        name = "responses.stream_request",
+        level = "info",
+        skip_all,
+        fields(
+            transport = "responses_http",
+            http.method = "POST",
+            api.path = "responses"
+        )
+    )]
     pub async fn stream_request(
         &self,
-        request: ResponsesRequest,
-    ) -> Result<ResponseStream, ApiError> {
-        self.stream(request.body, request.headers).await
-    }
-
-    #[instrument(level = "trace", skip_all, err)]
-    pub async fn stream_prompt(
-        &self,
-        model: &str,
-        prompt: &ApiPrompt,
+        request: ResponsesApiRequest,
         options: ResponsesOptions,
     ) -> Result<ResponseStream, ApiError> {
         let ResponsesOptions {
-            reasoning,
-            include,
-            prompt_cache_key,
-            text,
-            store_override,
-            conversation_id,
+            session_id,
+            thread_id,
             session_source,
             extra_headers,
+            compression,
+            turn_state,
         } = options;
 
-        let request = ResponsesRequestBuilder::new(model, &prompt.instructions, &prompt.input)
-            .tools(&prompt.tools)
-            .parallel_tool_calls(prompt.parallel_tool_calls)
-            .reasoning(reasoning)
-            .include(include)
-            .prompt_cache_key(prompt_cache_key)
-            .text(text)
-            .conversation(conversation_id)
-            .session_source(session_source)
-            .store_override(store_override)
-            .extra_headers(extra_headers)
-            .build(self.streaming.provider())?;
+        let body = EncodedJsonBody::encode(&request)
+            .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
 
-        self.stream_request(request).await
-    }
-
-    fn path(&self) -> &'static str {
-        match self.streaming.provider().wire {
-            WireApi::Responses | WireApi::Compact => "responses",
-            WireApi::Chat => "chat/completions",
+        let mut headers = extra_headers;
+        if let Some(ref thread_id) = thread_id {
+            insert_header(&mut headers, "x-client-request-id", thread_id);
         }
+        headers.extend(build_session_headers(session_id, thread_id));
+        if let Some(subagent) = subagent_header(&session_source) {
+            insert_header(&mut headers, "x-openai-subagent", &subagent);
+        }
+
+        self.stream_encoded(body, headers, compression, turn_state)
+            .await
     }
 
+    fn path() -> &'static str {
+        "responses"
+    }
+
+    #[instrument(
+        name = "responses.stream",
+        level = "info",
+        skip_all,
+        fields(
+            transport = "responses_http",
+            http.method = "POST",
+            api.path = "responses",
+            turn.has_state = turn_state.is_some()
+        )
+    )]
     pub async fn stream(
         &self,
         body: Value,
         extra_headers: HeaderMap,
+        compression: Compression,
+        turn_state: Option<Arc<OnceLock<String>>>,
     ) -> Result<ResponseStream, ApiError> {
-        self.streaming
-            .stream(self.path(), body, extra_headers, spawn_response_stream)
+        let body = EncodedJsonBody::encode(&body)
+            .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
+        self.stream_encoded(body, extra_headers, compression, turn_state)
             .await
+    }
+
+    async fn stream_encoded(
+        &self,
+        body: EncodedJsonBody,
+        extra_headers: HeaderMap,
+        compression: Compression,
+        turn_state: Option<Arc<OnceLock<String>>>,
+    ) -> Result<ResponseStream, ApiError> {
+        let request_compression = match compression {
+            Compression::None => RequestCompression::None,
+            Compression::Zstd => RequestCompression::Zstd,
+        };
+
+        let stream_response = self
+            .session
+            .stream_encoded_json_with(
+                Method::POST,
+                Self::path(),
+                extra_headers,
+                Some(body),
+                |req| {
+                    req.headers.insert(
+                        http::header::ACCEPT,
+                        HeaderValue::from_static("text/event-stream"),
+                    );
+                    req.compression = request_compression;
+                },
+            )
+            .await?;
+
+        Ok(spawn_response_stream(
+            stream_response,
+            self.session.provider().stream_idle_timeout,
+            self.sse_telemetry.clone(),
+            turn_state,
+        ))
     }
 }

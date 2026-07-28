@@ -2,13 +2,25 @@
 // Unified entry point for the Codex CLI.
 
 import { spawn } from "node:child_process";
-import { existsSync } from "fs";
+import { existsSync, realpathSync } from "fs";
+import { createRequire } from "node:module";
 import path from "path";
 import { fileURLToPath } from "url";
 
 // __dirname equivalent in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
+const codexPackageRoot = realpathSync(path.join(__dirname, ".."));
+
+const PLATFORM_PACKAGE_BY_TARGET = {
+  "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
+  "aarch64-unknown-linux-musl": "@openai/codex-linux-arm64",
+  "x86_64-apple-darwin": "@openai/codex-darwin-x64",
+  "aarch64-apple-darwin": "@openai/codex-darwin-arm64",
+  "x86_64-pc-windows-msvc": "@openai/codex-win32-x64",
+  "aarch64-pc-windows-msvc": "@openai/codex-win32-arm64",
+};
 
 const { platform, arch } = process;
 
@@ -59,10 +71,43 @@ if (!targetTriple) {
   throw new Error(`Unsupported platform: ${platform} (${arch})`);
 }
 
-const vendorRoot = path.join(__dirname, "..", "vendor");
-const archRoot = path.join(vendorRoot, targetTriple);
-const codexBinaryName = process.platform === "win32" ? "codex.exe" : "codex";
-const binaryPath = path.join(archRoot, "codex", codexBinaryName);
+const platformPackage = PLATFORM_PACKAGE_BY_TARGET[targetTriple];
+if (!platformPackage) {
+  throw new Error(`Unsupported target triple: ${targetTriple}`);
+}
+
+function findCodexExecutable() {
+  let vendorRoot;
+  try {
+    const packageJsonPath = require.resolve(`${platformPackage}/package.json`);
+    vendorRoot = path.join(path.dirname(packageJsonPath), "vendor");
+  } catch {
+    vendorRoot = path.join(__dirname, "..", "vendor");
+  }
+
+  const codexExecutable = path.join(
+    vendorRoot,
+    targetTriple,
+    "bin",
+    process.platform === "win32" ? "codex.exe" : "codex",
+  );
+  if (existsSync(codexExecutable)) {
+    return codexExecutable;
+  }
+
+  const packageManager = detectPackageManager();
+  const updateCommand =
+    packageManager === "bun"
+      ? "bun install -g @openai/codex@latest"
+      : packageManager === "pnpm"
+        ? "pnpm add -g @openai/codex@latest"
+        : "npm install -g @openai/codex@latest";
+  throw new Error(
+    `Missing optional dependency ${platformPackage}. Reinstall Codex: ${updateCommand}`,
+  );
+}
+
+const binaryPath = findCodexExecutable();
 
 // Use an asynchronous spawn instead of spawnSync so that Node is able to
 // respond to signals (e.g. Ctrl-C / SIGINT) while the native binary is
@@ -70,14 +115,19 @@ const binaryPath = path.join(archRoot, "codex", codexBinaryName);
 // and guarantees that when either the child terminates or the parent
 // receives a fatal signal, both processes exit in a predictable manner.
 
-function getUpdatedPath(newDirs) {
-  const pathSep = process.platform === "win32" ? ";" : ":";
-  const existingPath = process.env.PATH || "";
-  const updatedPath = [
-    ...newDirs,
-    ...existingPath.split(pathSep).filter(Boolean),
-  ].join(pathSep);
-  return updatedPath;
+function isPnpmOwnedCodexInstall(nodeModulesDir) {
+  if (!existsSync(path.join(nodeModulesDir, ".modules.yaml"))) {
+    return false;
+  }
+
+  try {
+    return (
+      realpathSync(path.join(nodeModulesDir, "@openai", "codex")) ===
+      codexPackageRoot
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -85,6 +135,27 @@ function getUpdatedPath(newDirs) {
  * in order to give the user a hint about how to update it.
  */
 function detectPackageManager() {
+  // pnpm's owning node_modules directory can be several parents above the
+  // package in isolated global layouts. Search ancestors of both the canonical
+  // package root and lexical entrypoint because pnpm may link either path.
+  const entrypointDir = path.dirname(path.resolve(process.argv[1]));
+  for (const startDir of new Set([codexPackageRoot, entrypointDir])) {
+    const filesystemRoot = path.parse(startDir).root;
+    for (
+      let currentDir = startDir;
+      currentDir !== filesystemRoot;
+      currentDir = path.dirname(currentDir)
+    ) {
+      if (isPnpmOwnedCodexInstall(path.join(currentDir, "node_modules"))) {
+        return "pnpm";
+      }
+    }
+
+    if (isPnpmOwnedCodexInstall(path.join(filesystemRoot, "node_modules"))) {
+      return "pnpm";
+    }
+  }
+
   const userAgent = process.env.npm_config_user_agent || "";
   if (/\bbun\//.test(userAgent)) {
     return "bun";
@@ -94,7 +165,6 @@ function detectPackageManager() {
   if (execPath.includes("bun")) {
     return "bun";
   }
-
 
   if (
     __dirname.includes(".bun/install/global") ||
@@ -106,18 +176,20 @@ function detectPackageManager() {
   return userAgent ? "npm" : null;
 }
 
-const additionalDirs = [];
-const pathDir = path.join(archRoot, "path");
-if (existsSync(pathDir)) {
-  additionalDirs.push(pathDir);
-}
-const updatedPath = getUpdatedPath(additionalDirs);
-
-const env = { ...process.env, PATH: updatedPath };
+const packageManager = detectPackageManager();
 const packageManagerEnvVar =
-  detectPackageManager() === "bun"
+  packageManager === "bun"
     ? "CODEX_MANAGED_BY_BUN"
-    : "CODEX_MANAGED_BY_NPM";
+    : packageManager === "pnpm"
+      ? "CODEX_MANAGED_BY_PNPM"
+      : "CODEX_MANAGED_BY_NPM";
+const env = {
+  ...process.env,
+  CODEX_MANAGED_PACKAGE_ROOT: codexPackageRoot,
+};
+delete env.CODEX_MANAGED_BY_NPM;
+delete env.CODEX_MANAGED_BY_BUN;
+delete env.CODEX_MANAGED_BY_PNPM;
 env[packageManagerEnvVar] = "1";
 
 const child = spawn(binaryPath, process.argv.slice(2), {

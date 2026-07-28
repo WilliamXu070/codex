@@ -71,7 +71,7 @@ impl FrameRequester {
 ///
 /// This type is internal to `FrameRequester` and is spawned as a task to handle scheduling logic.
 ///
-/// To avoid wasted redraw work, draw notifications are clamped to a maximum of 60 FPS (see
+/// To avoid wasted redraw work, draw notifications are clamped to a maximum of 120 FPS (see
 /// [`FrameRateLimiter`]).
 struct FrameScheduler {
     receiver: mpsc::UnboundedReceiver<Instant>,
@@ -132,6 +132,19 @@ mod tests {
     use super::*;
     use tokio::time;
     use tokio_util::time::FutureExt;
+
+    impl FrameRequester {
+        /// Create a frame requester and expose its request channel for deterministic tests.
+        pub(crate) fn test_channel() -> (Self, mpsc::UnboundedReceiver<Instant>) {
+            let (tx, rx) = mpsc::unbounded_channel();
+            (
+                FrameRequester {
+                    frame_schedule_tx: tx,
+                },
+                rx,
+            )
+        }
+    }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_schedule_frame_immediate_triggers_once() {
@@ -232,7 +245,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_limits_draw_notifications_to_60fps() {
+    async fn test_limits_draw_notifications_to_120fps() {
         let (draw_tx, mut draw_rx) = broadcast::channel(16);
         let requester = FrameRequester::new(draw_tx);
 
@@ -250,7 +263,7 @@ mod tests {
         let early = draw_rx.recv().timeout(Duration::from_millis(1)).await;
         assert!(
             early.is_err(),
-            "draw fired too early; expected max 60fps (min interval {MIN_FRAME_INTERVAL:?})"
+            "draw fired too early; expected max 120fps (min interval {MIN_FRAME_INTERVAL:?})"
         );
 
         time::advance(MIN_FRAME_INTERVAL).await;
@@ -278,11 +291,11 @@ mod tests {
 
         requester.schedule_frame_in(Duration::from_millis(1));
 
-        time::advance(Duration::from_millis(10)).await;
+        time::advance(MIN_FRAME_INTERVAL / 2).await;
         let too_early = draw_rx.recv().timeout(Duration::from_millis(1)).await;
         assert!(
             too_early.is_err(),
-            "draw fired too early; expected max 60fps (min interval {MIN_FRAME_INTERVAL:?})"
+            "draw fired too early; expected max 120fps (min interval {MIN_FRAME_INTERVAL:?})"
         );
 
         time::advance(MIN_FRAME_INTERVAL).await;

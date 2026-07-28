@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use walkdir::WalkDir;
 
 use crate::config::DirectoryConfig;
@@ -40,7 +40,7 @@ impl IndexedFile {
 
         let modified = metadata
             .as_ref()
-            .and_then(|m| m.modified().ok().map(|t| DateTime::<Utc>::from(t)));
+            .and_then(|m| m.modified().ok().map(DateTime::<Utc>::from));
 
         Self {
             attributes: FileAttributes::from_path(&path).with_mime_type(),
@@ -181,7 +181,7 @@ impl FileIndexer {
     pub fn by_extension(&self, ext: &str) -> Vec<&IndexedFile> {
         self.files
             .values()
-            .filter(|f| f.attributes.extension.as_ref().map_or(false, |e| e == ext))
+            .filter(|f| f.attributes.extension.as_ref().is_some_and(|e| e == ext))
             .collect()
     }
 
@@ -193,7 +193,7 @@ impl FileIndexer {
                 f.attributes
                     .mime_type
                     .as_ref()
-                    .map_or(false, |m| m.starts_with(mime))
+                    .is_some_and(|m| m.starts_with(mime))
             })
             .collect()
     }

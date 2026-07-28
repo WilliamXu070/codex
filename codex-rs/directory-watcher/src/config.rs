@@ -118,10 +118,10 @@ impl DirectoryConfig {
         let path_str = path.to_string_lossy();
 
         for pattern in &self.exclude_patterns {
-            if let Ok(glob) = glob::Pattern::new(pattern) {
-                if glob.matches(&path_str) {
-                    return true;
-                }
+            if let Ok(glob) = glob::Pattern::new(pattern)
+                && glob.matches(&path_str)
+            {
+                return true;
             }
         }
 
@@ -130,10 +130,11 @@ impl DirectoryConfig {
 }
 
 /// How to watch a directory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WatchMode {
     /// Watch for changes in real-time.
+    #[default]
     Realtime,
 
     /// Periodic scheduled scans.
@@ -141,12 +142,6 @@ pub enum WatchMode {
 
     /// Manual indexing only.
     Manual,
-}
-
-impl Default for WatchMode {
-    fn default() -> Self {
-        Self::Realtime
-    }
 }
 
 #[cfg(test)]

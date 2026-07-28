@@ -13,13 +13,15 @@ use ratatui::widgets::Widget;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::key_hint;
+use crate::key_hint::KeyBindingListExt;
+use crate::keymap::ListKeymap;
 use crate::render::Insets;
 use crate::render::RectExt as _;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use crate::style::user_message_style;
 
-use codex_core::features::Feature;
+use codex_features::Feature;
 
 use super::CancellationEvent;
 use super::bottom_pane_view::BottomPaneView;
@@ -29,7 +31,7 @@ use super::selection_popup_common::GenericDisplayRow;
 use super::selection_popup_common::measure_rows_height;
 use super::selection_popup_common::render_rows;
 
-pub(crate) struct BetaFeatureItem {
+pub(crate) struct ExperimentalFeatureItem {
     pub feature: Feature,
     pub name: String,
     pub description: String,
@@ -37,20 +39,25 @@ pub(crate) struct BetaFeatureItem {
 }
 
 pub(crate) struct ExperimentalFeaturesView {
-    features: Vec<BetaFeatureItem>,
+    features: Vec<ExperimentalFeatureItem>,
     state: ScrollState,
     complete: bool,
     app_event_tx: AppEventSender,
     header: Box<dyn Renderable>,
     footer_hint: Line<'static>,
+    keymap: ListKeymap,
 }
 
 impl ExperimentalFeaturesView {
-    pub(crate) fn new(features: Vec<BetaFeatureItem>, app_event_tx: AppEventSender) -> Self {
+    pub(crate) fn new(
+        features: Vec<ExperimentalFeatureItem>,
+        app_event_tx: AppEventSender,
+        keymap: ListKeymap,
+    ) -> Self {
         let mut header = ColumnRenderable::new();
         header.push(Line::from("Experimental features".bold()));
         header.push(Line::from(
-            "Toggle beta features. Changes are saved to config.toml.".dim(),
+            "Toggle experimental features. Changes are saved to config.toml.".dim(),
         ));
 
         let mut view = Self {
@@ -60,6 +67,7 @@ impl ExperimentalFeaturesView {
             app_event_tx,
             header: Box::new(header),
             footer_hint: experimental_popup_hint_line(),
+            keymap,
         };
         view.initialize_selection();
         view
@@ -116,6 +124,30 @@ impl ExperimentalFeaturesView {
         self.state.ensure_visible(len, MAX_POPUP_ROWS.min(len));
     }
 
+    fn page_up(&mut self) {
+        let len = self.visible_len();
+        let visible = MAX_POPUP_ROWS.min(len);
+        self.state.page_up_clamped(len, visible);
+    }
+
+    fn page_down(&mut self) {
+        let len = self.visible_len();
+        let visible = MAX_POPUP_ROWS.min(len);
+        self.state.page_down_clamped(len, visible);
+    }
+
+    fn jump_top(&mut self) {
+        let len = self.visible_len();
+        let visible = MAX_POPUP_ROWS.min(len);
+        self.state.jump_top(len, visible);
+    }
+
+    fn jump_bottom(&mut self) {
+        let len = self.visible_len();
+        let visible = MAX_POPUP_ROWS.min(len);
+        self.state.jump_bottom(len, visible);
+    }
+
     fn toggle_selected(&mut self) {
         let Some(selected_idx) = self.state.selected_idx else {
             return;
@@ -134,51 +166,20 @@ impl ExperimentalFeaturesView {
 impl BottomPaneView for ExperimentalFeaturesView {
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event {
+            _ if self.keymap.move_up.is_pressed(key_event) => self.move_up(),
+            _ if self.keymap.move_down.is_pressed(key_event) => self.move_down(),
+            _ if self.keymap.page_up.is_pressed(key_event) => self.page_up(),
+            _ if self.keymap.page_down.is_pressed(key_event) => self.page_down(),
+            _ if self.keymap.jump_top.is_pressed(key_event) => self.jump_top(),
+            _ if self.keymap.jump_bottom.is_pressed(key_event) => self.jump_bottom(),
             KeyEvent {
-                code: KeyCode::Up, ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('p'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('\u{0010}'),
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => self.move_up(),
-            KeyEvent {
-                code: KeyCode::Char('k'),
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => self.move_up(),
-            KeyEvent {
-                code: KeyCode::Down,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('n'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('\u{000e}'),
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => self.move_down(),
-            KeyEvent {
-                code: KeyCode::Char('j'),
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => self.move_down(),
-            KeyEvent {
-                code: KeyCode::Enter,
+                code: KeyCode::Char(' '),
                 modifiers: KeyModifiers::NONE,
                 ..
             } => self.toggle_selected(),
-            KeyEvent {
-                code: KeyCode::Esc, ..
-            } => {
+            _ if self.keymap.accept.is_pressed(key_event)
+                || self.keymap.cancel.is_pressed(key_event) =>
+            {
                 self.on_ctrl_c();
             }
             _ => {}
@@ -235,7 +236,7 @@ impl Renderable for ExperimentalFeaturesView {
             Constraint::Max(1),
             Constraint::Length(rows_height),
         ])
-        .areas(content_area.inset(Insets::vh(1, 2)));
+        .areas(content_area.inset(Insets::vh(/*v*/ 1, /*h*/ 2)));
 
         self.header.render(header_area, buf);
 
@@ -284,9 +285,9 @@ impl Renderable for ExperimentalFeaturesView {
 fn experimental_popup_hint_line() -> Line<'static> {
     Line::from(vec![
         "Press ".into(),
+        key_hint::plain(KeyCode::Char(' ')).into(),
+        " to select or ".into(),
         key_hint::plain(KeyCode::Enter).into(),
-        " to toggle or ".into(),
-        key_hint::plain(KeyCode::Esc).into(),
         " to save for next conversation".into(),
     ])
 }

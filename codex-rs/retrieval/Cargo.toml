@@ -19,14 +19,15 @@ anyhow.workspace = true
 
 # Time handling
 chrono.workspace = true
+dirs.workspace = true
 
 # Logging
 tracing.workspace = true
 
 # Internal dependencies
-codex-context-files = { path = "../context-files" }
-codex-embeddings = { path = "../embeddings" }
-codex-directory-watcher = { path = "../directory-watcher" }
+codex-context-files = { workspace = true }
+codex-embeddings = { workspace = true }
+codex-directory-watcher = { workspace = true }
 
 [dev-dependencies]
 tokio-test.workspace = true

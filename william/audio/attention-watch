@@ -1,0 +1,137 @@
+#!/bin/zsh
+
+setopt no_unset
+
+codex_home="${CODEX_HOME:-/Users/williamxu/.codex}"
+db_file="${CODEX_ATTENTION_DB:-$codex_home/logs_2.sqlite}"
+sound_script="${CODEX_ATTENTION_SOUND_SCRIPT:-/Users/williamxu/.codex/codex-random-sound}"
+log_file="${CODEX_ATTENTION_WATCH_LOG:-/tmp/codex-attention-sound-watch.log}"
+state_dir="${CODEX_ATTENTION_STATE_DIR:-/tmp}"
+state_file="$state_dir/codex-attention-sound-watch.last-id"
+seen_file="$state_dir/codex-attention-sound-watch.seen"
+last_fire_file="$state_dir/codex-attention-sound-watch.last-fire"
+poll_interval="${CODEX_ATTENTION_POLL_INTERVAL:-1}"
+min_interval="${CODEX_ATTENTION_MIN_INTERVAL:-2}"
+
+mkdir -p "${log_file:h}" "$state_dir" 2>/dev/null || true
+
+log_watch() {
+  { print -r -- "$(date -u '+%Y-%m-%dT%H:%M:%SZ') $1" >> "$log_file" } 2>/dev/null || true
+}
+
+sqlite_scalar() {
+  /usr/bin/sqlite3 -readonly "$db_file" "$1" 2>/dev/null
+}
+
+current_max_id() {
+  sqlite_scalar "select coalesce(max(id), 0) from logs;"
+}
+
+extract_call_id() {
+  local call_id
+  call_id="$(print -r -- "$1" | /usr/bin/sed -n 's/.*"call_id":"\([^"]*\)".*/\1/p' | /usr/bin/head -1)"
+  [[ "$call_id" == call_* ]] || call_id=""
+  print -r -- "$call_id"
+}
+
+should_fire_for_body() {
+  local body="$1"
+  local lower="${body:l}"
+  local compact="${lower//[[:space:]]/}"
+
+  if [[ "$compact" == *'codex-attention-sound-watch'* ]] ||
+     [[ "$compact" == *'should_fire_for_body'* ]] ||
+     [[ "$compact" == *'extract_call_id'* ]]; then
+    return 1
+  fi
+
+  if { [[ "$lower" == *'websocket event: {"type":"response.output_item.added"'* ]] ||
+       [[ "$lower" == *'received message {"type":"response.output_item.added"'* ]]; } &&
+     [[ "$compact" == *'"type":"function_call"'* ]] &&
+     [[ "$compact" == *'"name":"request_user_input"'* ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+play_once() {
+  local row_id="$1"
+  local body="$2"
+  local call_id key now last_fire
+
+  call_id="$(extract_call_id "$body")"
+  key="${call_id:-row-$row_id}"
+
+  if [[ -r "$seen_file" ]] && /usr/bin/grep -qxF "$key" "$seen_file" 2>/dev/null; then
+    log_watch "deduped key=$key row_id=$row_id"
+    return 0
+  fi
+
+  now="$(date +%s)"
+  last_fire="$(cat "$last_fire_file" 2>/dev/null || print -r -- 0)"
+  if [[ "$last_fire" == <-> ]] && (( now - last_fire < min_interval )); then
+    log_watch "debounced key=$key row_id=$row_id"
+    return 0
+  fi
+
+  print -r -- "$key" >> "$seen_file" 2>/dev/null || true
+  /usr/bin/tail -n 200 "$seen_file" > "$seen_file.tmp" 2>/dev/null && /bin/mv "$seen_file.tmp" "$seen_file" 2>/dev/null || true
+  print -r -- "$now" > "$last_fire_file" 2>/dev/null || true
+
+  /bin/zsh "$sound_script" --event question "{\"source\":\"codex-attention-sound-watch\",\"row_id\":\"$row_id\",\"call_id\":\"$call_id\"}" >/dev/null 2>&1 &
+  log_watch "played question sound key=$key row_id=$row_id"
+}
+
+read_new_rows() {
+  local last_id="$1"
+  local sep sql
+  sep="$(printf '\037')"
+  sql="select id, replace(coalesce(feedback_log_body, ''), char(10), '\\n') from logs where id > $last_id order by id asc limit 1000;"
+  /usr/bin/sqlite3 -readonly -separator "$sep" "$db_file" "$sql" 2>/dev/null
+}
+
+main() {
+  local last_id max_id rows row_id body sep
+
+  until [[ -r "$db_file" ]]; do
+    log_watch "waiting for $db_file"
+    sleep "$poll_interval"
+  done
+
+  if [[ "${CODEX_ATTENTION_REPLAY:-}" == "1" && -r "$state_file" ]]; then
+    last_id="$(cat "$state_file" 2>/dev/null || print -r -- 0)"
+  else
+    last_id="$(current_max_id)"
+    [[ "$last_id" == <-> ]] || last_id=0
+    print -r -- "$last_id" > "$state_file" 2>/dev/null || true
+  fi
+
+  log_watch "started db=$db_file from_id=$last_id"
+  sep="$(printf '\037')"
+
+  while true; do
+    rows="$(read_new_rows "$last_id")"
+    if [[ -n "$rows" ]]; then
+      while IFS="$sep" read -r row_id body; do
+        [[ "$row_id" == <-> ]] || continue
+        if should_fire_for_body "$body"; then
+          play_once "$row_id" "$body"
+        fi
+        if (( row_id > last_id )); then
+          last_id="$row_id"
+        fi
+      done <<< "$rows"
+      print -r -- "$last_id" > "$state_file" 2>/dev/null || true
+    else
+      max_id="$(current_max_id)"
+      if [[ "$max_id" == <-> ]] && (( max_id > last_id )); then
+        last_id="$max_id"
+        print -r -- "$last_id" > "$state_file" 2>/dev/null || true
+      fi
+    fi
+    sleep "$poll_interval"
+  done
+}
+
+main "$@"

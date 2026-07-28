@@ -133,18 +133,19 @@ impl DirectoryWatcher {
         // Add all realtime directories to the watcher
         let configs = self.configs.read().await;
         for (path, config) in configs.iter() {
-            if config.enabled && config.watch_mode == WatchMode::Realtime {
-                if let Some(ref mut w) = self.watcher {
-                    let mode = if config.max_depth == Some(0) {
-                        RecursiveMode::NonRecursive
-                    } else {
-                        RecursiveMode::Recursive
-                    };
+            if config.enabled
+                && config.watch_mode == WatchMode::Realtime
+                && let Some(ref mut watcher) = self.watcher
+            {
+                let mode = if config.max_depth == Some(0) {
+                    RecursiveMode::NonRecursive
+                } else {
+                    RecursiveMode::Recursive
+                };
 
-                    match w.watch(path, mode) {
-                        Ok(_) => debug!("Started watching: {}", path.display()),
-                        Err(e) => warn!("Failed to watch {}: {e}", path.display()),
-                    }
+                match watcher.watch(path, mode) {
+                    Ok(_) => debug!("Started watching: {}", path.display()),
+                    Err(e) => warn!("Failed to watch {}: {e}", path.display()),
                 }
             }
         }
@@ -277,7 +278,7 @@ pub struct ScheduledWatcher {
     interval: Duration,
 
     /// Event sender.
-    event_tx: mpsc::Sender<FileEvent>,
+    _event_tx: mpsc::Sender<FileEvent>,
 
     /// Whether the watcher is running.
     running: Arc<RwLock<bool>>,
@@ -291,7 +292,7 @@ impl ScheduledWatcher {
         let watcher = Self {
             configs: Vec::new(),
             interval,
-            event_tx,
+            _event_tx: event_tx,
             running: Arc::new(RwLock::new(false)),
         };
 
@@ -311,7 +312,6 @@ impl ScheduledWatcher {
 
         let configs = self.configs.clone();
         let interval = self.interval;
-        let event_tx = self.event_tx.clone();
         let running = self.running.clone();
 
         tokio::spawn(async move {

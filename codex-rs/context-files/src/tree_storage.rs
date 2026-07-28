@@ -59,7 +59,10 @@ impl TreeData {
         // Check if root node exists in the stored nodes
         let has_root = self.nodes.iter().any(|n| n.id == self.root_id);
         if !has_root {
-            warn!("Stored tree missing root node '{}', creating fresh tree", self.root_id);
+            warn!(
+                "Stored tree missing root node '{}', creating fresh tree",
+                self.root_id
+            );
             return Ok(ContextTree::new());
         }
 
@@ -317,16 +320,11 @@ impl TreeVisualization {
     fn new() -> Self {
         Self { lines: Vec::new() }
     }
-
-    /// Convert to a string.
-    pub fn to_string(&self) -> String {
-        self.lines.join("\n")
-    }
 }
 
 impl std::fmt::Display for TreeVisualization {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{}", self.lines.join("\n"))
     }
 }
 

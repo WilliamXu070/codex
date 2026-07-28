@@ -332,43 +332,43 @@ impl InputConstraints {
     pub fn validate(&self, value: &serde_json::Value, name: &str) -> Result<(), String> {
         // Numeric constraints
         if let Some(num) = value.as_f64() {
-            if let Some(min) = self.min {
-                if num < min {
-                    return Err(format!("{name}: value {num} is less than minimum {min}"));
-                }
+            if let Some(min) = self.min
+                && num < min
+            {
+                return Err(format!("{name}: value {num} is less than minimum {min}"));
             }
-            if let Some(max) = self.max {
-                if num > max {
-                    return Err(format!("{name}: value {num} is greater than maximum {max}"));
-                }
+            if let Some(max) = self.max
+                && num > max
+            {
+                return Err(format!("{name}: value {num} is greater than maximum {max}"));
             }
         }
 
         // String length constraints
         if let Some(s) = value.as_str() {
-            if let Some(min) = self.min_length {
-                if s.len() < min {
-                    return Err(format!(
-                        "{name}: string length {} is less than {min}",
-                        s.len()
-                    ));
-                }
+            if let Some(min) = self.min_length
+                && s.len() < min
+            {
+                return Err(format!(
+                    "{name}: string length {} is less than {min}",
+                    s.len()
+                ));
             }
-            if let Some(max) = self.max_length {
-                if s.len() > max {
-                    return Err(format!(
-                        "{name}: string length {} is greater than {max}",
-                        s.len()
-                    ));
-                }
+            if let Some(max) = self.max_length
+                && s.len() > max
+            {
+                return Err(format!(
+                    "{name}: string length {} is greater than {max}",
+                    s.len()
+                ));
             }
         }
 
         // Enum constraints
-        if let Some(enum_vals) = &self.enum_values {
-            if !enum_vals.contains(value) {
-                return Err(format!("{name}: value not in allowed enum"));
-            }
+        if let Some(enum_vals) = &self.enum_values
+            && !enum_vals.contains(value)
+        {
+            return Err(format!("{name}: value not in allowed enum"));
         }
 
         Ok(())

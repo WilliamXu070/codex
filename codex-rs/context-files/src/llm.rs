@@ -99,8 +99,10 @@ impl LlmAnalyzer {
 
     /// Create an analyzer with heuristic-only mode.
     pub fn heuristic_only() -> Self {
-        let mut config = LlmConfig::default();
-        config.fallback_to_heuristic = true;
+        let config = LlmConfig {
+            fallback_to_heuristic: true,
+            ..Default::default()
+        };
         Self::new(config)
     }
 
@@ -231,12 +233,11 @@ impl LlmAnalyzer {
         }
 
         // Add file context if summary is too short
-        if summary.len() < 50 {
-            if let Some(path) = file_path {
-                if let Some(filename) = path.split(['/', '\\']).last() {
-                    summary = format!("Content from {}: {}", filename, summary);
-                }
-            }
+        if summary.len() < 50
+            && let Some(path) = file_path
+            && let Some(filename) = path.split(['/', '\\']).next_back()
+        {
+            summary = format!("Content from {filename}: {summary}");
         }
 
         if summary.is_empty() {
@@ -507,9 +508,12 @@ impl LlmAnalyzer {
         let cooking_keywords = ["recipe", "ingredient", "cook", "bake"];
         if cooking_keywords.iter().any(|kw| summary_lower.contains(kw)) {
             let is_new = !existing_domains.contains(&"cooking".to_string());
-            return DomainDetection::new("cooking", 0.7)
-                .with_subcategory("recipes")
-                .as_new();
+            return DomainDetection {
+                domain: "cooking".to_string(),
+                subcategory: Some("recipes".to_string()),
+                is_new_domain: is_new,
+                confidence: 0.7,
+            };
         }
 
         // Check for work content

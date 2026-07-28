@@ -1,6 +1,5 @@
 //! Similarity computation for embeddings.
 
-use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 
 use crate::Embedding;
@@ -94,23 +93,23 @@ pub fn find_top_k(
     k: usize,
     min_score: f32,
 ) -> Result<Vec<SimilarityResult>> {
-    let mut scores: Vec<(OrderedFloat<f32>, String)> = Vec::with_capacity(candidates.len());
+    let mut scores: Vec<(f32, String)> = Vec::with_capacity(candidates.len());
 
     for (id, embedding) in candidates {
         let score = cosine_similarity(query, embedding)?;
         if score >= min_score {
-            scores.push((OrderedFloat(score), id.clone()));
+            scores.push((score, id.clone()));
         }
     }
 
     // Sort by score descending
-    scores.sort_by(|a, b| b.0.cmp(&a.0));
+    scores.sort_by(|a, b| b.0.total_cmp(&a.0));
 
     // Take top k
     let results: Vec<SimilarityResult> = scores
         .into_iter()
         .take(k)
-        .map(|(score, id)| SimilarityResult::new(id, score.0))
+        .map(|(score, id)| SimilarityResult::new(id, score))
         .collect();
 
     Ok(results)

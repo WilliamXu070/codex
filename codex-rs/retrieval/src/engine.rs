@@ -7,10 +7,10 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use codex_context_files::{
-    ConceptExtractor, ConceptIndex, ContextStore, Query, QueryResult, RetrievalEngine,
+    ConceptExtractor, ConceptIndex, ContextStore, QueryResult, RetrievalEngine,
 };
 use codex_directory_watcher::{DirectoryConfig, DirectoryWatcher, FileEvent};
-use codex_embeddings::{EmbeddingCache, OpenAIProvider, SimilarityIndex};
+use codex_embeddings::SimilarityIndex;
 
 use crate::config::{EmbeddingProviderType, RetrievalConfig};
 use crate::error::{Result, RetrievalError};

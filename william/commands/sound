@@ -1,0 +1,169 @@
+#!/bin/zsh
+
+set -e
+
+state_file="${CODEX_SOUND_STATE_FILE:-/Users/williamxu/.codex/codex-sound-state}"
+script_dir="${0:A:h}"
+repo_root="${script_dir:h}"
+sound_dir="$repo_root/audio/sounds"
+alt_sound_dir="$repo_root/audio"
+mkdir -p "${state_file:h}"
+[[ -r "$state_file" ]] || cp "$repo_root/audio/sound-state" "$state_file"
+source "$state_file"
+: ${CODEX_SOUND_APPROVAL_FILE:=}
+
+write_state() {
+  typeset -p \
+    CODEX_SOUND_ENABLED \
+    CODEX_SOUND_VOLUME \
+    CODEX_SOUND_PROFILE \
+    CODEX_SOUND_COMPLETION_DELAY \
+    CODEX_SOUND_COMPLETION_FILE \
+    CODEX_SOUND_APPROVAL_FILE \
+    CODEX_SOUND_DIR > "$state_file"
+}
+
+usage() {
+  print "usage: sound status | sound volume 0-100 | sound mute | sound unmute | sound test [completion|approval] | sound track list|random|set <file> | sound approval default|set <file>"
+}
+
+cmd="${1:-status}"
+shift || true
+
+case "$cmd" in
+  status)
+    print "enabled=${CODEX_SOUND_ENABLED:-1} volume=${CODEX_SOUND_VOLUME:-1.0} profile=${CODEX_SOUND_PROFILE:-normal} track=${CODEX_SOUND_COMPLETION_FILE:-random} approval=${CODEX_SOUND_APPROVAL_FILE:-default}"
+    ;;
+  volume)
+    value="${1:-}"
+    [[ "$value" == <-> ]] || { print "volume must be 0-100"; exit 1; }
+    (( value >= 0 && value <= 100 )) || { print "volume must be 0-100"; exit 1; }
+    CODEX_SOUND_VOLUME="$(awk "BEGIN { printf \"%.2f\", $value / 100 }")"
+    CODEX_SOUND_ENABLED=1
+    write_state
+    print "sound volume set to ${value}%"
+    ;;
+  mute)
+    CODEX_SOUND_ENABLED=0
+    write_state
+    print "sound muted"
+    ;;
+  unmute)
+    CODEX_SOUND_ENABLED=1
+    write_state
+    print "sound unmuted"
+    ;;
+  profile)
+    profile="${1:-normal}"
+    case "$profile" in
+      quiet)
+        CODEX_SOUND_PROFILE=quiet
+        CODEX_SOUND_VOLUME=0.35
+        ;;
+      normal)
+        CODEX_SOUND_PROFILE=normal
+        CODEX_SOUND_VOLUME=1.0
+        ;;
+      loud)
+        CODEX_SOUND_PROFILE=loud
+        CODEX_SOUND_VOLUME=1.6
+        ;;
+      *)
+        print "profile must be quiet, normal, or loud"
+        exit 1
+        ;;
+    esac
+    CODEX_SOUND_ENABLED=1
+    write_state
+    print "sound profile set to $profile"
+    ;;
+  test)
+    event="${1:-completion}"
+    case "$event" in
+      approval|immediate)
+        /bin/zsh /Users/williamxu/.codex/codex-random-sound --event approval-requested '{"source":"sound-command-test"}'
+        ;;
+      completion)
+        /bin/zsh /Users/williamxu/.codex/codex-random-sound --event completion '{"source":"sound-command-test"}'
+        ;;
+      *)
+        print "test event must be completion or approval"
+        exit 1
+        ;;
+    esac
+    print "played $event test"
+    ;;
+  track)
+    sub="${1:-list}"
+    shift || true
+    case "$sub" in
+      list)
+        for file in \
+          "$sound_dir"/*.mp3(N) "$sound_dir"/*.wav(N) "$sound_dir"/*.aiff(N) "$sound_dir"/*.m4a(N) \
+          "$alt_sound_dir"/*.mp3(N) "$alt_sound_dir"/*.wav(N) "$alt_sound_dir"/*.aiff(N) "$alt_sound_dir"/*.m4a(N); do
+          print "${file:t}"
+        done
+        ;;
+      random)
+        CODEX_SOUND_COMPLETION_FILE=
+        write_state
+        print "completion track set to random"
+        ;;
+      set)
+        name="${1:-}"
+        [[ -n "$name" ]] || { print "missing track name"; exit 1; }
+        if [[ -r "$name" ]]; then
+          CODEX_SOUND_COMPLETION_FILE="$name"
+        elif [[ -r "$sound_dir/$name" ]]; then
+          CODEX_SOUND_COMPLETION_FILE="$sound_dir/$name"
+        elif [[ -r "$alt_sound_dir/$name" ]]; then
+          CODEX_SOUND_COMPLETION_FILE="$alt_sound_dir/$name"
+        else
+          print "track not found: $name"
+          exit 1
+        fi
+        write_state
+        print "completion track set to ${CODEX_SOUND_COMPLETION_FILE:t}"
+        ;;
+      *)
+        usage
+        exit 1
+        ;;
+    esac
+    ;;
+  approval)
+    sub="${1:-default}"
+    shift || true
+    case "$sub" in
+      default)
+        CODEX_SOUND_APPROVAL_FILE=
+        write_state
+        print "approval sound set to default"
+        ;;
+      set)
+        name="${1:-}"
+        [[ -n "$name" ]] || { print "missing approval sound name"; exit 1; }
+        if [[ -r "$name" ]]; then
+          CODEX_SOUND_APPROVAL_FILE="$name"
+        elif [[ -r "$sound_dir/$name" ]]; then
+          CODEX_SOUND_APPROVAL_FILE="$sound_dir/$name"
+        elif [[ -r "$alt_sound_dir/$name" ]]; then
+          CODEX_SOUND_APPROVAL_FILE="$alt_sound_dir/$name"
+        else
+          print "approval sound not found: $name"
+          exit 1
+        fi
+        write_state
+        print "approval sound set to ${CODEX_SOUND_APPROVAL_FILE:t}"
+        ;;
+      *)
+        usage
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac

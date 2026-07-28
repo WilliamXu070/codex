@@ -1,8 +1,7 @@
-use crate::auth::AuthProvider;
-use crate::auth::add_auth_headers;
+use crate::auth::SharedAuthProvider;
+use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
-use crate::telemetry::run_with_request_telemetry;
 use codex_client::HttpTransport;
 use codex_client::RequestTelemetry;
 use codex_protocol::openai_models::ModelInfo;
@@ -12,54 +11,55 @@ use http::Method;
 use http::header::ETAG;
 use std::sync::Arc;
 
-pub struct ModelsClient<T: HttpTransport, A: AuthProvider> {
-    transport: T,
-    provider: Provider,
-    auth: A,
-    request_telemetry: Option<Arc<dyn RequestTelemetry>>,
+pub struct ModelsClient<T: HttpTransport> {
+    session: EndpointSession<T>,
 }
 
-impl<T: HttpTransport, A: AuthProvider> ModelsClient<T, A> {
-    pub fn new(transport: T, provider: Provider, auth: A) -> Self {
+impl<T: HttpTransport> ModelsClient<T> {
+    pub fn new(transport: T, provider: Provider, auth: SharedAuthProvider) -> Self {
         Self {
-            transport,
-            provider,
-            auth,
-            request_telemetry: None,
+            session: EndpointSession::new(transport, provider, auth),
         }
     }
 
-    pub fn with_telemetry(mut self, request: Option<Arc<dyn RequestTelemetry>>) -> Self {
-        self.request_telemetry = request;
-        self
+    pub fn with_telemetry(self, request: Option<Arc<dyn RequestTelemetry>>) -> Self {
+        Self {
+            session: self.session.with_request_telemetry(request),
+        }
     }
 
-    fn path(&self) -> &'static str {
+    fn path() -> &'static str {
         "models"
+    }
+
+    fn append_client_version_query(req: &mut codex_client::Request, client_version: &str) {
+        let separator = if req.url.contains('?') { '&' } else { '?' };
+        req.url = format!("{}{}client_version={client_version}", req.url, separator);
+    }
+
+    pub fn request_url(provider: &Provider, client_version: &str) -> String {
+        let mut request = provider.build_request(Method::GET, Self::path());
+        Self::append_client_version_query(&mut request, client_version);
+        request.url
     }
 
     pub async fn list_models(
         &self,
-        client_version: &str,
+        request_url: String,
         extra_headers: HeaderMap,
     ) -> Result<(Vec<ModelInfo>, Option<String>), ApiError> {
-        let builder = || {
-            let mut req = self.provider.build_request(Method::GET, self.path());
-            req.headers.extend(extra_headers.clone());
-
-            let separator = if req.url.contains('?') { '&' } else { '?' };
-            req.url = format!("{}{}client_version={client_version}", req.url, separator);
-
-            add_auth_headers(&self.auth, req)
-        };
-
-        let resp = run_with_request_telemetry(
-            self.provider.retry.to_policy(),
-            self.request_telemetry.clone(),
-            builder,
-            |req| self.transport.execute(req),
-        )
-        .await?;
+        let resp = self
+            .session
+            .execute_with(
+                Method::GET,
+                Self::path(),
+                extra_headers,
+                /*body*/ None,
+                move |req| {
+                    req.url.clone_from(&request_url);
+                },
+            )
+            .await?;
 
         let header_etag = resp
             .headers
@@ -82,9 +82,8 @@ impl<T: HttpTransport, A: AuthProvider> ModelsClient<T, A> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::AuthProvider;
     use crate::provider::RetryConfig;
-    use crate::provider::WireApi;
-    use async_trait::async_trait;
     use codex_client::Request;
     use codex_client::Response;
     use codex_client::StreamResponse;
@@ -114,7 +113,6 @@ mod tests {
         }
     }
 
-    #[async_trait]
     impl HttpTransport for CapturingTransport {
         async fn execute(&self, req: Request) -> Result<Response, TransportError> {
             *self.last_request.lock().unwrap() = Some(req);
@@ -139,9 +137,7 @@ mod tests {
     struct DummyAuth;
 
     impl AuthProvider for DummyAuth {
-        fn bearer_token(&self) -> Option<String> {
-            None
-        }
+        fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
     }
 
     fn provider(base_url: &str) -> Provider {
@@ -149,7 +145,6 @@ mod tests {
             name: "test".to_string(),
             base_url: base_url.to_string(),
             query_params: None,
-            wire: WireApi::Responses,
             headers: HeaderMap::new(),
             retry: RetryConfig {
                 max_attempts: 1,
@@ -172,14 +167,12 @@ mod tests {
             etag: None,
         };
 
-        let client = ModelsClient::new(
-            transport.clone(),
-            provider("https://example.com/api/codex"),
-            DummyAuth,
-        );
+        let provider = provider("https://example.com/api/codex");
+        let request_url = ModelsClient::<CapturingTransport>::request_url(&provider, "0.99.0");
+        let client = ModelsClient::new(transport.clone(), provider, Arc::new(DummyAuth));
 
         let (models, _) = client
-            .list_models("0.99.0", HeaderMap::new())
+            .list_models(request_url, HeaderMap::new())
             .await
             .expect("request should succeed");
 
@@ -215,14 +208,14 @@ mod tests {
                     "supported_in_api": true,
                     "priority": 1,
                     "upgrade": null,
-                    "base_instructions": null,
-                    "supports_reasoning_summaries": false,
+                    "base_instructions": "base instructions",
                     "support_verbosity": false,
                     "default_verbosity": null,
                     "apply_patch_tool_type": null,
                     "truncation_policy": {"mode": "bytes", "limit": 10_000},
                     "supports_parallel_tool_calls": false,
-                    "context_window": null,
+                    "supports_image_detail_original": false,
+                    "context_window": 272_000,
                     "experimental_supported_tools": [],
                 }))
                 .unwrap(),
@@ -235,14 +228,12 @@ mod tests {
             etag: None,
         };
 
-        let client = ModelsClient::new(
-            transport,
-            provider("https://example.com/api/codex"),
-            DummyAuth,
-        );
+        let provider = provider("https://example.com/api/codex");
+        let request_url = ModelsClient::<CapturingTransport>::request_url(&provider, "0.99.0");
+        let client = ModelsClient::new(transport, provider, Arc::new(DummyAuth));
 
         let (models, _) = client
-            .list_models("0.99.0", HeaderMap::new())
+            .list_models(request_url, HeaderMap::new())
             .await
             .expect("request should succeed");
 
@@ -262,14 +253,12 @@ mod tests {
             etag: Some("\"abc\"".to_string()),
         };
 
-        let client = ModelsClient::new(
-            transport,
-            provider("https://example.com/api/codex"),
-            DummyAuth,
-        );
+        let provider = provider("https://example.com/api/codex");
+        let request_url = ModelsClient::<CapturingTransport>::request_url(&provider, "0.1.0");
+        let client = ModelsClient::new(transport, provider, Arc::new(DummyAuth));
 
         let (models, etag) = client
-            .list_models("0.1.0", HeaderMap::new())
+            .list_models(request_url, HeaderMap::new())
             .await
             .expect("request should succeed");
 

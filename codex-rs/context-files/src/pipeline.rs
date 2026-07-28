@@ -331,10 +331,10 @@ impl ContextPipeline {
                 self.collect_files_recursive(&path, files)?;
             } else if path.is_file() {
                 // Check extension
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if self.config.file_extensions.contains(&ext.to_string()) {
-                        files.push(path);
-                    }
+                if let Some(ext) = path.extension().and_then(|e| e.to_str())
+                    && self.config.file_extensions.contains(&ext.to_string())
+                {
+                    files.push(path);
                 }
             }
         }

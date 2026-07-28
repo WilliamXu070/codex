@@ -4,12 +4,11 @@ use rmcp::ClientHandler;
 use rmcp::RoleClient;
 use rmcp::model::CancelledNotificationParam;
 use rmcp::model::ClientInfo;
-use rmcp::model::CreateElicitationRequestParam;
+use rmcp::model::CreateElicitationRequestParams;
 use rmcp::model::CreateElicitationResult;
 use rmcp::model::LoggingLevel;
 use rmcp::model::LoggingMessageNotificationParam;
 use rmcp::model::ProgressNotificationParam;
-use rmcp::model::RequestId;
 use rmcp::model::ResourceUpdatedNotificationParam;
 use rmcp::service::NotificationContext;
 use rmcp::service::RequestContext;
@@ -18,6 +17,7 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+use crate::rmcp_client::Elicitation;
 use crate::rmcp_client::SendElicitation;
 
 #[derive(Clone)]
@@ -38,15 +38,12 @@ impl LoggingClientHandler {
 impl ClientHandler for LoggingClientHandler {
     async fn create_elicitation(
         &self,
-        request: CreateElicitationRequestParam,
+        request: CreateElicitationRequestParams,
         context: RequestContext<RoleClient>,
     ) -> Result<CreateElicitationResult, rmcp::ErrorData> {
-        let id = match context.id {
-            RequestId::String(id) => mcp_types::RequestId::String(id.to_string()),
-            RequestId::Number(id) => mcp_types::RequestId::Integer(id),
-        };
-        (self.send_elicitation)(id, request)
+        (self.send_elicitation)(context.id, Elicitation::Mcp(request))
             .await
+            .map(Into::into)
             .map_err(|err| rmcp::ErrorData::internal_error(err.to_string(), None))
     }
 

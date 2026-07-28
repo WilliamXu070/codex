@@ -1,5 +1,6 @@
+use std::time::Duration;
+
 use anyhow::Result;
-use codex_core::features::Feature;
 use core_test_support::assert_regex_match;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -7,13 +8,23 @@ use core_test_support::responses::ev_function_call;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
+use core_test_support::skip_if_host_windows;
 use core_test_support::skip_if_no_network;
-use core_test_support::skip_if_windows;
 use core_test_support::test_codex::TestCodexBuilder;
 use core_test_support::test_codex::TestCodexHarness;
 use core_test_support::test_codex::test_codex;
 use serde_json::json;
 use test_case::test_case;
+
+#[cfg(windows)]
+const DEFAULT_SHELL_TIMEOUT_MS: i64 = 7_000;
+#[cfg(not(windows))]
+const DEFAULT_SHELL_TIMEOUT_MS: i64 = 2_000;
+
+#[cfg(windows)]
+const MEDIUM_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(not(windows))]
+const MEDIUM_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn shell_responses_with_timeout(
     call_id: &str,
@@ -27,7 +38,6 @@ fn shell_responses_with_timeout(
         "login": login,
     });
 
-    #[allow(clippy::expect_used)]
     let arguments = serde_json::to_string(&args).expect("serialize shell command arguments");
 
     vec![
@@ -44,15 +54,13 @@ fn shell_responses_with_timeout(
 }
 
 fn shell_responses(call_id: &str, command: &str, login: Option<bool>) -> Vec<String> {
-    shell_responses_with_timeout(call_id, command, login, 2_000)
+    shell_responses_with_timeout(call_id, command, login, DEFAULT_SHELL_TIMEOUT_MS)
 }
 
 async fn shell_command_harness_with(
     configure: impl FnOnce(TestCodexBuilder) -> TestCodexBuilder,
 ) -> Result<TestCodexHarness> {
-    let builder = configure(test_codex()).with_config(|config| {
-        config.include_apply_patch_tool = true;
-    });
+    let builder = configure(test_codex());
     TestCodexHarness::with_builder(builder).await
 }
 
@@ -70,11 +78,11 @@ async fn mount_shell_responses_with_timeout(
     call_id: &str,
     command: &str,
     login: Option<bool>,
-    timeout_ms: i64,
+    timeout: Duration,
 ) {
     mount_sse_sequence(
         harness.server(),
-        shell_responses_with_timeout(call_id, command, login, timeout_ms),
+        shell_responses_with_timeout(call_id, command, login, timeout.as_millis() as i64),
     )
     .await;
 }
@@ -98,10 +106,16 @@ fn assert_shell_command_output(output: &str, expected: &str) -> Result<()> {
 async fn shell_command_works() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.1")).await?;
+    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.4")).await?;
 
     let call_id = "shell-command-call";
-    mount_shell_responses(&harness, call_id, "echo 'hello, world'", None).await;
+    mount_shell_responses(
+        &harness,
+        call_id,
+        "echo 'hello, world'",
+        /*login*/ None,
+    )
+    .await;
     harness.submit("run the echo command").await?;
 
     let output = harness.function_call_stdout(call_id).await;
@@ -114,7 +128,7 @@ async fn shell_command_works() -> anyhow::Result<()> {
 async fn output_with_login() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.1")).await?;
+    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.4")).await?;
 
     let call_id = "shell-command-call-login-true";
     mount_shell_responses(&harness, call_id, "echo 'hello, world'", Some(true)).await;
@@ -130,7 +144,7 @@ async fn output_with_login() -> anyhow::Result<()> {
 async fn output_without_login() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.1")).await?;
+    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.4")).await?;
 
     let call_id = "shell-command-call-login-false";
     mount_shell_responses(&harness, call_id, "echo 'hello, world'", Some(false)).await;
@@ -146,7 +160,7 @@ async fn output_without_login() -> anyhow::Result<()> {
 async fn multi_line_output_with_login() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.1")).await?;
+    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.4")).await?;
 
     let call_id = "shell-command-call-first-extra-login";
     mount_shell_responses(
@@ -167,12 +181,18 @@ async fn multi_line_output_with_login() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pipe_output_with_login() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
-    skip_if_windows!(Ok(()));
+    skip_if_host_windows!(Ok(()));
 
-    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.1")).await?;
+    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.4")).await?;
 
     let call_id = "shell-command-call-second-extra-no-login";
-    mount_shell_responses(&harness, call_id, "echo 'hello, world' | cat", None).await;
+    mount_shell_responses(
+        &harness,
+        call_id,
+        "echo 'hello, world' | cat",
+        /*login*/ None,
+    )
+    .await;
     harness.submit("run the command without login").await?;
 
     let output = harness.function_call_stdout(call_id).await;
@@ -184,9 +204,9 @@ async fn pipe_output_with_login() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pipe_output_without_login() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
-    skip_if_windows!(Ok(()));
+    skip_if_host_windows!(Ok(()));
 
-    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.1")).await?;
+    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.4")).await?;
 
     let call_id = "shell-command-call-third-extra-login-false";
     mount_shell_responses(&harness, call_id, "echo 'hello, world' | cat", Some(false)).await;
@@ -202,14 +222,21 @@ async fn pipe_output_without_login() -> anyhow::Result<()> {
 async fn shell_command_times_out_with_timeout_ms() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.1")).await?;
+    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.4")).await?;
     let call_id = "shell-command-timeout";
     let command = if cfg!(windows) {
         "timeout /t 5"
     } else {
         "sleep 5"
     };
-    mount_shell_responses_with_timeout(&harness, call_id, command, None, 200).await;
+    mount_shell_responses_with_timeout(
+        &harness,
+        call_id,
+        command,
+        /*login*/ None,
+        Duration::from_millis(200),
+    )
+    .await;
     harness
         .submit("run a long command with a short timeout")
         .await?;
@@ -226,27 +253,28 @@ async fn shell_command_times_out_with_timeout_ms() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// This test verifies that a shell, particularly PowerShell, can correctly
+/// handle unicode output when the UTF-8 BOM is used. See
+/// https://github.com/openai/codex/pull/7902 for more context.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[test_case(true ; "with_login")]
 #[test_case(false ; "without_login")]
 async fn unicode_output(login: bool) -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let harness = shell_command_harness_with(|builder| {
-        builder.with_model("gpt-5.2").with_config(|config| {
-            config.features.enable(Feature::PowershellUtf8);
-        })
-    })
-    .await?;
+    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.2")).await?;
 
     let call_id = "unicode_output";
-    mount_shell_responses(
-        &harness,
-        call_id,
-        "git -c alias.say='!printf \"%s\" \"naïve_café\"' say",
-        Some(login),
-    )
-    .await;
+    let command = if cfg!(windows) {
+        // We use a child process on Windows instead of a PowerShell command
+        // like `Write-Output` to ensure that the Powershell config is set
+        // correctly.
+        "cmd.exe /c echo naïve_café"
+    } else {
+        "echo \"naïve_café\""
+    };
+    mount_shell_responses_with_timeout(&harness, call_id, command, Some(login), MEDIUM_TIMEOUT)
+        .await;
     harness.submit("run the command without login").await?;
 
     let output = harness.function_call_stdout(call_id).await;
@@ -261,19 +289,15 @@ async fn unicode_output(login: bool) -> anyhow::Result<()> {
 async fn unicode_output_with_newlines(login: bool) -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let harness = shell_command_harness_with(|builder| {
-        builder.with_model("gpt-5.2").with_config(|config| {
-            config.features.enable(Feature::PowershellUtf8);
-        })
-    })
-    .await?;
+    let harness = shell_command_harness_with(|builder| builder.with_model("gpt-5.2")).await?;
 
     let call_id = "unicode_output";
-    mount_shell_responses(
+    mount_shell_responses_with_timeout(
         &harness,
         call_id,
         "echo 'line1\nnaïve café\nline3'",
         Some(login),
+        MEDIUM_TIMEOUT,
     )
     .await;
     harness.submit("run the command without login").await?;

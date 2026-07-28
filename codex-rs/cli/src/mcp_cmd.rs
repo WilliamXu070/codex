@@ -1,30 +1,48 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
 use clap::ArgGroup;
-use codex_common::CliConfigOverrides;
-use codex_common::format_env_display::format_env_display;
+use codex_config::types::AppToolApproval;
+use codex_config::types::McpServerConfig;
+use codex_config::types::McpServerOAuthConfig;
+use codex_config::types::McpServerTransportConfig;
+use codex_core::McpManager;
 use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
+use codex_core::config::LoaderOverrides;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_global_mcp_servers;
-use codex_core::config::types::McpServerConfig;
-use codex_core::config::types::McpServerTransportConfig;
-use codex_core::mcp::auth::compute_auth_statuses;
-use codex_core::protocol::McpAuthStatus;
+use codex_core_plugins::PluginsManager;
+use codex_exec_server::EnvironmentManager;
+use codex_login::AuthManager;
+use codex_mcp::McpOAuthLoginSupport;
+use codex_mcp::McpRuntimeContext;
+use codex_mcp::ResolvedMcpOAuthScopes;
+use codex_mcp::compute_auth_statuses;
+use codex_mcp::discover_supported_scopes;
+use codex_mcp::oauth_login_support;
+use codex_mcp::resolve_oauth_scopes;
+use codex_mcp::should_retry_without_scopes;
+use codex_protocol::protocol::McpAuthStatus;
 use codex_rmcp_client::delete_oauth_tokens;
 use codex_rmcp_client::perform_oauth_login;
-use codex_rmcp_client::supports_oauth_login;
+use codex_utils_cli::CliConfigOverrides;
+use codex_utils_cli::format_env_display;
+
+use crate::plugin_cmd::load_cli_auth_mode;
 
 /// Subcommands:
-/// - `serve`  — run the MCP server on stdio
 /// - `list`   — list configured servers (with `--json`)
 /// - `get`    — show a single server (with `--json`)
 /// - `add`    — add a server launcher entry to `~/.codex/config.toml`
 /// - `remove` — delete a server entry
+/// - `login`  — authenticate with MCP server using OAuth
+/// - `logout` — remove OAuth credentials for MCP server
 #[derive(Debug, clap::Parser)]
 pub struct McpCli {
     #[clap(flatten)]
@@ -122,6 +140,14 @@ pub struct AddMcpStreamableHttpArgs {
         requires = "url"
     )]
     pub bearer_token_env_var: Option<String>,
+
+    /// Optional OAuth client identifier to use for this MCP server.
+    #[arg(long = "oauth-client-id", value_name = "CLIENT_ID", requires = "url")]
+    pub oauth_client_id: Option<String>,
+
+    /// Optional OAuth resource parameter to include during MCP login.
+    #[arg(long = "oauth-resource", value_name = "RESOURCE", requires = "url")]
+    pub oauth_resource: Option<String>,
 }
 
 #[derive(Debug, clap::Parser)]
@@ -147,11 +173,15 @@ pub struct LogoutArgs {
 }
 
 impl McpCli {
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self, loader_overrides: LoaderOverrides) -> Result<()> {
         let McpCli {
             config_overrides,
             subcommand,
         } = self;
+
+        if loader_overrides.user_config_profile.is_some() {
+            validate_profile_v2_migration(&config_overrides, loader_overrides).await?;
+        }
 
         match subcommand {
             McpSubcommand::List(args) => {
@@ -178,6 +208,76 @@ impl McpCli {
     }
 }
 
+/// Preserve compatibility with servers that still expect the legacy empty-scope
+/// OAuth request. If a discovered-scope request is rejected by the provider,
+/// retry the login flow once without scopes.
+#[allow(clippy::too_many_arguments)]
+async fn perform_oauth_login_retry_without_scopes(
+    name: &str,
+    url: &str,
+    store_mode: codex_config::types::OAuthCredentialsStoreMode,
+    keyring_backend_kind: codex_config::types::AuthKeyringBackendKind,
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    resolved_scopes: &ResolvedMcpOAuthScopes,
+    oauth_client_id: Option<&str>,
+    oauth_resource: Option<&str>,
+    callback_port: Option<u16>,
+    callback_url: Option<&str>,
+) -> Result<()> {
+    match perform_oauth_login(
+        name,
+        url,
+        store_mode,
+        keyring_backend_kind,
+        http_headers.clone(),
+        env_http_headers.clone(),
+        &resolved_scopes.scopes,
+        oauth_client_id,
+        oauth_resource,
+        callback_port,
+        callback_url,
+    )
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(err) if should_retry_without_scopes(resolved_scopes, &err) => {
+            println!("OAuth provider rejected discovered scopes. Retrying without scopes…");
+            perform_oauth_login(
+                name,
+                url,
+                store_mode,
+                keyring_backend_kind,
+                http_headers,
+                env_http_headers,
+                &[],
+                oauth_client_id,
+                oauth_resource,
+                callback_port,
+                callback_url,
+            )
+            .await
+        }
+        Err(err) => Err(err),
+    }
+}
+
+async fn validate_profile_v2_migration(
+    config_overrides: &CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
+) -> Result<()> {
+    let overrides = config_overrides
+        .parse_overrides()
+        .map_err(anyhow::Error::msg)?;
+    ConfigBuilder::default()
+        .cli_overrides(overrides)
+        .loader_overrides(loader_overrides)
+        .build()
+        .await
+        .context("failed to load configuration")?;
+    Ok(())
+}
+
 async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Result<()> {
     // Validate any provided overrides even though they are not currently applied.
     let overrides = config_overrides
@@ -199,7 +299,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
         .await
         .with_context(|| format!("failed to load MCP servers from {}", codex_home.display()))?;
 
-    let transport = match transport_args {
+    let (transport, oauth_client_id, oauth_resource) = match transport_args {
         AddMcpTransportArgs {
             stdio: Some(stdio), ..
         } => {
@@ -214,37 +314,61 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
             } else {
                 Some(stdio.env.into_iter().collect::<HashMap<_, _>>())
             };
-            McpServerTransportConfig::Stdio {
-                command: command_bin,
-                args: command_args,
-                env: env_map,
-                env_vars: Vec::new(),
-                cwd: None,
-            }
+            (
+                McpServerTransportConfig::Stdio {
+                    command: command_bin,
+                    args: command_args,
+                    env: env_map,
+                    env_vars: Vec::new(),
+                    cwd: None,
+                },
+                None,
+                None,
+            )
         }
         AddMcpTransportArgs {
             streamable_http:
                 Some(AddMcpStreamableHttpArgs {
                     url,
                     bearer_token_env_var,
+                    oauth_client_id,
+                    oauth_resource,
                 }),
             ..
-        } => McpServerTransportConfig::StreamableHttp {
-            url,
-            bearer_token_env_var,
-            http_headers: None,
-            env_http_headers: None,
-        },
+        } => (
+            McpServerTransportConfig::StreamableHttp {
+                url,
+                bearer_token_env_var,
+                http_headers: None,
+                env_http_headers: None,
+            },
+            oauth_client_id,
+            oauth_resource,
+        ),
         AddMcpTransportArgs { .. } => bail!("exactly one of --command or --url must be provided"),
     };
 
     let new_entry = McpServerConfig {
+        auth: Default::default(),
         transport: transport.clone(),
+        environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
         enabled: true,
+        required: false,
+        supports_parallel_tool_calls: false,
+        disabled_reason: None,
         startup_timeout_sec: None,
         tool_timeout_sec: None,
+        default_tools_approval_mode: None,
         enabled_tools: None,
         disabled_tools: None,
+        scopes: None,
+        oauth: oauth_client_id
+            .clone()
+            .map(|client_id| McpServerOAuthConfig {
+                client_id: Some(client_id),
+            }),
+        oauth_resource: oauth_resource.clone(),
+        tools: HashMap::new(),
     };
 
     servers.insert(name.clone(), new_entry);
@@ -257,32 +381,34 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
 
     println!("Added global MCP server '{name}'.");
 
-    if let McpServerTransportConfig::StreamableHttp {
-        url,
-        bearer_token_env_var: None,
-        http_headers,
-        env_http_headers,
-    } = transport
-    {
-        match supports_oauth_login(&url).await {
-            Ok(true) => {
-                println!("Detected OAuth support. Starting OAuth flow…");
-                perform_oauth_login(
-                    &name,
-                    &url,
-                    config.mcp_oauth_credentials_store_mode,
-                    http_headers.clone(),
-                    env_http_headers.clone(),
-                    &Vec::new(),
-                )
-                .await?;
-                println!("Successfully logged in.");
-            }
-            Ok(false) => {}
-            Err(_) => println!(
-                "MCP server may or may not require login. Run `codex mcp login {name}` to login."
-            ),
+    match oauth_login_support(&transport).await {
+        McpOAuthLoginSupport::Supported(oauth_config) => {
+            println!("Detected OAuth support. Starting OAuth flow…");
+            let resolved_scopes = resolve_oauth_scopes(
+                /*explicit_scopes*/ None,
+                /*configured_scopes*/ None,
+                oauth_config.discovered_scopes.clone(),
+            );
+            perform_oauth_login_retry_without_scopes(
+                &name,
+                &oauth_config.url,
+                config.mcp_oauth_credentials_store_mode,
+                config.auth_keyring_backend_kind(),
+                oauth_config.http_headers,
+                oauth_config.env_http_headers,
+                &resolved_scopes,
+                oauth_client_id.as_deref(),
+                oauth_resource.as_deref(),
+                config.mcp_oauth_callback_port,
+                config.mcp_oauth_callback_url.as_deref(),
+            )
+            .await?;
+            println!("Successfully logged in.");
         }
+        McpOAuthLoginSupport::Unsupported => {}
+        McpOAuthLoginSupport::Unknown(_) => println!(
+            "MCP server may or may not require login. Run `codex mcp login {name}` to login."
+        ),
     }
 
     Ok(())
@@ -321,6 +447,12 @@ async fn run_remove(config_overrides: &CliConfigOverrides, remove_args: RemoveAr
     Ok(())
 }
 
+async fn load_mcp_manager(config: &Config) -> McpManager {
+    let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
+    plugins_manager.set_auth_mode(load_cli_auth_mode(config).await);
+    McpManager::new(plugins_manager)
+}
+
 async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs) -> Result<()> {
     let overrides = config_overrides
         .parse_overrides()
@@ -328,10 +460,12 @@ async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs)
     let config = Config::load_with_cli_overrides(overrides)
         .await
         .context("failed to load configuration")?;
+    let mcp_manager = load_mcp_manager(&config).await;
+    let mcp_servers = mcp_manager.configured_servers(&config).await;
 
     let LoginArgs { name, scopes } = login_args;
 
-    let Some(server) = config.mcp_servers.get(&name) else {
+    let Some(server) = mcp_servers.get(&name) else {
         bail!("No MCP server named '{name}' found.");
     };
 
@@ -345,13 +479,27 @@ async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs)
         _ => bail!("OAuth login is only supported for streamable HTTP servers."),
     };
 
-    perform_oauth_login(
+    let explicit_scopes = (!scopes.is_empty()).then_some(scopes);
+    let discovered_scopes = if explicit_scopes.is_none() && server.scopes.is_none() {
+        discover_supported_scopes(&server.transport).await
+    } else {
+        None
+    };
+    let resolved_scopes =
+        resolve_oauth_scopes(explicit_scopes, server.scopes.clone(), discovered_scopes);
+
+    perform_oauth_login_retry_without_scopes(
         &name,
         &url,
         config.mcp_oauth_credentials_store_mode,
+        config.auth_keyring_backend_kind(),
         http_headers,
         env_http_headers,
-        &scopes,
+        &resolved_scopes,
+        server.oauth_client_id(),
+        server.oauth_resource.as_deref(),
+        config.mcp_oauth_callback_port,
+        config.mcp_oauth_callback_url.as_deref(),
     )
     .await?;
     println!("Successfully logged in to MCP server '{name}'.");
@@ -365,11 +513,12 @@ async fn run_logout(config_overrides: &CliConfigOverrides, logout_args: LogoutAr
     let config = Config::load_with_cli_overrides(overrides)
         .await
         .context("failed to load configuration")?;
+    let mcp_manager = load_mcp_manager(&config).await;
+    let mcp_servers = mcp_manager.configured_servers(&config).await;
 
     let LogoutArgs { name } = logout_args;
 
-    let server = config
-        .mcp_servers
+    let server = mcp_servers
         .get(&name)
         .ok_or_else(|| anyhow!("No MCP server named '{name}' found in configuration."))?;
 
@@ -378,7 +527,12 @@ async fn run_logout(config_overrides: &CliConfigOverrides, logout_args: LogoutAr
         _ => bail!("OAuth logout is only supported for streamable_http transports."),
     };
 
-    match delete_oauth_tokens(&name, &url, config.mcp_oauth_credentials_store_mode) {
+    match delete_oauth_tokens(
+        &name,
+        &url,
+        config.mcp_oauth_credentials_store_mode,
+        config.auth_keyring_backend_kind(),
+    ) {
         Ok(true) => println!("Removed OAuth credentials for '{name}'."),
         Ok(false) => println!("No OAuth credentials stored for '{name}'."),
         Err(err) => return Err(anyhow!("failed to delete OAuth credentials: {err}")),
@@ -394,12 +548,26 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
     let config = Config::load_with_cli_overrides(overrides)
         .await
         .context("failed to load configuration")?;
+    let mcp_manager = load_mcp_manager(&config).await;
+    let auth_manager =
+        AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ true).await;
+    let auth = auth_manager.auth().await;
+    let mcp_servers = mcp_manager.configured_servers(&config).await;
+    let effective_mcp_servers = mcp_manager.effective_servers(&config, auth.as_ref()).await;
 
-    let mut entries: Vec<_> = config.mcp_servers.iter().collect();
-    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+    let mut entries: Vec<_> = mcp_servers.iter().collect();
+    entries.sort_by_key(|(name, _)| *name);
     let auth_statuses = compute_auth_statuses(
-        config.mcp_servers.iter(),
+        effective_mcp_servers.iter(),
         config.mcp_oauth_credentials_store_mode,
+        config.auth_keyring_backend_kind(),
+        auth.as_ref(),
+        &McpRuntimeContext::new(
+            Arc::new(EnvironmentManager::without_environments(
+                config.http_client_factory(),
+            )),
+            config.cwd.to_path_buf(),
+        ),
     )
     .await;
 
@@ -409,7 +577,7 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
             .map(|(name, cfg)| {
                 let auth_status = auth_statuses
                     .get(name.as_str())
-                    .map(|entry| entry.auth_status)
+                    .map(|entry| McpAuthStatus::from(entry.auth_state))
                     .unwrap_or(McpAuthStatus::Unsupported);
                 let transport = match &cfg.transport {
                     McpServerTransportConfig::Stdio {
@@ -445,6 +613,7 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
                 serde_json::json!({
                     "name": name,
                     "enabled": cfg.enabled,
+                    "disabled_reason": cfg.disabled_reason.as_ref().map(ToString::to_string),
                     "transport": transport,
                     "startup_timeout_sec": cfg
                         .startup_timeout_sec
@@ -486,17 +655,13 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
                 let env_display = format_env_display(env.as_ref(), env_vars);
                 let cwd_display = cwd
                     .as_ref()
-                    .map(|path| path.display().to_string())
+                    .map(ToString::to_string)
                     .filter(|value| !value.is_empty())
                     .unwrap_or_else(|| "-".to_string());
-                let status = if cfg.enabled {
-                    "enabled".to_string()
-                } else {
-                    "disabled".to_string()
-                };
+                let status = format_mcp_status(cfg);
                 let auth_status = auth_statuses
                     .get(name.as_str())
-                    .map(|entry| entry.auth_status)
+                    .map(|entry| McpAuthStatus::from(entry.auth_state))
                     .unwrap_or(McpAuthStatus::Unsupported)
                     .to_string();
                 stdio_rows.push([
@@ -514,14 +679,10 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
                 bearer_token_env_var,
                 ..
             } => {
-                let status = if cfg.enabled {
-                    "enabled".to_string()
-                } else {
-                    "disabled".to_string()
-                };
+                let status = format_mcp_status(cfg);
                 let auth_status = auth_statuses
                     .get(name.as_str())
-                    .map(|entry| entry.auth_status)
+                    .map(|entry| McpAuthStatus::from(entry.auth_state))
                     .unwrap_or(McpAuthStatus::Unsupported)
                     .to_string();
                 let bearer_token_display =
@@ -651,8 +812,10 @@ async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Re
     let config = Config::load_with_cli_overrides(overrides)
         .await
         .context("failed to load configuration")?;
+    let mcp_manager = load_mcp_manager(&config).await;
+    let mcp_servers = mcp_manager.configured_servers(&config).await;
 
-    let Some(server) = config.mcp_servers.get(&get_args.name) else {
+    let Some(server) = mcp_servers.get(&get_args.name) else {
         bail!("No MCP server named '{name}' found.", name = get_args.name);
     };
 
@@ -688,6 +851,7 @@ async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Re
         let output = serde_json::to_string_pretty(&serde_json::json!({
             "name": get_args.name,
             "enabled": server.enabled,
+            "disabled_reason": server.disabled_reason.as_ref().map(ToString::to_string),
             "transport": transport,
             "enabled_tools": server.enabled_tools.clone(),
             "disabled_tools": server.disabled_tools.clone(),
@@ -703,7 +867,11 @@ async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Re
     }
 
     if !server.enabled {
-        println!("{} (disabled)", get_args.name);
+        if let Some(reason) = server.disabled_reason.as_ref() {
+            println!("{name} (disabled: {reason})", name = get_args.name);
+        } else {
+            println!("{name} (disabled)", name = get_args.name);
+        }
         return Ok(());
     }
 
@@ -742,7 +910,7 @@ async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Re
             println!("  args: {args_display}");
             let cwd_display = cwd
                 .as_ref()
-                .map(|path| path.display().to_string())
+                .map(ToString::to_string)
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "-".to_string());
             println!("  cwd: {cwd_display}");
@@ -762,7 +930,7 @@ async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Re
             let headers_display = match http_headers {
                 Some(map) if !map.is_empty() => {
                     let mut pairs: Vec<_> = map.iter().collect();
-                    pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
+                    pairs.sort_by_key(|(name, _)| *name);
                     pairs
                         .into_iter()
                         .map(|(k, _)| format!("{k}=*****"))
@@ -775,7 +943,7 @@ async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Re
             let env_headers_display = match env_http_headers {
                 Some(map) if !map.is_empty() => {
                     let mut pairs: Vec<_> = map.iter().collect();
-                    pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
+                    pairs.sort_by_key(|(name, _)| *name);
                     pairs
                         .into_iter()
                         .map(|(k, var)| format!("{k}={var}"))
@@ -792,6 +960,15 @@ async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Re
     }
     if let Some(timeout) = server.tool_timeout_sec {
         println!("  tool_timeout_sec: {}", timeout.as_secs_f64());
+    }
+    if let Some(approval_mode) = server.default_tools_approval_mode {
+        let approval_mode = match approval_mode {
+            AppToolApproval::Auto => "auto",
+            AppToolApproval::Prompt => "prompt",
+            AppToolApproval::Writes => "writes",
+            AppToolApproval::Approve => "approve",
+        };
+        println!("  default_tools_approval_mode: {approval_mode}");
     }
     println!("  remove: codex mcp remove {}", get_args.name);
 
@@ -823,5 +1000,15 @@ fn validate_server_name(name: &str) -> Result<()> {
         Ok(())
     } else {
         bail!("invalid server name '{name}' (use letters, numbers, '-', '_')");
+    }
+}
+
+fn format_mcp_status(config: &McpServerConfig) -> String {
+    if config.enabled {
+        "enabled".to_string()
+    } else if let Some(reason) = config.disabled_reason.as_ref() {
+        format!("disabled: {reason}")
+    } else {
+        "disabled".to_string()
     }
 }

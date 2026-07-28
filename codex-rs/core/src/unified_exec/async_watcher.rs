@@ -1,28 +1,31 @@
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 use tokio::time::Instant;
 use tokio::time::Sleep;
 
-use crate::codex::Session;
-use crate::codex::TurnContext;
-use crate::exec::ExecToolCallOutput;
+use super::UnifiedExecContext;
+use super::process::OutputHandles;
+use super::process::UnifiedExecProcess;
 use crate::exec::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
-use crate::exec::StreamOutput;
-use crate::protocol::EventMsg;
-use crate::protocol::ExecCommandOutputDeltaEvent;
-use crate::protocol::ExecCommandSource;
-use crate::protocol::ExecOutputStream;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
+use crate::tools::events::ToolEventFailure;
 use crate::tools::events::ToolEventStage;
-
-use super::CommandTranscript;
-use super::UnifiedExecContext;
-use super::session::UnifiedExecSession;
+use crate::unified_exec::head_tail_buffer::HeadTailBuffer;
+use codex_core_plugins::PluginCommandAttribution;
+use codex_protocol::exec_output::ExecToolCallOutput;
+use codex_protocol::exec_output::StreamOutput;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
+use codex_protocol::protocol::ExecCommandSource;
+use codex_protocol::protocol::ExecOutputStream;
+use codex_utils_path_uri::PathUri;
 
 pub(crate) const TRAILING_OUTPUT_GRACE: Duration = Duration::from_millis(100);
 
@@ -38,13 +41,18 @@ const UNIFIED_EXEC_OUTPUT_DELTA_MAX_BYTES: usize = 8192;
 /// shared transcript, and emits ExecCommandOutputDelta events on UTF‑8
 /// boundaries.
 pub(crate) fn start_streaming_output(
-    session: &UnifiedExecSession,
+    process: &UnifiedExecProcess,
     context: &UnifiedExecContext,
-    transcript: Arc<Mutex<CommandTranscript>>,
+    transcript: Arc<Mutex<HeadTailBuffer>>,
 ) {
-    let mut receiver = session.output_receiver();
-    let output_drained = session.output_drained_notify();
-    let exit_token = session.cancellation_token();
+    let mut receiver = process.output_receiver();
+    let output_drained = process.output_drained_notify();
+    let exit_token = process.cancellation_token();
+    let OutputHandles {
+        output_closed,
+        output_closed_notify,
+        ..
+    } = process.output_handles();
 
     let session_ref = Arc::clone(&context.session);
     let turn_ref = Arc::clone(&context.turn);
@@ -57,8 +65,19 @@ pub(crate) fn start_streaming_output(
         let mut emitted_deltas: usize = 0;
 
         let mut grace_sleep: Option<Pin<Box<Sleep>>> = None;
+        let output_closed_notified = output_closed_notify.notified();
+        tokio::pin!(output_closed_notified);
+        let mut output_complete = false;
 
         loop {
+            // Register before checking the atomic so a close between the check
+            // and the select cannot miss the notification.
+            output_closed_notified.as_mut().enable();
+            if grace_sleep.is_some() && output_closed.load(Ordering::Acquire) {
+                output_complete = true;
+                break;
+            }
+
             tokio::select! {
                 _ = exit_token.cancelled(), if grace_sleep.is_none() => {
                     let deadline = Instant::now() + TRAILING_OUTPUT_GRACE;
@@ -70,8 +89,11 @@ pub(crate) fn start_streaming_output(
                         sleep.as_mut().await;
                     }
                 }, if grace_sleep.is_some() => {
-                    output_drained.notify_one();
                     break;
+                }
+
+                _ = &mut output_closed_notified, if grace_sleep.is_some() => {
+                    output_closed_notified.set(output_closed_notify.notified());
                 }
 
                 received = receiver.recv() => {
@@ -81,7 +103,7 @@ pub(crate) fn start_streaming_output(
                             continue;
                         },
                         Err(RecvError::Closed) => {
-                            output_drained.notify_one();
+                            output_complete = true;
                             break;
                         }
                     };
@@ -98,6 +120,35 @@ pub(crate) fn start_streaming_output(
                 }
             }
         }
+
+        output_complete |= output_closed.load(Ordering::Acquire);
+        if output_complete {
+            // Output producers publish all chunks before setting output_closed
+            // with Release ordering, so the Acquire above makes this a final
+            // safe drain.
+            loop {
+                let chunk = match receiver.try_recv() {
+                    Ok(chunk) => chunk,
+                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                    Err(
+                        tokio::sync::broadcast::error::TryRecvError::Empty
+                        | tokio::sync::broadcast::error::TryRecvError::Closed,
+                    ) => break,
+                };
+
+                process_chunk(
+                    &mut pending,
+                    &transcript,
+                    &call_id,
+                    &session_ref,
+                    &turn_ref,
+                    &mut emitted_deltas,
+                    chunk,
+                )
+                .await;
+            }
+        }
+        output_drained.notify_one();
     });
 }
 
@@ -105,44 +156,72 @@ pub(crate) fn start_streaming_output(
 /// single ExecCommandEnd event with the aggregated transcript.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_exit_watcher(
-    session: Arc<UnifiedExecSession>,
+    process: Arc<UnifiedExecProcess>,
     session_ref: Arc<Session>,
     turn_ref: Arc<TurnContext>,
     call_id: String,
     command: Vec<String>,
-    cwd: PathBuf,
-    process_id: String,
-    transcript: Arc<Mutex<CommandTranscript>>,
+    cwd: PathUri,
+    process_id: i32,
+    plugin_attribution: Option<PluginCommandAttribution>,
+    transcript: Arc<Mutex<HeadTailBuffer>>,
     started_at: Instant,
+    network_denial_monitor: Option<tokio::task::JoinHandle<()>>,
 ) {
-    let exit_token = session.cancellation_token();
-    let output_drained = session.output_drained_notify();
+    let exit_token = process.cancellation_token();
+    let output_drained = process.output_drained_notify();
+    let interaction_lock = process.interaction_lock();
 
     tokio::spawn(async move {
         exit_token.cancelled().await;
         output_drained.notified().await;
+        // Deferred network denial deliberately remains observable for a short
+        // window after process exit. Do not classify the terminal event until
+        // that monitor has settled, even when output closes immediately.
+        if let Some(network_denial_monitor) = network_denial_monitor {
+            let _ = network_denial_monitor.await;
+        }
+        let _interaction_guard = interaction_lock.lock_owned().await;
 
-        let exit_code = session.exit_code().unwrap_or(-1);
         let duration = Instant::now().saturating_duration_since(started_at);
-        emit_exec_end_for_unified_exec(
-            session_ref,
-            turn_ref,
-            call_id,
-            command,
-            cwd,
-            Some(process_id),
-            transcript,
-            String::new(),
-            exit_code,
-            duration,
-        )
-        .await;
+        if let Some(message) = process.failure_message() {
+            emit_failed_exec_end_for_unified_exec(
+                session_ref,
+                turn_ref,
+                call_id,
+                command,
+                cwd,
+                Some(process_id.to_string()),
+                plugin_attribution,
+                transcript,
+                String::new(),
+                message,
+                duration,
+            )
+            .await;
+        } else {
+            let exit_code = process.exit_code().unwrap_or(-1);
+            emit_exec_end_for_unified_exec(
+                session_ref,
+                turn_ref,
+                call_id,
+                command,
+                cwd,
+                Some(process_id.to_string()),
+                plugin_attribution,
+                transcript,
+                String::new(),
+                exit_code,
+                duration,
+            )
+            .await;
+        }
     });
 }
 
 async fn process_chunk(
     pending: &mut Vec<u8>,
-    transcript: &Arc<Mutex<CommandTranscript>>,
+    transcript: &Arc<Mutex<HeadTailBuffer>>,
     call_id: &str,
     session_ref: &Arc<Session>,
     turn_ref: &Arc<TurnContext>,
@@ -153,7 +232,7 @@ async fn process_chunk(
     while let Some(prefix) = split_valid_utf8_prefix(pending) {
         {
             let mut guard = transcript.lock().await;
-            guard.append(&prefix);
+            guard.push_chunk(prefix.to_vec());
         }
 
         if *emitted_deltas >= MAX_EXEC_OUTPUT_DELTAS_PER_CALL {
@@ -181,9 +260,10 @@ pub(crate) async fn emit_exec_end_for_unified_exec(
     turn_ref: Arc<TurnContext>,
     call_id: String,
     command: Vec<String>,
-    cwd: PathBuf,
+    cwd: PathUri,
     process_id: Option<String>,
-    transcript: Arc<Mutex<CommandTranscript>>,
+    plugin_attribution: Option<PluginCommandAttribution>,
+    transcript: Arc<Mutex<HeadTailBuffer>>,
     fallback_output: String,
     exit_code: i32,
     duration: Duration,
@@ -197,15 +277,80 @@ pub(crate) async fn emit_exec_end_for_unified_exec(
         duration,
         timed_out: false,
     };
-    let event_ctx = ToolEventCtx::new(session_ref.as_ref(), turn_ref.as_ref(), &call_id, None);
+    let event_ctx = ToolEventCtx::new(
+        session_ref.as_ref(),
+        turn_ref.as_ref(),
+        &call_id,
+        /*turn_diff_tracker*/ None,
+    );
     let emitter = ToolEmitter::unified_exec(
         &command,
         cwd,
         ExecCommandSource::UnifiedExecStartup,
         process_id,
+        plugin_attribution,
     );
     emitter
-        .emit(event_ctx, ToolEventStage::Success(output))
+        .emit(
+            event_ctx,
+            ToolEventStage::Success {
+                output,
+                applied_patch_delta: None,
+            },
+        )
+        .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn emit_failed_exec_end_for_unified_exec(
+    session_ref: Arc<Session>,
+    turn_ref: Arc<TurnContext>,
+    call_id: String,
+    command: Vec<String>,
+    cwd: PathUri,
+    process_id: Option<String>,
+    plugin_attribution: Option<PluginCommandAttribution>,
+    transcript: Arc<Mutex<HeadTailBuffer>>,
+    fallback_output: String,
+    message: String,
+    duration: Duration,
+) {
+    let stdout = if fallback_output.is_empty() {
+        resolve_aggregated_output(&transcript, fallback_output).await
+    } else {
+        fallback_output
+    };
+    let aggregated_output = if stdout.is_empty() {
+        message.clone()
+    } else {
+        format!("{stdout}\n{message}")
+    };
+    let output = ExecToolCallOutput {
+        exit_code: -1,
+        stdout: StreamOutput::new(stdout),
+        stderr: StreamOutput::new(message),
+        aggregated_output: StreamOutput::new(aggregated_output),
+        duration,
+        timed_out: false,
+    };
+    let event_ctx = ToolEventCtx::new(
+        session_ref.as_ref(),
+        turn_ref.as_ref(),
+        &call_id,
+        /*turn_diff_tracker*/ None,
+    );
+    let emitter = ToolEmitter::unified_exec(
+        &command,
+        cwd,
+        ExecCommandSource::UnifiedExecStartup,
+        process_id,
+        plugin_attribution,
+    );
+    emitter
+        .emit(
+            event_ctx,
+            ToolEventStage::Failure(ToolEventFailure::Output(output)),
+        )
         .await;
 }
 
@@ -240,52 +385,17 @@ fn split_valid_utf8_prefix_with_max(buffer: &mut Vec<u8>, max_bytes: usize) -> O
 }
 
 async fn resolve_aggregated_output(
-    transcript: &Arc<Mutex<CommandTranscript>>,
+    transcript: &Arc<Mutex<HeadTailBuffer>>,
     fallback: String,
 ) -> String {
     let guard = transcript.lock().await;
-    if guard.data.is_empty() {
+    if guard.retained_bytes() == 0 {
         return fallback;
     }
 
-    String::from_utf8_lossy(&guard.data).to_string()
+    String::from_utf8_lossy(&guard.to_bytes_with_omission_marker()).to_string()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::split_valid_utf8_prefix_with_max;
-
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn split_valid_utf8_prefix_respects_max_bytes_for_ascii() {
-        let mut buf = b"hello word!".to_vec();
-
-        let first = split_valid_utf8_prefix_with_max(&mut buf, 5).expect("expected prefix");
-        assert_eq!(first, b"hello".to_vec());
-        assert_eq!(buf, b" word!".to_vec());
-
-        let second = split_valid_utf8_prefix_with_max(&mut buf, 5).expect("expected prefix");
-        assert_eq!(second, b" word".to_vec());
-        assert_eq!(buf, b"!".to_vec());
-    }
-
-    #[test]
-    fn split_valid_utf8_prefix_avoids_splitting_utf8_codepoints() {
-        // "é" is 2 bytes in UTF-8. With a max of 3 bytes, we should only emit 1 char (2 bytes).
-        let mut buf = "ééé".as_bytes().to_vec();
-
-        let first = split_valid_utf8_prefix_with_max(&mut buf, 3).expect("expected prefix");
-        assert_eq!(std::str::from_utf8(&first).unwrap(), "é");
-        assert_eq!(buf, "éé".as_bytes().to_vec());
-    }
-
-    #[test]
-    fn split_valid_utf8_prefix_makes_progress_on_invalid_utf8() {
-        let mut buf = vec![0xff, b'a', b'b'];
-
-        let first = split_valid_utf8_prefix_with_max(&mut buf, 2).expect("expected prefix");
-        assert_eq!(first, vec![0xff]);
-        assert_eq!(buf, b"ab".to_vec());
-    }
-}
+#[path = "async_watcher_tests.rs"]
+mod tests;

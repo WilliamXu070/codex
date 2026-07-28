@@ -16,9 +16,7 @@ use codex_context_files::{
 use tempfile::TempDir;
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
+    codex_utils_cargo_bin::find_resource!("tests/fixtures").unwrap()
 }
 
 #[tokio::test]
@@ -139,7 +137,7 @@ async fn test_cross_linking() {
     // At minimum, verify the cross-linking mechanism works
     // (actual links depend on content similarity)
     let stats = agent.stats();
-    assert!(stats.total_cross_links >= 0); // Non-negative
+    assert_eq!(stats.total_cross_links, total_links);
 }
 
 #[tokio::test]
@@ -148,10 +146,6 @@ async fn test_entity_extraction() {
 
     let cooking_path = fixtures_dir().join("cooking-recipes");
     let result = agent.process_folder(&cooking_path).await.unwrap();
-
-    // Entities extracted count should be non-negative
-    // (may be 0 for some content types like recipes)
-    assert!(result.entities_extracted >= 0);
 
     // At least nodes should be created
     assert!(result.nodes_created > 0);
@@ -180,6 +174,7 @@ async fn test_keyword_extraction() {
     let has_cooking_keywords = all_keywords
         .iter()
         .any(|k| k.contains("recipe") || k.contains("ingredient"));
+    assert!(has_cooking_keywords);
 
     println!(
         "Sample keywords: {:?}",
@@ -207,10 +202,6 @@ async fn test_query() {
     // Query for chocolate
     let result = agent.query("chocolate");
     assert!(!result.nodes.is_empty());
-
-    // Query for something that shouldn't exist
-    let result = agent.query("quantum physics");
-    // May or may not have results depending on content
 }
 
 #[tokio::test]
@@ -320,8 +311,7 @@ async fn test_get_file_context() {
     let pasta_file = cooking_path.join("pasta-carbonara.md");
     let context = agent.get_file_context(&pasta_file);
 
-    if context.is_some() {
-        let ancestry = context.unwrap();
+    if let Some(ancestry) = context {
         assert!(!ancestry.is_empty());
 
         // Should have: root -> domain -> ... -> file
@@ -390,10 +380,7 @@ async fn test_max_files_limit() {
         ..Default::default()
     };
 
-    let mut agent = AgentBuilder::new()
-        .extensions(vec!["md".to_string()])
-        .heuristic_only()
-        .build();
+    let mut agent = ContextAgent::new(agent_config, LlmConfig::default());
 
     let cooking_path = fixtures_dir().join("cooking-recipes");
     let result = agent.process_folder(&cooking_path).await.unwrap();

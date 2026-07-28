@@ -110,11 +110,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   }}\n");
 
     // Show a sample node
-    if let Some(nodes) = parsed["nodes"].as_array() {
-        if let Some(first_node) = nodes.first() {
-            println!("📋 Sample Node:");
-            println!("{}", serde_json::to_string_pretty(first_node).unwrap());
-        }
+    if let Some(nodes) = parsed["nodes"].as_array()
+        && let Some(first_node) = nodes.first()
+    {
+        println!("📋 Sample Node:");
+        println!("{}", serde_json::to_string_pretty(first_node).unwrap());
     }
 
     println!("\n✅ Demo complete!");

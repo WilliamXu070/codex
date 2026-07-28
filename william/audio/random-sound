@@ -1,0 +1,181 @@
+#!/bin/zsh
+
+state_file="${CODEX_SOUND_STATE_FILE:-/Users/williamxu/.codex/codex-sound-state}"
+script_dir="${0:A:h}"
+repo_sound_dir="$script_dir/sounds"
+default_approval_sound="$script_dir/wilhelm-scream.mp3"
+[[ -r "$state_file" ]] && source "$state_file"
+
+sound_dir="${CODEX_SOUND_DIR:-$repo_sound_dir}"
+[[ -n "${CODEX_SOUND_DIR:-}" ]] || sound_dir="$repo_sound_dir"
+log_file="${CODEX_SOUND_LOG:-/tmp/codex-random-sound.log}"
+state_dir="${CODEX_SOUND_STATE_DIR:-/tmp}"
+completion_token_file="$state_dir/codex-random-sound-completion.token"
+completion_delay="${CODEX_SOUND_COMPLETION_DELAY:-0}"
+volume="${CODEX_SOUND_VOLUME:-1.0}"
+enabled="${CODEX_SOUND_ENABLED:-1}"
+explicit_event=""
+payload=""
+
+while (( $# > 0 )); do
+  case "$1" in
+    --event)
+      explicit_event="${2:-}"
+      shift 2
+      ;;
+    --event=*)
+      explicit_event="${1#--event=}"
+      shift
+      ;;
+    *)
+      payload+="${payload:+ }$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$payload" && ! -t 0 ]]; then
+  payload="$(cat 2>/dev/null || true)"
+fi
+
+mkdir -p "${log_file:h}" "$state_dir" 2>/dev/null || true
+
+log_sound_event() {
+  { print -r -- "$(date -u '+%Y-%m-%dT%H:%M:%SZ') $1" >> "$log_file" } 2>/dev/null || true
+}
+
+if [[ "$enabled" == "0" ]]; then
+  log_sound_event "disabled payload=${payload[1,300]}"
+  exit 0
+fi
+
+should_ignore_completion() {
+  local lower_payload="${payload:l}"
+  local compact_payload="${lower_payload//[[:space:]]/}"
+
+  if [[ "$lower_payload" == *"the following is the codex agent history whose request action you are assessing"* ]] ||
+     [[ "$lower_payload" == *"the following is the codex agent history added since your last approval assessment"* ]] ||
+     [[ "$lower_payload" == *"reviewed codex session id:"* ]] ||
+     [[ "$lower_payload" == *">>> approval request start"* ]] ||
+     [[ "$lower_payload" == *"planned action json:"* ]] ||
+     [[ "$compact_payload" == *'"model":"codex-auto-review"'* ]] ||
+     [[ "$compact_payload" == *'"last-assistant-message":"{\"outcome\"'* ]] ||
+     [[ "$compact_payload" == *'"last-assistant-message":"{\"risk_level\"'* ]] ||
+     [[ "$compact_payload" == *'\\"outcome\\":\\"allow\\"'* ]] ||
+     [[ "$compact_payload" == *'\\"outcome\\":\\"deny\\"'* ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+should_ignore_immediate() {
+  [[ "${CODEX_SOUND_SUPPRESS_AUTO_REVIEW_APPROVAL:-1}" == "0" ]] && return 1
+
+  local lower_payload="${payload:l}"
+  local compact_payload="${lower_payload//[[:space:]]/}"
+  if [[ "$compact_payload" == *'"approvals_reviewer":"auto_review"'* ]] ||
+     [[ "$compact_payload" == *'"approvalsreviewer":"auto_review"'* ]] ||
+     [[ "$compact_payload" == *'`approvals_reviewer`is`auto_review`'* ]]; then
+    return 0
+  fi
+
+  local transcript_path=""
+  if [[ "$payload" =~ '"transcript_path":"([^"]+)"' ]]; then
+    transcript_path="${match[1]}"
+    transcript_path="${transcript_path//\\\//\/}"
+  fi
+  [[ -n "$transcript_path" && -r "$transcript_path" ]] || return 1
+
+  LC_ALL=C grep -aqE 'approvals_reviewer[`" =:]+auto_review|`approvals_reviewer` is `auto_review`|approvalsReviewer[^\n]*auto_review|"approvals_reviewer":"auto_review"' "$transcript_path"
+}
+
+event_kind="ignore"
+if [[ -n "$explicit_event" ]]; then
+  case "${explicit_event:l}" in
+    completion|agent-turn-complete|turn-ended|stop|subagent-stop)
+      event_kind="completion"
+      ;;
+    approval|approval-requested|permission-request|permission_request|permissionrequest|request-user-input|request_user_input|question|human|elicitation|elicitation-request|elicitation_request|mcp-elicitation|mcp_elicitation|mcp-elicitation-request|mcp_elicitation_request)
+      event_kind="immediate"
+      ;;
+  esac
+elif [[ -n "$payload" ]]; then
+  compact_payload="${payload:l}"
+  compact_payload="${compact_payload//[[:space:]]/}"
+  if [[ "$compact_payload" == *'"type":"agent-turn-complete"'* ]] || [[ "$compact_payload" == *'"type":"turn-ended"'* ]]; then
+    event_kind="completion"
+  elif [[ "$compact_payload" == *'"type":"approval-requested"'* ]] || [[ "$compact_payload" == *'"type":"permission-request"'* ]] || [[ "$compact_payload" == *'"type":"permission_request"'* ]] || [[ "$compact_payload" == *'"hook_event_name":"permissionrequest"'* ]] || [[ "$compact_payload" == *'"hookeventname":"permissionrequest"'* ]] || [[ "$compact_payload" == *'"permissionrequest"'* ]] || [[ "$compact_payload" == *'"type":"request_user_input"'* ]] || [[ "$compact_payload" == *'"type":"question"'* ]] || [[ "$compact_payload" == *'"type":"elicitation_request"'* ]] || [[ "$compact_payload" == *'"mcp_elicitation_request"'* ]] || [[ "$compact_payload" == *'elicitationrequest'* ]]; then
+    event_kind="immediate"
+  fi
+fi
+
+if [[ "$event_kind" == "ignore" ]]; then
+  log_sound_event "ignored payload=${payload[1,300]}"
+  exit 0
+fi
+
+if [[ "$event_kind" == "completion" ]] && should_ignore_completion; then
+  log_sound_event "ignored internal approval-review completion payload=${payload[1,300]}"
+  exit 0
+fi
+
+if [[ "$event_kind" == "immediate" ]] && should_ignore_immediate; then
+  log_sound_event "ignored auto-review permission request payload=${payload[1,300]}"
+  exit 0
+fi
+
+completion_files=(
+  "$sound_dir"/*.mp3(N)
+  "$sound_dir"/*.wav(N)
+  "$sound_dir"/*.aiff(N)
+  "$sound_dir"/*.m4a(N)
+)
+
+files=("${completion_files[@]}")
+
+if (( ${#files[@]} == 0 )); then
+  log_sound_event "no audio files found in $sound_dir"
+  exit 0
+fi
+
+if [[ "$event_kind" == "completion" && -n "${CODEX_SOUND_COMPLETION_FILE:-}" && -r "${CODEX_SOUND_COMPLETION_FILE}" ]]; then
+  sound="${CODEX_SOUND_COMPLETION_FILE}"
+elif [[ "$event_kind" == "immediate" && -n "${CODEX_SOUND_APPROVAL_FILE:-}" && -r "${CODEX_SOUND_APPROVAL_FILE}" ]]; then
+  sound="${CODEX_SOUND_APPROVAL_FILE}"
+elif [[ "$event_kind" == "immediate" && -r "$default_approval_sound" ]]; then
+  sound="$default_approval_sound"
+else
+  sound="${files[$(( RANDOM % ${#files[@]} + 1 ))]}"
+fi
+
+if [[ "${CODEX_SOUND_DRY_RUN:-}" == "1" ]]; then
+  log_sound_event "dry-run would play kind=$event_kind explicit_event=$explicit_event volume=$volume sound=$sound payload=${payload[1,300]}"
+  exit 0
+fi
+
+play_sound() {
+  /usr/bin/afplay -v "$volume" "$sound" >/dev/null 2>&1 &
+}
+
+if [[ "$event_kind" == "completion" ]]; then
+  token="${EPOCHREALTIME:-$RANDOM-$$}"
+  print -r -- "$token" > "$completion_token_file" 2>/dev/null || true
+  if [[ "$completion_delay" == "0" || "$completion_delay" == "0.0" ]]; then
+    play_sound
+    log_sound_event "played completion volume=$volume sound=$sound payload=${payload[1,300]}"
+  else
+    (
+      sleep "$completion_delay"
+      [[ -r "$completion_token_file" ]] || exit 0
+      [[ "$(cat "$completion_token_file" 2>/dev/null)" == "$token" ]] || exit 0
+      /usr/bin/afplay -v "$volume" "$sound" >/dev/null 2>&1 &
+      log_sound_event "played completion volume=$volume sound=$sound"
+    ) >/dev/null 2>&1 &
+    log_sound_event "scheduled completion volume=$volume sound=$sound delay=${completion_delay}s payload=${payload[1,300]}"
+  fi
+else
+  print -r -- "cancelled-by-immediate-${EPOCHREALTIME:-$RANDOM-$$}" > "$completion_token_file" 2>/dev/null || true
+  play_sound
+  log_sound_event "played immediate volume=$volume sound=$sound explicit_event=$explicit_event payload=${payload[1,300]}"
+fi

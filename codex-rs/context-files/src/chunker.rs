@@ -455,11 +455,9 @@ impl SemanticChunker {
     /// Recursively split large elements.
     fn recursive_split(&self, element: &StructuralElement) -> Vec<Chunk> {
         let mut chunks = Vec::new();
-        let separators = ["\n\n", "\n", ". ", " "];
 
         self.split_recursive(
             &element.content,
-            &separators,
             0,
             element.start_offset,
             element.element_type,
@@ -474,17 +472,18 @@ impl SemanticChunker {
     fn split_recursive(
         &self,
         text: &str,
-        separators: &[&str],
         sep_index: usize,
         base_offset: usize,
         chunk_type: ChunkType,
         metadata: &ChunkMetadata,
         chunks: &mut Vec<Chunk>,
     ) {
+        const SEPARATORS: [&str; 4] = ["\n\n", "\n", ". ", " "];
+
         let estimated_tokens = text.len() / 4;
 
         // If small enough, add as chunk
-        if estimated_tokens <= self.config.max_tokens || sep_index >= separators.len() {
+        if estimated_tokens <= self.config.max_tokens || sep_index >= SEPARATORS.len() {
             if estimated_tokens >= self.config.min_tokens {
                 chunks.push(Chunk {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -501,14 +500,13 @@ impl SemanticChunker {
         }
 
         // Split by current separator
-        let separator = separators[sep_index];
+        let separator = SEPARATORS[sep_index];
         let parts: Vec<&str> = text.split(separator).collect();
 
         if parts.len() == 1 {
             // Separator not found, try next
             self.split_recursive(
                 text,
-                separators,
                 sep_index + 1,
                 base_offset,
                 chunk_type,
@@ -535,7 +533,6 @@ impl SemanticChunker {
                 // Current chunk is full, recurse on it
                 self.split_recursive(
                     &current_chunk,
-                    separators,
                     sep_index + 1,
                     current_offset,
                     chunk_type,
@@ -558,7 +555,6 @@ impl SemanticChunker {
         if !current_chunk.is_empty() {
             self.split_recursive(
                 &current_chunk,
-                separators,
                 sep_index + 1,
                 current_offset,
                 chunk_type,
@@ -582,12 +578,12 @@ impl SemanticChunker {
         for (i, mut chunk) in chunks.into_iter().enumerate() {
             if i > 0 && overlap_chars > 0 {
                 // Get overlap from previous chunk
-                if let Some(prev) = result.last() {
-                    if prev.content.len() > overlap_chars {
-                        let overlap = &prev.content[prev.content.len() - overlap_chars..];
-                        chunk.content = format!("{}{}", overlap, chunk.content);
-                        chunk.metadata.is_continuation = true;
-                    }
+                if let Some(prev) = result.last()
+                    && prev.content.len() > overlap_chars
+                {
+                    let overlap = &prev.content[prev.content.len() - overlap_chars..];
+                    chunk.content = format!("{overlap}{}", chunk.content);
+                    chunk.metadata.is_continuation = true;
                 }
             }
             result.push(chunk);

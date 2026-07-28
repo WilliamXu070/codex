@@ -2,7 +2,6 @@
 //!
 //! Supports multiple embedding providers including OpenAI and local models.
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
@@ -62,7 +61,6 @@ pub struct EmbeddingResponse {
 }
 
 /// Trait for embedding providers.
-#[async_trait]
 pub trait EmbeddingProvider: Send + Sync {
     /// Get the name of this provider.
     fn name(&self) -> &str;
@@ -74,16 +72,23 @@ pub trait EmbeddingProvider: Send + Sync {
     fn default_dimension(&self) -> usize;
 
     /// Generate an embedding for the given text.
-    async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse>;
+    fn embed(
+        &self,
+        request: EmbeddingRequest,
+    ) -> impl std::future::Future<Output = Result<EmbeddingResponse>> + Send;
 
     /// Generate embeddings for multiple texts.
-    async fn embed_batch(&self, requests: Vec<EmbeddingRequest>) -> Result<Vec<EmbeddingResponse>> {
-        // Default implementation: process sequentially
-        let mut results = Vec::with_capacity(requests.len());
-        for request in requests {
-            results.push(self.embed(request).await?);
+    fn embed_batch(
+        &self,
+        requests: Vec<EmbeddingRequest>,
+    ) -> impl std::future::Future<Output = Result<Vec<EmbeddingResponse>>> + Send {
+        async move {
+            let mut results = Vec::with_capacity(requests.len());
+            for request in requests {
+                results.push(self.embed(request).await?);
+            }
+            Ok(results)
         }
-        Ok(results)
     }
 
     /// Check if the provider is available (API key set, etc.).
@@ -141,7 +146,6 @@ impl Default for OpenAIProvider {
     }
 }
 
-#[async_trait]
 impl EmbeddingProvider for OpenAIProvider {
     fn name(&self) -> &str {
         "openai"
@@ -346,7 +350,6 @@ impl Default for LocalProvider {
     }
 }
 
-#[async_trait]
 impl EmbeddingProvider for LocalProvider {
     fn name(&self) -> &str {
         "local"

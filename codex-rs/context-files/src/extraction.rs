@@ -143,9 +143,7 @@ impl ConceptExtractor {
             if let Some(idx) = text.to_lowercase().find(indicator) {
                 let start = idx + indicator.len();
                 let rest = &text[start..];
-                if let Some(end) =
-                    rest.find(|c: char| c == '.' || c == ',' || c == '?' || c == '\n')
-                {
+                if let Some(end) = rest.find(['.', ',', '?', '\n']) {
                     let phrase = rest[..end].trim();
                     if phrase.len() >= 2 && phrase.len() <= 50 {
                         let normalized = Self::normalize_concept_name(phrase);
@@ -159,11 +157,10 @@ impl ConceptExtractor {
         let words: Vec<&str> = text.split_whitespace().collect();
         let mut i = 0;
         while i < words.len() {
-            if words[i].chars().next().map_or(false, |c| c.is_uppercase()) {
+            if words[i].chars().next().is_some_and(char::is_uppercase) {
                 let mut phrase = vec![words[i]];
                 let mut j = i + 1;
-                while j < words.len() && words[j].chars().next().map_or(false, |c| c.is_uppercase())
-                {
+                while j < words.len() && words[j].chars().next().is_some_and(char::is_uppercase) {
                     phrase.push(words[j]);
                     j += 1;
                 }
@@ -182,10 +179,7 @@ impl ConceptExtractor {
 
     /// Normalize a concept name (lowercase, replace spaces with hyphens).
     fn normalize_concept_name(name: &str) -> String {
-        name.to_lowercase()
-            .trim()
-            .replace(' ', "-")
-            .replace('_', "-")
+        name.to_lowercase().trim().replace([' ', '_'], "-")
     }
 
     /// Extract concepts from a conversation turn.

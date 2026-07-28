@@ -17,7 +17,6 @@ pub struct Token(i32);
 
 const LOCK_TIMEOUT: Duration = Duration::from_millis(1000);
 
-#[async_trait::async_trait]
 pub trait Readiness: Send + Sync + 'static {
     /// Returns true if the flag is currently marked ready. At least one token needs to be marked
     /// as ready before.
@@ -27,17 +26,22 @@ pub trait Readiness: Send + Sync + 'static {
     /// Subscribe to readiness and receive an authorization token.
     ///
     /// If the flag is already ready, returns `FlagAlreadyReady`.
-    async fn subscribe(&self) -> Result<Token, errors::ReadinessError>;
+    fn subscribe(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Token, errors::ReadinessError>> + Send;
 
     /// Attempt to mark the flag ready, validated by the provided token.
     ///
     /// Returns `true` iff:
     /// - `token` is currently subscribed, and
     /// - the flag was not already ready.
-    async fn mark_ready(&self, token: Token) -> Result<bool, errors::ReadinessError>;
+    fn mark_ready(
+        &self,
+        token: Token,
+    ) -> impl std::future::Future<Output = Result<bool, errors::ReadinessError>> + Send;
 
     /// Asynchronously wait until the flag becomes ready.
-    async fn wait_ready(&self);
+    fn wait_ready(&self) -> impl std::future::Future<Output = ()> + Send;
 }
 
 pub struct ReadinessFlag {
@@ -92,7 +96,6 @@ impl fmt::Debug for ReadinessFlag {
     }
 }
 
-#[async_trait::async_trait]
 impl Readiness for ReadinessFlag {
     fn is_ready(&self) -> bool {
         if self.load_ready() {
@@ -118,26 +121,25 @@ impl Readiness for ReadinessFlag {
             return Err(errors::ReadinessError::FlagAlreadyReady);
         }
 
-        // Generate a token; ensure it's not 0.
-        let token = Token(self.next_id.fetch_add(1, Ordering::Relaxed));
-
         // Recheck readiness while holding the lock so mark_ready can't flip the flag between the
-        // check above and inserting the token.
-        let inserted = self
+        // check above and inserting the token. Also ensure the token is non-zero and unique in
+        // the presence of `i32` wrap-around.
+        let token = self
             .with_tokens(|tokens| {
                 if self.load_ready() {
-                    return false;
+                    return None;
                 }
-                tokens.insert(token);
-                true
+
+                loop {
+                    let token = Token(self.next_id.fetch_add(1, Ordering::Relaxed));
+                    if token.0 != 0 && tokens.insert(token) {
+                        return Some(token);
+                    }
+                }
             })
             .await?;
 
-        if !inserted {
-            return Err(errors::ReadinessError::FlagAlreadyReady);
-        }
-
-        Ok(token)
+        token.ok_or(errors::ReadinessError::FlagAlreadyReady)
     }
 
     async fn mark_ready(&self, token: Token) -> Result<bool, errors::ReadinessError> {
@@ -199,6 +201,7 @@ mod errors {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     use super::Readiness;
     use super::ReadinessFlag;
@@ -277,16 +280,57 @@ mod tests {
 
     #[tokio::test]
     async fn subscribe_returns_error_when_lock_is_held() {
-        let flag = ReadinessFlag::new();
-        let _guard = flag
-            .tokens
-            .try_lock()
-            .expect("initial lock acquisition should succeed");
+        let flag = Arc::new(ReadinessFlag::new());
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let lock_thread = {
+            let flag = Arc::clone(&flag);
+            std::thread::spawn(move || {
+                let _guard = flag.tokens.blocking_lock();
+                locked_tx
+                    .send(())
+                    .expect("test should receive lock acquisition notification");
+                release_rx
+                    .recv()
+                    .expect("test should release held readiness lock");
+            })
+        };
+        locked_rx
+            .recv()
+            .expect("test should observe held readiness lock");
 
         let err = flag
             .subscribe()
             .await
             .expect_err("contended subscribe should report a lock failure");
         assert_matches!(err, ReadinessError::TokenLockFailed);
+        release_tx
+            .send(())
+            .expect("test should release readiness lock thread");
+        lock_thread
+            .join()
+            .expect("readiness lock thread should not panic");
+    }
+
+    #[tokio::test]
+    async fn subscribe_skips_zero_token() -> Result<(), ReadinessError> {
+        let flag = ReadinessFlag::new();
+        flag.next_id.store(0, Ordering::Relaxed);
+
+        let token = flag.subscribe().await?;
+        assert_ne!(token, Token(0));
+        assert!(flag.mark_ready(token).await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn subscribe_avoids_duplicate_tokens() -> Result<(), ReadinessError> {
+        let flag = ReadinessFlag::new();
+        let token = flag.subscribe().await?;
+        flag.next_id.store(token.0, Ordering::Relaxed);
+
+        let token2 = flag.subscribe().await?;
+        assert_ne!(token2, token);
+        Ok(())
     }
 }
