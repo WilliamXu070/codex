@@ -3,32 +3,32 @@ set -euo pipefail
 
 CODEX_ROOT="${CODEX_ROOT:-/Users/williamxu/Desktop/Projects/codex}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_SERVER="${SCRIPT_DIR}/codex-release-webhook-server.py"
 SOURCE_AGENT="${SCRIPT_DIR}/codex-release-agent.py"
-SOURCE_TRIGGER="${SCRIPT_DIR}/update-codex-local.sh"
-LAUNCH_LABEL="com.williamxu.codex-release-watch"
+LAUNCH_LABEL="com.williamxu.codex-release-webhook"
 LAUNCH_DIR="${HOME}/Library/LaunchAgents"
 PLIST_PATH="${LAUNCH_DIR}/${LAUNCH_LABEL}.plist"
-LOG_DIR="${HOME}/Library/Logs/codex-release-watch"
+LOG_DIR="${HOME}/Library/Logs/codex-release-webhook"
 RUNTIME_DIR="${HOME}/.local/lib/codex"
+SERVER_RUNTIME="${RUNTIME_DIR}/codex-release-webhook-server.py"
 AGENT_RUNTIME="${RUNTIME_DIR}/codex-release-agent.py"
-TRIGGER_RUNTIME="${HOME}/.local/bin/codex-release-watch-runner.sh"
-INTERVAL_SECONDS="${INTERVAL_SECONDS:-900}"
+HOST="${CODEX_RELEASE_WEBHOOK_HOST:-127.0.0.1}"
+PORT="${CODEX_RELEASE_WEBHOOK_PORT:-8765}"
+SECRET="${CODEX_RELEASE_WEBHOOK_SECRET:-}"
 CHANNEL="${CODEX_RELEASE_CHANNEL:-all}"
+PYTHON_BIN="${CODEX_RELEASE_PYTHON:-$(command -v python3)}"
 ACTION="install"
-LAUNCHD_PATH_ENV="/Users/williamxu/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 usage() {
   cat <<'EOF'
-Usage: install-codex-release-watch.sh [install|uninstall|status] [options]
+Usage: install-codex-release-webhook.sh [install|uninstall|status] [options]
 
-  install                 Install the lightweight GitHub release check.
-  uninstall               Unload and remove it.
-  status                  Show launchd and release-ledger status.
-  --interval SECONDS      Check interval (default: 900).
-  --channel CHANNEL       all, stable, or prerelease (default: all).
+  --secret SECRET      GitHub webhook HMAC secret.
+  --port PORT          Local listener port (default: 8765).
+  --channel CHANNEL    all, stable, or prerelease.
 
-The scheduled check does not invoke Codex for known tags. The SQLite release
-ledger allows exactly one Codex agent attempt per newly discovered tag.
+The endpoint accepts only signed, newly published `openai/codex` release events.
+Duplicate deliveries are deduplicated by the release-agent ledger.
 EOF
 }
 
@@ -38,10 +38,18 @@ while [[ $# -gt 0 ]]; do
       ACTION="$1"
       shift
       ;;
-    --interval)
-      INTERVAL_SECONDS="${2:-}"
-      [[ "$INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || {
-        echo "--interval requires integer seconds" >&2
+    --secret)
+      SECRET="${2:-}"
+      [[ -n "$SECRET" ]] || {
+        echo "--secret requires a value" >&2
+        exit 1
+      }
+      shift 2
+      ;;
+    --port)
+      PORT="${2:-}"
+      [[ "$PORT" =~ ^[0-9]+$ ]] || {
+        echo "--port requires an integer" >&2
         exit 1
       }
       shift 2
@@ -68,18 +76,18 @@ done
 
 case "$ACTION" in
   install)
-    [[ -r "$SOURCE_AGENT" ]] || {
-      echo "missing release agent: $SOURCE_AGENT" >&2
+    [[ -n "$SECRET" ]] || {
+      echo "set CODEX_RELEASE_WEBHOOK_SECRET or pass --secret" >&2
       exit 1
     }
-    [[ -r "$SOURCE_TRIGGER" ]] || {
-      echo "missing release trigger: $SOURCE_TRIGGER" >&2
+    mkdir -p "$LAUNCH_DIR" "$LOG_DIR" "$RUNTIME_DIR"
+    "$PYTHON_BIN" -c 'import tomllib' >/dev/null 2>&1 || {
+      echo "release agent requires Python 3.11 or newer: $PYTHON_BIN" >&2
       exit 1
     }
-    mkdir -p "$LAUNCH_DIR" "$LOG_DIR" "$RUNTIME_DIR" "$(dirname "$TRIGGER_RUNTIME")"
+    cp "$SOURCE_SERVER" "$SERVER_RUNTIME"
     cp "$SOURCE_AGENT" "$AGENT_RUNTIME"
-    cp "$SOURCE_TRIGGER" "$TRIGGER_RUNTIME"
-    chmod +x "$AGENT_RUNTIME" "$TRIGGER_RUNTIME"
+    chmod +x "$SERVER_RUNTIME" "$AGENT_RUNTIME"
 
     cat > "$PLIST_PATH" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -90,18 +98,14 @@ case "$ACTION" in
   <string>${LAUNCH_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${TRIGGER_RUNTIME}</string>
-    <string>--watch</string>
-    <string>--channel</string>
-    <string>${CHANNEL}</string>
-    <string>--delivery</string>
-    <string>launchd-release-check</string>
+    <string>${PYTHON_BIN}</string>
+    <string>${SERVER_RUNTIME}</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/tmp</string>
-  <key>StartInterval</key>
-  <integer>${INTERVAL_SECONDS}</integer>
   <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
   <string>${LOG_DIR}/stdout.log</string>
@@ -113,8 +117,18 @@ case "$ACTION" in
     <string>${CODEX_ROOT}</string>
     <key>CODEX_RELEASE_AGENT_SCRIPT</key>
     <string>${AGENT_RUNTIME}</string>
+    <key>CODEX_RELEASE_WEBHOOK_SECRET</key>
+    <string>${SECRET}</string>
+    <key>CODEX_RELEASE_WEBHOOK_HOST</key>
+    <string>${HOST}</string>
+    <key>CODEX_RELEASE_WEBHOOK_PORT</key>
+    <string>${PORT}</string>
+    <key>CODEX_RELEASE_WEBHOOK_REPO</key>
+    <string>openai/codex</string>
+    <key>CODEX_RELEASE_CHANNEL</key>
+    <string>${CHANNEL}</string>
     <key>PATH</key>
-    <string>${LAUNCHD_PATH_ENV}</string>
+    <string>/Users/williamxu/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 </dict>
 </plist>
@@ -125,15 +139,15 @@ PLIST
     fi
     launchctl load -w "$PLIST_PATH"
     echo "installed: $LAUNCH_LABEL"
+    echo "local URL: http://${HOST}:${PORT}/github-release-webhook"
+    echo "repo: openai/codex"
     echo "channel: $CHANNEL"
-    echo "interval: ${INTERVAL_SECONDS}s"
-    echo "agent ledger: ${RUNTIME_DIR}/release-agent/state.sqlite3"
     ;;
   uninstall)
     if launchctl list "$LAUNCH_LABEL" >/dev/null 2>&1; then
       launchctl unload -w "$PLIST_PATH" || true
     fi
-    rm -f "$PLIST_PATH" "$TRIGGER_RUNTIME" "$AGENT_RUNTIME"
+    rm -f "$PLIST_PATH" "$SERVER_RUNTIME"
     echo "uninstalled: $LAUNCH_LABEL"
     ;;
   status)
@@ -143,8 +157,8 @@ PLIST
     else
       echo "$LAUNCH_LABEL is not loaded"
     fi
+    echo "local URL: http://${HOST}:${PORT}/github-release-webhook"
     echo "out log: ${LOG_DIR}/stdout.log"
     echo "err log: ${LOG_DIR}/stderr.log"
-    echo "agent ledger: ${RUNTIME_DIR}/release-agent/state.sqlite3"
     ;;
 esac
