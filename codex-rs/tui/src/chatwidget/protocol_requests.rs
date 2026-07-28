@@ -46,6 +46,7 @@ impl ChatWidget {
             }
             ServerRequest::DynamicToolCall { .. }
             | ServerRequest::AttestationGenerate { .. }
+            | ServerRequest::CurrentTimeRead { .. }
             | ServerRequest::ChatgptAuthTokensRefresh { .. }
             | ServerRequest::ApplyPatchApproval { .. }
             | ServerRequest::ExecCommandApproval { .. } => {
@@ -92,6 +93,8 @@ impl ChatWidget {
         self.on_guardian_assessment(GuardianAssessmentEvent {
             id,
             target_item_id: None,
+            plugin_id: None,
+            script_path: None,
             turn_id,
             started_at_ms,
             completed_at_ms,

@@ -49,9 +49,6 @@ pub enum SlashCommand {
     Mention,
     Status,
     Usage,
-    Sound,
-    #[strum(to_string = "transcribe", serialize = "transcribe-command")]
-    TranscribeCommand,
     DebugConfig,
     Title,
     Statusline,
@@ -96,7 +93,7 @@ impl SlashCommand {
             SlashCommand::Delete => "permanently delete this session and exit",
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
-            SlashCommand::App => "continue this session in Codex Desktop",
+            SlashCommand::App => "continue this session in the Desktop app",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
             SlashCommand::Raw => "toggle raw scrollback mode for copy-friendly terminal selection",
@@ -106,11 +103,7 @@ impl SlashCommand {
             SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
             SlashCommand::Hooks => "view and manage lifecycle hooks",
             SlashCommand::Status => "show current session configuration and token usage",
-            SlashCommand::Usage => "show account usage activity",
-            SlashCommand::Sound => "configure Codex sounds",
-            SlashCommand::TranscribeCommand => {
-                "configure Codex transcription provider and API settings"
-            }
+            SlashCommand::Usage => "view account usage or use a usage limit reset",
             SlashCommand::DebugConfig => "show config layers and requirement sources for debugging",
             SlashCommand::Title => "configure which items appear in the terminal title",
             SlashCommand::Statusline => "configure which items appear in the status line",
@@ -162,6 +155,8 @@ impl SlashCommand {
             self,
             SlashCommand::Review
                 | SlashCommand::Rename
+                | SlashCommand::New
+                | SlashCommand::Clear
                 | SlashCommand::Plan
                 | SlashCommand::Goal
                 | SlashCommand::Ide
@@ -174,7 +169,6 @@ impl SlashCommand {
                 | SlashCommand::Btw
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
-                | SlashCommand::TranscribeCommand
         )
     }
 
@@ -198,13 +192,9 @@ impl SlashCommand {
             SlashCommand::New
             | SlashCommand::Archive
             | SlashCommand::Delete
-            | SlashCommand::Resume
             | SlashCommand::Fork
             | SlashCommand::Init
             | SlashCommand::Compact
-            | SlashCommand::Model
-            | SlashCommand::Personality
-            | SlashCommand::Permissions
             | SlashCommand::Keymap
             | SlashCommand::Vim
             | SlashCommand::ElevateSandbox
@@ -219,6 +209,10 @@ impl SlashCommand {
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff
+            | SlashCommand::Resume
+            | SlashCommand::Model
+            | SlashCommand::Personality
+            | SlashCommand::Permissions
             | SlashCommand::Copy
             | SlashCommand::Raw
             | SlashCommand::Rename
@@ -227,8 +221,6 @@ impl SlashCommand {
             | SlashCommand::Hooks
             | SlashCommand::Status
             | SlashCommand::Usage
-            | SlashCommand::Sound
-            | SlashCommand::TranscribeCommand
             | SlashCommand::DebugConfig
             | SlashCommand::Ps
             | SlashCommand::Stop
@@ -305,19 +297,6 @@ mod tests {
         assert!(SlashCommand::Raw.available_in_side_conversation());
         assert!(SlashCommand::Raw.supports_inline_args());
         assert!(SlashCommand::App.available_during_task());
-    }
-
-    #[test]
-    fn transcribe_command_can_be_parsed() {
-        assert_eq!(SlashCommand::TranscribeCommand.command(), "transcribe");
-        assert_eq!(
-            SlashCommand::from_str("transcribe"),
-            Ok(SlashCommand::TranscribeCommand)
-        );
-        assert_eq!(
-            SlashCommand::from_str("transcribe-command"),
-            Ok(SlashCommand::TranscribeCommand)
-        );
     }
 
     #[test]

@@ -6,8 +6,6 @@
 use super::*;
 use crate::app_backtrack::SIDE_EDIT_PREVIOUS_UNAVAILABLE_MESSAGE;
 
-const TRANSCRIBE_HOLD_THRESHOLD: Duration = Duration::from_millis(250);
-
 impl App {
     pub(super) async fn launch_external_editor(&mut self, tui: &mut tui::Tui) {
         let editor_cmd = match external_editor::resolve_editor_command() {
@@ -33,9 +31,7 @@ impl App {
 
         let seed = self.chat_widget.composer_text_with_pending();
         let editor_result = tui
-            .with_restored(tui::RestoreMode::KeepRaw, || async {
-                external_editor::run_editor(&seed, &editor_cmd).await
-            })
+            .with_restored(|| async { external_editor::run_editor(&seed, &editor_cmd).await })
             .await;
         self.reset_external_editor_state(tui);
 
@@ -97,15 +93,6 @@ impl App {
         app_server: &mut AppServerSession,
         key_event: KeyEvent,
     ) {
-        if self.transcribe_capture.is_some() && self.transcribe_stop_key_matches(key_event) {
-            self.stop_transcribe_capture(tui);
-            return;
-        }
-        if self.transcribe_arm.is_some() && self.transcribe_release_key_matches(key_event) {
-            self.cancel_transcribe_arm();
-            return;
-        }
-
         // Some terminals, especially on macOS, encode Option+Left/Right as Option+b/f unless
         // enhanced keyboard reporting is available. We only treat those word-motion fallbacks as
         // agent-switch shortcuts when the composer is empty so we never steal the expected
@@ -155,6 +142,19 @@ impl App {
 
         let app_keymap_shortcuts_available = self.app_keymap_shortcuts_available();
 
+        let side_toggle_bindings = &self.keymap.app.toggle_side_conversation;
+        if app_keymap_shortcuts_available
+            && (side_toggle_bindings.is_pressed(key_event)
+                || side_toggle_bindings.contains(&crate::key_hint::ctrl(KeyCode::Char('/')))
+                    && crate::key_hint::ctrl(KeyCode::Char('7')).is_press(key_event))
+        {
+            if let Err(err) = self.toggle_side_conversation(tui, app_server).await {
+                self.chat_widget
+                    .add_error_message(format!("Failed to switch side conversation: {err}"));
+            }
+            return;
+        }
+
         if app_keymap_shortcuts_available && self.keymap.app.toggle_vim_mode.is_pressed(key_event) {
             self.chat_widget.toggle_vim_mode_and_notify();
             return;
@@ -183,16 +183,6 @@ impl App {
                 self.keymap.pager.clone(),
             ));
             tui.frame_requester().schedule_frame();
-            return;
-        }
-
-        if app_keymap_shortcuts_available && self.transcribe_start_key_matches(key_event) {
-            self.request_transcribe_capture();
-            return;
-        }
-
-        if app_keymap_shortcuts_available && self.terminal_transcribe_fallback_matches(key_event) {
-            self.start_transcribe_capture(tui);
             return;
         }
 
@@ -254,7 +244,8 @@ impl App {
                 && self.chat_widget.composer_is_empty() =>
             {
                 if let Some(selection) = self.confirm_backtrack_from_main() {
-                    self.apply_backtrack_selection(tui, selection);
+                    self.apply_backtrack_selection(selection);
+                    tui.frame_requester().schedule_frame();
                 }
             }
             KeyEvent {
@@ -299,199 +290,6 @@ impl App {
         self.overlay.is_none() && self.chat_widget.no_modal_or_popup_active()
     }
 
-    fn transcribe_stop_key_matches(&self, key_event: KeyEvent) -> bool {
-        self.transcribe_release_key_matches(key_event)
-            || self.terminal_transcribe_toggle_key_matches(key_event)
-    }
-
-    fn transcribe_start_key_matches(&self, key_event: KeyEvent) -> bool {
-        if key_event.kind != KeyEventKind::Press {
-            return false;
-        }
-        self.keymap.app.transcribe.is_pressed(key_event)
-    }
-
-    fn transcribe_release_key_matches(&self, key_event: KeyEvent) -> bool {
-        if key_event.kind != KeyEventKind::Release {
-            return false;
-        }
-        let press_event = KeyEvent {
-            kind: KeyEventKind::Press,
-            ..key_event
-        };
-        self.keymap.app.transcribe.is_pressed(press_event)
-    }
-
-    fn request_transcribe_capture(&mut self) {
-        let arm_id = self.arm_transcribe_capture();
-        let tx = self.app_event_tx.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(TRANSCRIBE_HOLD_THRESHOLD).await;
-            tx.send(AppEvent::TranscribeHoldElapsed { arm_id });
-        });
-    }
-
-    fn arm_transcribe_capture(&mut self) -> u64 {
-        if let Some(arm) = &self.transcribe_arm {
-            return arm.id;
-        }
-
-        let id = self.transcribe_next_arm_id;
-        self.transcribe_next_arm_id = self.transcribe_next_arm_id.saturating_add(1);
-        self.transcribe_arm = Some(TranscribeArmState { id });
-        id
-    }
-
-    fn cancel_transcribe_arm(&mut self) {
-        self.transcribe_arm = None;
-    }
-
-    pub(super) fn start_armed_transcribe_capture(&mut self, tui: &mut tui::Tui, arm_id: u64) {
-        let Some(arm) = self.transcribe_arm.take() else {
-            return;
-        };
-        if arm.id != arm_id {
-            return;
-        }
-        self.start_transcribe_capture(tui);
-    }
-
-    fn start_transcribe_capture(&mut self, tui: &mut tui::Tui) {
-        if self.transcribe_capture.is_some() {
-            return;
-        }
-
-        let marker_id = self.chat_widget.start_transcribe_marker();
-        let script = self.config.codex_home.join("commands/transcribe-command");
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0);
-        let wav_path = std::env::temp_dir().join(format!(
-            "codex-transcribe-{}-{}.wav",
-            std::process::id(),
-            stamp
-        ));
-
-        let child = std::process::Command::new(script.as_ref())
-            .arg("record-wav-live")
-            .arg(&wav_path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-
-        match child {
-            Ok(child) => {
-                let (spinner_stop_tx, mut spinner_stop_rx) = tokio::sync::oneshot::channel();
-                self.transcribe_capture = Some(TranscribeCaptureState {
-                    child,
-                    wav_path,
-                    started_at: Instant::now(),
-                    marker_id,
-                    spinner_stop_tx,
-                });
-                let tx = self.app_event_tx.clone();
-                tokio::spawn(async move {
-                    let mut frame = 1usize;
-                    loop {
-                        tokio::select! {
-                            _ = tokio::time::sleep(Duration::from_millis(120)) => {},
-                            _ = &mut spinner_stop_rx => break,
-                        }
-                        tx.send(AppEvent::TranscribeMarkerTick { marker_id, frame });
-                        frame = frame.wrapping_add(1);
-                    }
-                });
-                self.chat_widget
-                    .show_transcribe_status("Listening".to_string());
-            }
-            Err(err) => {
-                self.chat_widget.replace_transcribe_marker(
-                    marker_id,
-                    &format!("transcribe failed to start: {err}"),
-                );
-            }
-        }
-        tui.frame_requester().schedule_frame();
-    }
-
-    fn stop_transcribe_capture(&mut self, tui: &mut tui::Tui) {
-        let Some(mut capture) = self.transcribe_capture.take() else {
-            return;
-        };
-        let _ = capture.spinner_stop_tx.send(());
-
-        if capture.started_at.elapsed() < Duration::from_millis(250) {
-            std::thread::sleep(Duration::from_millis(250) - capture.started_at.elapsed());
-        }
-
-        #[cfg(unix)]
-        unsafe {
-            libc::kill(capture.child.id() as i32, libc::SIGINT);
-        }
-        #[cfg(not(unix))]
-        let _ = capture.child.kill();
-        let _ = capture.child.wait();
-
-        self.chat_widget
-            .show_transcribe_status("Transcribing".to_string());
-        tui.frame_requester().schedule_frame();
-
-        let script = self.config.codex_home.join("commands/transcribe-command");
-        let wav_path = capture.wav_path;
-        let marker_id = capture.marker_id;
-        let cleanup_path = wav_path.clone();
-        let tx = self.app_event_tx.clone();
-        tokio::spawn(async move {
-            let result = tokio::task::spawn_blocking(move || {
-                std::process::Command::new(script.as_ref())
-                    .arg("transcribe-file")
-                    .arg(&wav_path)
-                    .output()
-                    .map_err(|err| format!("failed to transcribe: {err}"))
-            })
-            .await
-            .map_err(|err| format!("transcribe task failed: {err}"))
-            .and_then(|output| output);
-
-            let result = match result {
-                Ok(output) if output.status.success() => {
-                    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if text.is_empty() {
-                        Err("transcribe returned empty text".to_string())
-                    } else {
-                        Ok(text)
-                    }
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    Err(if stderr.is_empty() { stdout } else { stderr })
-                }
-                Err(err) => Err(err),
-            };
-            let _ = std::fs::remove_file(&cleanup_path);
-            tx.send(AppEvent::TranscribeCaptureFinished { marker_id, result });
-        });
-    }
-
-    fn terminal_transcribe_fallback_matches(&self, key_event: KeyEvent) -> bool {
-        self.terminal_transcribe_toggle_key_matches(key_event)
-    }
-
-    fn terminal_transcribe_toggle_key_matches(&self, key_event: KeyEvent) -> bool {
-        matches!(key_event.kind, KeyEventKind::Press)
-            && matches!(
-                key_event,
-                KeyEvent {
-                    code: KeyCode::Char('d'),
-                    modifiers: KeyModifiers::CONTROL,
-                    ..
-                }
-            )
-    }
-
     pub(super) fn refresh_status_line(&mut self) {
         self.chat_widget.refresh_status_line();
     }
@@ -500,10 +298,6 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::super::test_support::make_test_app;
-    use crossterm::event::KeyCode;
-    use crossterm::event::KeyEvent;
-    use crossterm::event::KeyEventKind;
-    use crossterm::event::KeyModifiers;
 
     #[tokio::test]
     async fn app_keymap_shortcuts_are_disabled_while_keymap_view_is_active() {
@@ -514,47 +308,5 @@ mod tests {
         app.chat_widget.open_keymap_debug(&keymap);
 
         assert!(!app.app_keymap_shortcuts_available());
-    }
-
-    #[tokio::test]
-    async fn terminal_ctrl_shift_d_fallback_matches_collapsed_ctrl_d_with_draft_text() {
-        let mut app = make_test_app().await;
-        let ctrl_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
-
-        assert!(app.terminal_transcribe_fallback_matches(ctrl_d));
-
-        app.chat_widget.apply_external_edit("draft".to_string());
-        assert!(app.terminal_transcribe_fallback_matches(ctrl_d));
-    }
-
-    #[tokio::test]
-    async fn transcribe_shortcut_stops_on_release_not_second_press() {
-        let app = make_test_app().await;
-        let modifiers = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
-        let press = KeyEvent::new_with_kind(KeyCode::Char('D'), modifiers, KeyEventKind::Press);
-        let repeat = KeyEvent::new_with_kind(KeyCode::Char('D'), modifiers, KeyEventKind::Repeat);
-        let release = KeyEvent::new_with_kind(KeyCode::Char('D'), modifiers, KeyEventKind::Release);
-
-        assert!(!app.transcribe_stop_key_matches(press));
-        assert!(!app.transcribe_stop_key_matches(repeat));
-        assert!(app.transcribe_stop_key_matches(release));
-    }
-
-    #[tokio::test]
-    async fn transcribe_shortcut_tap_only_arms_then_cancels_without_listening() {
-        let mut app = make_test_app().await;
-        let modifiers = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
-        let press = KeyEvent::new_with_kind(KeyCode::Char('D'), modifiers, KeyEventKind::Press);
-        let release = KeyEvent::new_with_kind(KeyCode::Char('D'), modifiers, KeyEventKind::Release);
-
-        assert!(app.transcribe_start_key_matches(press));
-        let arm_id = app.arm_transcribe_capture();
-        assert_eq!(Some(arm_id), app.transcribe_arm.as_ref().map(|arm| arm.id));
-        assert!(app.transcribe_capture.is_none());
-
-        assert!(app.transcribe_release_key_matches(release));
-        app.cancel_transcribe_arm();
-        assert!(app.transcribe_arm.is_none());
-        assert!(app.transcribe_capture.is_none());
     }
 }

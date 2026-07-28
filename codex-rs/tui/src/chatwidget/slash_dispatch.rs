@@ -6,9 +6,7 @@
 //! slash-command recall follows the same submitted-input rule as ordinary text.
 
 use super::*;
-use crate::app_event::SoundMenu;
 use crate::app_event::ThreadGoalSetMode;
-use crate::app_event::TranscribeMenu;
 use crate::bottom_pane::prompt_args::parse_slash_name;
 use crate::bottom_pane::slash_commands::BuiltinCommandFlags;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
@@ -133,6 +131,13 @@ impl ChatWidget {
             .send(AppEvent::RawOutputModeChanged { enabled });
     }
 
+    fn slash_command_blocked_by_active_task(&self, cmd: SlashCommand) -> bool {
+        (!cmd.available_during_task() && self.bottom_pane.is_task_running())
+            || (cmd == SlashCommand::Resume
+                && (self.input_queue.user_turn_pending_start
+                    || self.turn_lifecycle.agent_turn_running))
+    }
+
     pub(super) fn dispatch_command(&mut self, cmd: SlashCommand) {
         if !self.ensure_slash_command_allowed_in_side_conversation(cmd) {
             return;
@@ -140,7 +145,7 @@ impl ChatWidget {
         if !self.ensure_side_command_allowed_outside_review(cmd) {
             return;
         }
-        if !cmd.available_during_task() && self.bottom_pane.is_task_running() {
+        if self.slash_command_blocked_by_active_task(cmd) {
             let message = format!(
                 "'/{}' is disabled while a task is in progress.",
                 cmd.command()
@@ -166,7 +171,7 @@ impl ChatWidget {
                 self.request_redraw();
             }
             SlashCommand::New => {
-                self.app_event_tx.send(AppEvent::NewSession);
+                self.app_event_tx.send(AppEvent::NewSession { name: None });
             }
             SlashCommand::Archive => {
                 self.bottom_pane.show_selection_view(SelectionViewParams {
@@ -226,7 +231,7 @@ impl ChatWidget {
                 self.request_redraw();
             }
             SlashCommand::Clear => {
-                self.app_event_tx.send(AppEvent::ClearUi);
+                self.app_event_tx.send(AppEvent::ClearUi { name: None });
             }
             SlashCommand::Resume => {
                 self.app_event_tx.send(AppEvent::OpenResumePicker);
@@ -249,6 +254,10 @@ impl ChatWidget {
                 self.submit_user_message(INIT_PROMPT.to_string().into());
             }
             SlashCommand::Compact => {
+                if self.blocks_direct_input {
+                    self.add_error_message(PARENT_OWNED_INPUT_MESSAGE.to_string());
+                    return;
+                }
                 self.clear_token_usage();
                 if !self.bottom_pane.is_task_running() {
                     self.bottom_pane.set_task_running(/*running*/ true);
@@ -265,9 +274,11 @@ impl ChatWidget {
             }
             SlashCommand::Model => {
                 self.open_model_popup();
+                self.defer_input_until_settings_applied();
             }
             SlashCommand::Personality => {
                 self.open_personality_popup();
+                self.defer_input_until_settings_applied();
             }
             SlashCommand::Plan => {
                 self.apply_plan_slash_command();
@@ -295,6 +306,7 @@ impl ChatWidget {
             }
             SlashCommand::Permissions => {
                 self.open_permissions_popup();
+                self.defer_input_until_settings_applied();
             }
             SlashCommand::Vim => {
                 self.toggle_vim_mode_and_notify();
@@ -436,15 +448,9 @@ impl ChatWidget {
                 }
             }
             SlashCommand::Usage => {
-                if self.ensure_token_activity_command_available() {
-                    self.add_token_activity_output(tokens::TokenActivityView::Daily);
+                if self.ensure_usage_command_available() {
+                    self.open_usage_menu();
                 }
-            }
-            SlashCommand::TranscribeCommand => {
-                self.open_transcribe_popup(TranscribeMenu::Root);
-            }
-            SlashCommand::Sound => {
-                self.open_sound_popup(SoundMenu::Root);
             }
             SlashCommand::Ide => {
                 self.handle_ide_command();
@@ -553,7 +559,7 @@ impl ChatWidget {
             self.dispatch_command(cmd);
             return;
         }
-        if !cmd.available_during_task() && self.bottom_pane.is_task_running() {
+        if self.slash_command_blocked_by_active_task(cmd) {
             let message = format!(
                 "'/{}' is disabled while a task is in progress.",
                 cmd.command()
@@ -666,7 +672,7 @@ impl ChatWidget {
         let trimmed = args.trim();
         match cmd {
             SlashCommand::Usage => {
-                if self.ensure_token_activity_command_available() {
+                if self.ensure_usage_command_available() {
                     match tokens::TokenActivityView::parse(trimmed) {
                         Some(view) => self.add_token_activity_output(view),
                         None => self.add_error_message(
@@ -707,12 +713,6 @@ impl ChatWidget {
                 }
                 _ => self.add_error_message(RAW_USAGE.to_string()),
             },
-            SlashCommand::TranscribeCommand if trimmed.is_empty() => {
-                self.open_transcribe_popup(TranscribeMenu::Root);
-            }
-            SlashCommand::TranscribeCommand => {
-                self.handle_transcribe_command(trimmed);
-            }
             SlashCommand::Rename if !trimmed.is_empty() => {
                 if !self.ensure_thread_rename_allowed() {
                     return;
@@ -724,6 +724,16 @@ impl ChatWidget {
                     return;
                 };
                 self.app_event_tx.set_thread_name(name);
+            }
+            SlashCommand::New if !trimmed.is_empty() => {
+                self.app_event_tx.send(AppEvent::NewSession {
+                    name: Some(trimmed.to_string()),
+                });
+            }
+            SlashCommand::Clear if !trimmed.is_empty() => {
+                self.app_event_tx.send(AppEvent::ClearUi {
+                    name: Some(trimmed.to_string()),
+                });
             }
             SlashCommand::Plan if !trimmed.is_empty() => {
                 if !self.apply_plan_slash_command() {
@@ -739,7 +749,8 @@ impl ChatWidget {
                 );
                 if self.is_session_configured() {
                     self.reasoning_buffer.clear();
-                    self.full_reasoning_buffer.clear();
+                    self.reasoning_header = None;
+                    self.reasoning_summary_parts.clear();
                     self.set_status_header(String::from("Working"));
                     self.submit_user_message(user_message);
                 } else {
@@ -1031,7 +1042,7 @@ impl ChatWidget {
         }
     }
 
-    fn ensure_token_activity_command_available(&mut self) -> bool {
+    fn ensure_usage_command_available(&mut self) -> bool {
         if self.has_codex_backend_auth {
             return true;
         }
@@ -1047,8 +1058,6 @@ impl ChatWidget {
             SlashCommand::Ide
             | SlashCommand::Status
             | SlashCommand::Usage
-            | SlashCommand::Sound
-            | SlashCommand::TranscribeCommand
             | SlashCommand::DebugConfig
             | SlashCommand::Ps
             | SlashCommand::Stop

@@ -9,6 +9,12 @@
             "null"
           ]
         },
+        "errorType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "failureStage": {
           "type": "string"
         },
@@ -19,6 +25,12 @@
           "type": "string"
         },
         "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subErrorType": {
           "type": [
             "string",
             "null"
@@ -96,6 +108,7 @@
         "SUBAGENTS",
         "HOOKS",
         "COMMANDS",
+        "MEMORY",
         "SESSIONS"
       ],
       "type": "string"

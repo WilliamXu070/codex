@@ -29,6 +29,7 @@ use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::WidgetRef;
+use std::borrow::Cow;
 use std::cell::Ref;
 use std::cell::RefCell;
 use std::ops::Range;
@@ -75,11 +76,22 @@ fn split_word_pieces(run: &str) -> Vec<(usize, &str)> {
     pieces
 }
 
+/// Replace tabs with the one-column representation used for rendering and wrapping.
+///
+/// A tab and a space are both one byte, so ranges computed from this text still index the original
+/// editable text.
+fn text_for_display(text: &str) -> Cow<'_, str> {
+    if text.contains('\t') {
+        Cow::Owned(text.replace('\t', " "))
+    } else {
+        Cow::Borrowed(text)
+    }
+}
+
 #[derive(Debug, Clone)]
 struct TextElement {
     id: u64,
     range: Range<usize>,
-    protected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,7 +221,6 @@ impl TextArea {
                 self.elements.push(TextElement {
                     id,
                     range: start..end,
-                    protected: false,
                 });
             }
             self.elements.sort_by_key(|e| e.range.start);
@@ -358,9 +369,6 @@ impl TextArea {
 
     pub fn replace_range(&mut self, range: std::ops::Range<usize>, text: &str) {
         let range = self.expand_range_to_element_boundaries(range);
-        if self.range_intersects_protected_element(&range) {
-            return;
-        }
         self.replace_range_raw(range, text);
     }
 
@@ -1094,9 +1102,6 @@ impl TextArea {
 
     fn kill_range_with_kind(&mut self, range: Range<usize>, kind: KillBufferKind) {
         let range = self.expand_range_to_element_boundaries(range);
-        if self.range_intersects_protected_element(&range) {
-            return;
-        }
         if range.start >= range.end {
             return;
         }
@@ -1390,6 +1395,27 @@ impl TextArea {
             .collect()
     }
 
+    /// Iterates borrowed atomic element ranges in ascending start order.
+    pub(crate) fn text_element_ranges(&self) -> impl Iterator<Item = &Range<usize>> {
+        self.elements.iter().map(|element| &element.range)
+    }
+
+    /// Iterates ordered atomic element ranges that overlap `range`.
+    ///
+    /// Elements ending exactly at the range start or starting exactly at its end are excluded.
+    pub(crate) fn text_element_ranges_overlapping(
+        &self,
+        range: Range<usize>,
+    ) -> impl Iterator<Item = &Range<usize>> {
+        let first = self
+            .elements
+            .partition_point(|element| element.range.end <= range.start);
+        self.elements[first..]
+            .iter()
+            .take_while(move |element| element.range.start < range.end)
+            .map(|element| &element.range)
+    }
+
     pub(crate) fn element_id_for_exact_range(&self, range: Range<usize>) -> Option<u64> {
         self.elements
             .iter()
@@ -1466,87 +1492,19 @@ impl TextArea {
         true
     }
 
-    pub fn replace_element_payload_by_id(&mut self, id: u64, new: &str) -> bool {
-        let Some(idx) = self.elements.iter().position(|e| e.id == id) else {
-            return false;
-        };
-
-        let range = self.elements[idx].range.clone();
-        let start = range.start;
-        let end = range.end;
-        if start > end || end > self.text.len() {
-            return false;
-        }
-
-        let removed_len = end - start;
-        let inserted_len = new.len();
-        let diff = inserted_len as isize - removed_len as isize;
-
-        self.text.replace_range(range, new);
-        self.wrap_cache.replace(None);
-        self.preferred_col = None;
-        self.elements[idx].range = start..(start + inserted_len);
-
-        if diff != 0 {
-            for (j, e) in self.elements.iter_mut().enumerate() {
-                if j == idx || e.range.end <= start {
-                    continue;
-                }
-                if e.range.start >= end {
-                    e.range.start = e.range.start.saturating_add_signed(diff);
-                    e.range.end = e.range.end.saturating_add_signed(diff);
-                }
-            }
-        }
-
-        self.cursor_pos = if self.cursor_pos < start {
-            self.cursor_pos
-        } else if self.cursor_pos <= end {
-            start + inserted_len
-        } else {
-            self.cursor_pos.saturating_add_signed(diff)
-        };
-        self.cursor_pos = self.clamp_pos_to_nearest_boundary(self.cursor_pos);
-        self.elements.sort_by_key(|e| e.range.start);
-
-        true
-    }
-
-    pub fn replace_element_with_text_by_id(&mut self, id: u64, text: &str) -> bool {
-        let Some(idx) = self.elements.iter().position(|e| e.id == id) else {
-            return false;
-        };
-        let range = self.elements[idx].range.clone();
-        self.elements.remove(idx);
-        self.replace_range_raw(range, text);
-        true
-    }
-
     pub fn insert_element(&mut self, text: &str) -> u64 {
-        self.insert_element_inner(text, /*protected*/ false)
-    }
-
-    pub fn insert_protected_element(&mut self, text: &str) -> u64 {
-        self.insert_element_inner(text, /*protected*/ true)
-    }
-
-    fn insert_element_inner(&mut self, text: &str, protected: bool) -> u64 {
         let start = self.clamp_pos_for_insertion(self.cursor_pos);
         self.insert_str_at(start, text);
         let end = start + text.len();
-        let id = self.add_element(start..end, protected);
+        let id = self.add_element(start..end);
         // Place cursor at end of inserted element
         self.set_cursor(end);
         id
     }
 
-    fn add_element(&mut self, range: Range<usize>, protected: bool) -> u64 {
+    fn add_element(&mut self, range: Range<usize>) -> u64 {
         let id = self.next_element_id();
-        self.elements.push(TextElement {
-            id,
-            range,
-            protected,
-        });
+        self.elements.push(TextElement { id, range });
         self.elements.sort_by_key(|e| e.range.start);
         id
     }
@@ -1575,7 +1533,7 @@ impl TextArea {
         {
             return None;
         }
-        let id = self.add_element(start..end, /*protected*/ false);
+        let id = self.add_element(start..end);
         Some(id)
     }
 
@@ -1676,12 +1634,6 @@ impl TextArea {
             }
         }
         range
-    }
-
-    fn range_intersects_protected_element(&self, range: &Range<usize>) -> bool {
-        self.elements
-            .iter()
-            .any(|e| e.protected && e.range.start < range.end && e.range.end > range.start)
     }
 
     fn shift_elements(&mut self, at: usize, removed: usize, inserted: usize) {
@@ -1905,8 +1857,9 @@ impl TextArea {
                 None => true,
             };
             if needs_recalc {
+                let display_text = text_for_display(&self.text);
                 let lines = crate::wrapping::wrap_ranges(
-                    &self.text,
+                    display_text.as_ref(),
                     Options::new(width as usize).wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
                 );
                 *cache = Some(WrapCache { width, lines });
@@ -2025,7 +1978,12 @@ impl TextArea {
             let line_range = r.start..r.end - 1;
             buf.set_style(Rect::new(area.x, y, area.width, 1), base_style);
             // Draw base line with the provided style.
-            buf.set_string(area.x, y, &self.text[line_range.clone()], base_style);
+            buf.set_string(
+                area.x,
+                y,
+                text_for_display(&self.text[line_range.clone()]),
+                base_style,
+            );
 
             // Overlay styled segments for elements that intersect this line.
             for elem in &self.elements {
@@ -2038,7 +1996,7 @@ impl TextArea {
                 let styled = &self.text[overlap_start..overlap_end];
                 let x_off = self.text[line_range.start..overlap_start].width() as u16;
                 let style = base_style.fg(Color::Cyan);
-                buf.set_string(area.x + x_off, y, styled, style);
+                buf.set_string(area.x + x_off, y, text_for_display(styled), style);
             }
 
             // Overlay render-only highlight ranges last so transient search highlighting remains
@@ -2051,7 +2009,7 @@ impl TextArea {
                 }
                 let highlighted = &self.text[overlap_start..overlap_end];
                 let x_off = self.text[line_range.start..overlap_start].width() as u16;
-                buf.set_string(area.x + x_off, y, highlighted, *style);
+                buf.set_string(area.x + x_off, y, text_for_display(highlighted), *style);
             }
         }
     }
@@ -2235,26 +2193,6 @@ mod tests {
 
         assert_eq!(t.text(), "ab");
         assert_eq!(t.cursor(), elem_start);
-    }
-
-    #[test]
-    fn protected_element_resists_delete_and_replaces_by_id() {
-        let mut t = TextArea::new();
-        t.insert_str("before ");
-        let marker_id = t.insert_protected_element("[transcribing -]");
-        t.insert_str(" after");
-
-        let marker_start = "before ".len();
-        t.set_cursor(marker_start + "[transcribing -]".len());
-        t.delete_backward(/*n*/ 1);
-        assert_eq!(t.text(), "before [transcribing -] after");
-
-        t.set_cursor(marker_start);
-        t.delete_forward(/*n*/ 1);
-        assert_eq!(t.text(), "before [transcribing -] after");
-
-        assert!(t.replace_element_with_text_by_id(marker_id, "hello"));
-        assert_eq!(t.text(), "before hello after");
     }
 
     #[test]
@@ -3536,6 +3474,48 @@ mod tests {
                 .add_modifier
                 .contains(ratatui::style::Modifier::REVERSED)
         );
+    }
+
+    #[test]
+    fn tabs_render_as_spaces_and_align_with_cursor_snapshot() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let text = "❌\tSimulation\tformatter[large/dataset.py]\t7.4 ms\t8.1 ms\t-8.29%";
+        let mut t = ta_with(text);
+        t.set_cursor(text.len());
+
+        let mut terminal = Terminal::new(TestBackend::new(/*width*/ 100, /*height*/ 1)).unwrap();
+        terminal
+            .draw(|frame| {
+                ratatui::widgets::WidgetRef::render_ref(&(&t), frame.area(), frame.buffer_mut());
+            })
+            .unwrap();
+
+        let cursor = t.cursor_pos(terminal.backend().buffer().area).unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(cursor.0 - 1, cursor.1)].symbol(),
+            "%"
+        );
+        insta::assert_snapshot!(
+            "textarea_tabs_render_as_spaces_and_align_with_cursor",
+            format!("cursor: {cursor:?}\n{}", terminal.backend())
+        );
+    }
+
+    #[test]
+    fn tabs_wrap_at_their_rendered_width() {
+        let text = "1234\t5";
+        let mut t = ta_with(text);
+        t.set_cursor(text.len());
+        let area = Rect::new(0, 0, /*width*/ 5, /*height*/ 2);
+        let mut buf = Buffer::empty(area);
+
+        ratatui::widgets::WidgetRef::render_ref(&(&t), area, &mut buf);
+
+        assert_eq!(t.desired_height(area.width), 2);
+        assert_eq!(t.cursor_pos(area), Some((1, 1)));
+        assert_eq!(buf[(0, 1)].symbol(), "5");
     }
 
     #[test]

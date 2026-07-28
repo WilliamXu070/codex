@@ -8,6 +8,7 @@ fn notify_mcp_status(chat: &mut ChatWidget, name: &str, status: McpServerStartup
             name: name.to_string(),
             status,
             error: None,
+            failure_reason: None,
         }),
         /*replay_kind*/ None,
     );
@@ -20,6 +21,7 @@ fn notify_mcp_status_error(chat: &mut ChatWidget, name: &str, error: &str) {
             name: name.to_string(),
             status: McpServerStartupState::Failed,
             error: Some(error.to_string()),
+            failure_reason: None,
         }),
         /*replay_kind*/ None,
     );
@@ -51,6 +53,7 @@ async fn mcp_startup_ignores_status_for_other_thread() {
                 status,
                 error: matches!(status, McpServerStartupState::Failed)
                     .then(|| "sentry is not logged in".to_string()),
+                failure_reason: None,
             }),
             /*replay_kind*/ None,
         );
@@ -296,6 +299,8 @@ async fn mcp_startup_complete_preserves_review_status() {
     chat.on_guardian_assessment(GuardianAssessmentEvent {
         id: "guardian-1".to_string(),
         target_item_id: Some("guardian-target-1".to_string()),
+        plugin_id: None,
+        script_path: None,
         turn_id: "turn-1".to_string(),
         started_at_ms: 0,
         completed_at_ms: None,

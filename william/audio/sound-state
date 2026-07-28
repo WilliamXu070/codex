@@ -1,7 +1,0 @@
-typeset -g CODEX_SOUND_ENABLED=1
-typeset -g CODEX_SOUND_VOLUME=1.00
-typeset -g CODEX_SOUND_PROFILE=normal
-typeset -g CODEX_SOUND_COMPLETION_DELAY=0
-typeset -g CODEX_SOUND_COMPLETION_FILE=''
-typeset -g CODEX_SOUND_APPROVAL_FILE=/Users/williamxu/Desktop/Projects/codex/william/audio/wilhelm-scream.mp3
-typeset -g CODEX_SOUND_DIR=''

@@ -60,6 +60,8 @@ yarn-error.log*
 # ci
 .vercel/
 .netlify/
+/.tmp/sdk-ci/
+/upstream-rusty-v8/
 
 # patches
 apply_patch/
@@ -84,10 +86,6 @@ yarn.lock
 package.json-e
 session.ts-e
 CHANGELOG.ignore.md
-apps/codex-electron/release/
-apps/codex-electron/release/**
-**/win-unpacked/
-*.exe
 
 # nix related
 .direnv
