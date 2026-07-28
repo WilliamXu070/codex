@@ -526,8 +526,19 @@ def run_codex_agent(
         "exec",
         "--ephemeral",
         "--json",
-        "--sandbox",
-        "workspace-write",
+        "-c",
+        'default_permissions="release_agent"',
+        "-c",
+        (
+            'permissions.release_agent.filesystem={'
+            '":minimal"="read",'
+            '":tmpdir"="write",'
+            '":slash_tmp"="write",'
+            '":workspace_roots"={"."="write",".git"="write"}'
+            "}"
+        ),
+        "-c",
+        'approval_policy="never"',
         "-C",
         str(workspace),
         "-o",
