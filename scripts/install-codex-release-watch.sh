@@ -2,74 +2,84 @@
 set -euo pipefail
 
 CODEX_ROOT="${CODEX_ROOT:-/Users/williamxu/Desktop/Projects/codex}"
-UPDATE_SCRIPT="${CODEX_ROOT}/scripts/update-codex-local.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_AGENT="${SCRIPT_DIR}/codex-release-agent.py"
+SOURCE_TRIGGER="${SCRIPT_DIR}/update-codex-local.sh"
 LAUNCH_LABEL="com.williamxu.codex-release-watch"
-LAUNCH_DIR="$HOME/Library/LaunchAgents"
-PLIST_PATH="$LAUNCH_DIR/${LAUNCH_LABEL}.plist"
-LOG_DIR="$HOME/Library/Logs/codex-release-watch"
-LAUNCHD_RUNTIME="/private/tmp/codex-release-watch-runner.sh"
+LAUNCH_DIR="${HOME}/Library/LaunchAgents"
+PLIST_PATH="${LAUNCH_DIR}/${LAUNCH_LABEL}.plist"
+LOG_DIR="${HOME}/Library/Logs/codex-release-watch"
+RUNTIME_DIR="${HOME}/.local/lib/codex"
+AGENT_RUNTIME="${RUNTIME_DIR}/codex-release-agent.py"
+TRIGGER_RUNTIME="${HOME}/.local/bin/codex-release-watch-runner.sh"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-900}"
+CHANNEL="${CODEX_RELEASE_CHANNEL:-all}"
 ACTION="install"
 LAUNCHD_PATH_ENV="/Users/williamxu/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-LAUNCHD_WORKING_DIR="/tmp"
 
 usage() {
-  cat <<'USAGE'
-Usage: install-codex-release-watch.sh [install|uninstall|status] [--interval N]
+  cat <<'EOF'
+Usage: install-codex-release-watch.sh [install|uninstall|status] [options]
 
-  install   create and load launch agent (default)
-  uninstall remove and unload launch agent
-  status    show launch agent status
+  install                 Install the lightweight GitHub release check.
+  uninstall               Unload and remove it.
+  status                  Show launchd and release-ledger status.
+  --interval SECONDS      Check interval (default: 900).
+  --channel CHANNEL       all, stable, or prerelease (default: all).
 
-Examples:
-  ./install-codex-release-watch.sh
-  ./install-codex-release-watch.sh install --interval 900
-  ./install-codex-release-watch.sh uninstall
-
-Environment:
-  CODEX_ROOT:      defaults to /Users/williamxu/Desktop/Projects/codex
-  INTERVAL_SECONDS: polling interval in seconds
-USAGE
+The scheduled check does not invoke Codex for known tags. The SQLite release
+ledger allows exactly one Codex agent attempt per newly discovered tag.
+EOF
 }
-
-if [[ "${1-}" == "--help" || "${1-}" == "-h" ]]; then
-  usage
-  exit 0
-fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     install|uninstall|status)
       ACTION="$1"
-      ;;
-    --interval)
-      if [[ -z "${2-}" ]]; then
-        echo "--interval requires seconds" >&2
-        exit 1
-      fi
-      INTERVAL_SECONDS="$2"
       shift
       ;;
-    *)
-      echo "Unknown argument: $1" >&2
+    --interval)
+      INTERVAL_SECONDS="${2:-}"
+      [[ "$INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || {
+        echo "--interval requires integer seconds" >&2
+        exit 1
+      }
+      shift 2
+      ;;
+    --channel)
+      CHANNEL="${2:-}"
+      [[ "$CHANNEL" == "all" || "$CHANNEL" == "stable" || "$CHANNEL" == "prerelease" ]] || {
+        echo "--channel must be all, stable, or prerelease" >&2
+        exit 1
+      }
+      shift 2
+      ;;
+    -h|--help)
       usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      usage >&2
       exit 1
       ;;
   esac
-  shift
- done
-
-mkdir -p "$LOG_DIR" "$LAUNCH_DIR"
+done
 
 case "$ACTION" in
   install)
-    if [[ ! -r "$UPDATE_SCRIPT" ]]; then
-      echo "Missing readable updater: $UPDATE_SCRIPT" >&2
+    [[ -r "$SOURCE_AGENT" ]] || {
+      echo "missing release agent: $SOURCE_AGENT" >&2
       exit 1
-    fi
-    mkdir -p "$(dirname "$LAUNCHD_RUNTIME")"
-    cp "$UPDATE_SCRIPT" "$LAUNCHD_RUNTIME"
-    chmod +x "$LAUNCHD_RUNTIME"
+    }
+    [[ -r "$SOURCE_TRIGGER" ]] || {
+      echo "missing release trigger: $SOURCE_TRIGGER" >&2
+      exit 1
+    }
+    mkdir -p "$LAUNCH_DIR" "$LOG_DIR" "$RUNTIME_DIR" "$(dirname "$TRIGGER_RUNTIME")"
+    cp "$SOURCE_AGENT" "$AGENT_RUNTIME"
+    cp "$SOURCE_TRIGGER" "$TRIGGER_RUNTIME"
+    chmod +x "$AGENT_RUNTIME" "$TRIGGER_RUNTIME"
 
     cat > "$PLIST_PATH" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -80,11 +90,15 @@ case "$ACTION" in
   <string>${LAUNCH_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${LAUNCHD_RUNTIME}</string>
+    <string>${TRIGGER_RUNTIME}</string>
     <string>--watch</string>
+    <string>--channel</string>
+    <string>${CHANNEL}</string>
+    <string>--delivery</string>
+    <string>launchd-release-check</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${LAUNCHD_WORKING_DIR}</string>
+  <string>/tmp</string>
   <key>StartInterval</key>
   <integer>${INTERVAL_SECONDS}</integer>
   <key>RunAtLoad</key>
@@ -95,6 +109,10 @@ case "$ACTION" in
   <string>${LOG_DIR}/stderr.log</string>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>CODEX_ROOT</key>
+    <string>${CODEX_ROOT}</string>
+    <key>CODEX_RELEASE_AGENT_SCRIPT</key>
+    <string>${AGENT_RUNTIME}</string>
     <key>PATH</key>
     <string>${LAUNCHD_PATH_ENV}</string>
   </dict>
@@ -102,43 +120,31 @@ case "$ACTION" in
 </plist>
 PLIST
 
-    if launchctl list "${LAUNCH_LABEL}" >/dev/null 2>&1; then
+    if launchctl list "$LAUNCH_LABEL" >/dev/null 2>&1; then
       launchctl unload -w "$PLIST_PATH" || true
     fi
     launchctl load -w "$PLIST_PATH"
-    echo "Installed and enabled launch agent: ${LAUNCH_LABEL}"
+    echo "installed: $LAUNCH_LABEL"
+    echo "channel: $CHANNEL"
     echo "interval: ${INTERVAL_SECONDS}s"
-    echo "plist: ${PLIST_PATH}"
-    echo "update script: ${LAUNCHD_RUNTIME} --watch"
+    echo "agent ledger: ${RUNTIME_DIR}/release-agent/state.sqlite3"
     ;;
-
   uninstall)
-    if launchctl list "${LAUNCH_LABEL}" >/dev/null 2>&1; then
+    if launchctl list "$LAUNCH_LABEL" >/dev/null 2>&1; then
       launchctl unload -w "$PLIST_PATH" || true
     fi
-    rm -f "$PLIST_PATH"
-    rm -f "$LAUNCHD_RUNTIME"
-    echo "Uninstalled launch agent: ${LAUNCH_LABEL}"
+    rm -f "$PLIST_PATH" "$TRIGGER_RUNTIME" "$AGENT_RUNTIME"
+    echo "uninstalled: $LAUNCH_LABEL"
     ;;
-
   status)
-    if launchctl list "${LAUNCH_LABEL}" >/dev/null 2>&1; then
-      launchctl print "gui/$(id -u)/${LAUNCH_LABEL}" 2>/dev/null || launchctl list "$LAUNCH_LABEL"
+    if launchctl list "$LAUNCH_LABEL" >/dev/null 2>&1; then
+      launchctl print "gui/$(id -u)/${LAUNCH_LABEL}" 2>/dev/null ||
+        launchctl list "$LAUNCH_LABEL"
     else
-      echo "${LAUNCH_LABEL} is not loaded"
-    fi
-    if [[ -f "$PLIST_PATH" ]]; then
-      echo "plist exists: yes"
-    else
-      echo "plist exists: no"
+      echo "$LAUNCH_LABEL is not loaded"
     fi
     echo "out log: ${LOG_DIR}/stdout.log"
     echo "err log: ${LOG_DIR}/stderr.log"
-    ;;
-
-  *)
-    echo "Unknown action: ${ACTION}" >&2
-    usage
-    exit 1
+    echo "agent ledger: ${RUNTIME_DIR}/release-agent/state.sqlite3"
     ;;
 esac
