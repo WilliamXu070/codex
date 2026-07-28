@@ -92,6 +92,7 @@ fn text_for_display(text: &str) -> Cow<'_, str> {
 struct TextElement {
     id: u64,
     range: Range<usize>,
+    protected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +222,7 @@ impl TextArea {
                 self.elements.push(TextElement {
                     id,
                     range: start..end,
+                    protected: false,
                 });
             }
             self.elements.sort_by_key(|e| e.range.start);
@@ -369,6 +371,9 @@ impl TextArea {
 
     pub fn replace_range(&mut self, range: std::ops::Range<usize>, text: &str) {
         let range = self.expand_range_to_element_boundaries(range);
+        if self.range_intersects_protected_element(&range) {
+            return;
+        }
         self.replace_range_raw(range, text);
     }
 
@@ -1102,6 +1107,9 @@ impl TextArea {
 
     fn kill_range_with_kind(&mut self, range: Range<usize>, kind: KillBufferKind) {
         let range = self.expand_range_to_element_boundaries(range);
+        if self.range_intersects_protected_element(&range) {
+            return;
+        }
         if range.start >= range.end {
             return;
         }
@@ -1492,19 +1500,87 @@ impl TextArea {
         true
     }
 
+    pub fn replace_element_payload_by_id(&mut self, id: u64, new: &str) -> bool {
+        let Some(idx) = self.elements.iter().position(|e| e.id == id) else {
+            return false;
+        };
+
+        let range = self.elements[idx].range.clone();
+        let start = range.start;
+        let end = range.end;
+        if start > end || end > self.text.len() {
+            return false;
+        }
+
+        let removed_len = end - start;
+        let inserted_len = new.len();
+        let diff = inserted_len as isize - removed_len as isize;
+
+        self.text.replace_range(range, new);
+        self.wrap_cache.replace(None);
+        self.preferred_col = None;
+        self.elements[idx].range = start..(start + inserted_len);
+
+        if diff != 0 {
+            for (j, e) in self.elements.iter_mut().enumerate() {
+                if j == idx || e.range.end <= start {
+                    continue;
+                }
+                if e.range.start >= end {
+                    e.range.start = e.range.start.saturating_add_signed(diff);
+                    e.range.end = e.range.end.saturating_add_signed(diff);
+                }
+            }
+        }
+
+        self.cursor_pos = if self.cursor_pos < start {
+            self.cursor_pos
+        } else if self.cursor_pos <= end {
+            start + inserted_len
+        } else {
+            self.cursor_pos.saturating_add_signed(diff)
+        };
+        self.cursor_pos = self.clamp_pos_to_nearest_boundary(self.cursor_pos);
+        self.elements.sort_by_key(|e| e.range.start);
+
+        true
+    }
+
+    pub fn replace_element_with_text_by_id(&mut self, id: u64, text: &str) -> bool {
+        let Some(idx) = self.elements.iter().position(|e| e.id == id) else {
+            return false;
+        };
+        let range = self.elements[idx].range.clone();
+        self.elements.remove(idx);
+        self.replace_range_raw(range, text);
+        true
+    }
+
     pub fn insert_element(&mut self, text: &str) -> u64 {
+        self.insert_element_inner(text, /*protected*/ false)
+    }
+
+    pub fn insert_protected_element(&mut self, text: &str) -> u64 {
+        self.insert_element_inner(text, /*protected*/ true)
+    }
+
+    fn insert_element_inner(&mut self, text: &str, protected: bool) -> u64 {
         let start = self.clamp_pos_for_insertion(self.cursor_pos);
         self.insert_str_at(start, text);
         let end = start + text.len();
-        let id = self.add_element(start..end);
+        let id = self.add_element(start..end, protected);
         // Place cursor at end of inserted element
         self.set_cursor(end);
         id
     }
 
-    fn add_element(&mut self, range: Range<usize>) -> u64 {
+    fn add_element(&mut self, range: Range<usize>, protected: bool) -> u64 {
         let id = self.next_element_id();
-        self.elements.push(TextElement { id, range });
+        self.elements.push(TextElement {
+            id,
+            range,
+            protected,
+        });
         self.elements.sort_by_key(|e| e.range.start);
         id
     }
@@ -1533,7 +1609,7 @@ impl TextArea {
         {
             return None;
         }
-        let id = self.add_element(start..end);
+        let id = self.add_element(start..end, /*protected*/ false);
         Some(id)
     }
 
@@ -1634,6 +1710,12 @@ impl TextArea {
             }
         }
         range
+    }
+
+    fn range_intersects_protected_element(&self, range: &Range<usize>) -> bool {
+        self.elements
+            .iter()
+            .any(|e| e.protected && e.range.start < range.end && e.range.end > range.start)
     }
 
     fn shift_elements(&mut self, at: usize, removed: usize, inserted: usize) {
@@ -2193,6 +2275,26 @@ mod tests {
 
         assert_eq!(t.text(), "ab");
         assert_eq!(t.cursor(), elem_start);
+    }
+
+    #[test]
+    fn protected_element_resists_delete_and_replaces_by_id() {
+        let mut t = TextArea::new();
+        t.insert_str("before ");
+        let marker_id = t.insert_protected_element("[transcribing -]");
+        t.insert_str(" after");
+
+        let marker_start = "before ".len();
+        t.set_cursor(marker_start + "[transcribing -]".len());
+        t.delete_backward(/*n*/ 1);
+        assert_eq!(t.text(), "before [transcribing -] after");
+
+        t.set_cursor(marker_start);
+        t.delete_forward(/*n*/ 1);
+        assert_eq!(t.text(), "before [transcribing -] after");
+
+        assert!(t.replace_element_with_text_by_id(marker_id, "hello"));
+        assert_eq!(t.text(), "before hello after");
     }
 
     #[test]

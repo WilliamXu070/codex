@@ -155,11 +155,14 @@ mod scroll_state;
 mod selection_popup_common;
 mod selection_row_layout;
 mod selection_tabs;
+mod settings_text_input_view;
 mod textarea;
 mod unified_exec_footer;
 pub(crate) use feedback_view::FeedbackNoteView;
 pub(crate) use hooks_browser_view::HooksBrowserView;
 pub(crate) use selection_tabs::SelectionTab;
+pub(crate) use settings_text_input_view::SettingsTextInputView;
+pub(crate) use settings_text_input_view::SettingsTextInputViewParams;
 
 /// How long the "press again to quit" hint stays visible.
 ///
@@ -907,6 +910,28 @@ impl BottomPane {
         self.request_redraw();
     }
 
+    pub(crate) fn start_transcribe_marker(&mut self) -> u64 {
+        let marker_id = self.composer.start_transcribe_marker();
+        self.request_redraw();
+        marker_id
+    }
+
+    pub(crate) fn update_transcribe_marker(&mut self, marker_id: u64, samples: &[f32]) -> bool {
+        let updated = self.composer.update_transcribe_marker(marker_id, samples);
+        if updated {
+            self.request_redraw();
+        }
+        updated
+    }
+
+    pub(crate) fn replace_transcribe_marker(&mut self, marker_id: u64, text: &str) -> bool {
+        let replaced = self.composer.replace_transcribe_marker(marker_id, text);
+        if replaced {
+            self.request_redraw();
+        }
+        replaced
+    }
+
     pub(crate) fn set_footer_hint_override(&mut self, items: Option<Vec<(String, String)>>) {
         self.composer.set_footer_hint_override(items);
         self.request_redraw();
@@ -1406,6 +1431,19 @@ impl BottomPane {
 
     pub(crate) fn show_view(&mut self, view: Box<dyn BottomPaneView>) {
         self.push_view(view);
+    }
+
+    pub(crate) fn show_settings_text_input(&mut self, params: SettingsTextInputViewParams) {
+        let view = SettingsTextInputView::new(
+            params,
+            self.app_event_tx.clone(),
+            self.frame_requester.clone(),
+            &self.keymap,
+            self.has_input_focus,
+            self.enhanced_keys_supported,
+            self.disable_paste_burst,
+        );
+        self.show_view(Box::new(view));
     }
 
     /// Called when the agent requests user approval.

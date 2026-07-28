@@ -28,6 +28,16 @@ const OSC52_MAX_RAW_BYTES: usize = 100_000;
 static STDERR_SUPPRESSION_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> =
     std::sync::OnceLock::new();
 
+#[cfg(target_os = "macos")]
+pub(crate) fn new_macos_clipboard() -> Result<arboard::Clipboard, String> {
+    let _stderr_lock = STDERR_SUPPRESSION_MUTEX
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .map_err(|_| "stderr suppression lock poisoned".to_string())?;
+    let _guard = SuppressStderr::new();
+    arboard::Clipboard::new().map_err(|e| format!("clipboard unavailable: {e}"))
+}
+
 /// Copy text to the system clipboard.
 ///
 /// Over SSH, uses terminal-mediated copy so the text reaches the *local*

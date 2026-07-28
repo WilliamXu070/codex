@@ -1,0 +1,38 @@
+[package]
+name = "codex-embeddings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Semantic embeddings for Codex context retrieval"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+
+# Async traits
+async-trait.workspace = true
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Ordered floats for sorting
+ordered-float.workspace = true
+
+# HTTP client for embedding APIs
+reqwest = { workspace = true, features = ["json"] }
+
+# Logging
+tracing.workspace = true
+
+[dev-dependencies]
+tokio-test.workspace = true
+pretty_assertions.workspace = true
+wiremock.workspace = true
+
+[lints]
+workspace = true

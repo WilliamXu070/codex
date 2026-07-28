@@ -6,7 +6,9 @@
 //! slash-command recall follows the same submitted-input rule as ordinary text.
 
 use super::*;
+use crate::app_event::SoundMenu;
 use crate::app_event::ThreadGoalSetMode;
+use crate::app_event::TranscribeMenu;
 use crate::bottom_pane::prompt_args::parse_slash_name;
 use crate::bottom_pane::slash_commands::BuiltinCommandFlags;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
@@ -452,6 +454,12 @@ impl ChatWidget {
                     self.open_usage_menu();
                 }
             }
+            SlashCommand::TranscribeCommand => {
+                self.open_transcribe_popup(TranscribeMenu::Root);
+            }
+            SlashCommand::Sound => {
+                self.open_sound_popup(SoundMenu::Root);
+            }
             SlashCommand::Ide => {
                 self.handle_ide_command();
             }
@@ -713,6 +721,12 @@ impl ChatWidget {
                 }
                 _ => self.add_error_message(RAW_USAGE.to_string()),
             },
+            SlashCommand::TranscribeCommand if trimmed.is_empty() => {
+                self.open_transcribe_popup(TranscribeMenu::Root);
+            }
+            SlashCommand::TranscribeCommand => {
+                self.handle_transcribe_command(trimmed);
+            }
             SlashCommand::Rename if !trimmed.is_empty() => {
                 if !self.ensure_thread_rename_allowed() {
                     return;
@@ -1058,6 +1072,8 @@ impl ChatWidget {
             SlashCommand::Ide
             | SlashCommand::Status
             | SlashCommand::Usage
+            | SlashCommand::Sound
+            | SlashCommand::TranscribeCommand
             | SlashCommand::DebugConfig
             | SlashCommand::Ps
             | SlashCommand::Stop

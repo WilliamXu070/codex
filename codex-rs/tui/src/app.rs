@@ -399,6 +399,7 @@ fn managed_filesystem_sandbox_is_restricted(permission_profile: &PermissionProfi
 /// Smooth-mode streaming drains one line per tick, so this interval controls
 /// perceived typing speed for non-backlogged output.
 const COMMIT_ANIMATION_TICK: Duration = tui::TARGET_FRAME_INTERVAL;
+pub(crate) const TRANSCRIBE_WAVEFORM_SAMPLES: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct AppExitInfo {
@@ -535,6 +536,9 @@ pub(crate) struct App {
 
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) keymap: RuntimeKeymap,
+    transcribe_arm: Option<TranscribeArmState>,
+    transcribe_next_arm_id: u64,
+    transcribe_capture: Option<TranscribeCaptureState>,
 
     /// Controls the animation thread that sends CommitTick events.
     pub(crate) commit_anim_running: Arc<AtomicBool>,
@@ -592,6 +596,20 @@ pub(crate) struct App {
     // Serialize hook enablement writes per hook so stale completions cannot
     // persist an older toggle after a newer one.
     pending_hook_enabled_writes: HashMap<String, Option<bool>>,
+}
+
+struct TranscribeArmState {
+    id: u64,
+}
+
+struct TranscribeCaptureState {
+    child: std::process::Child,
+    wav_path: PathBuf,
+    level_path: PathBuf,
+    started_at: Instant,
+    marker_id: u64,
+    waveform_samples: VecDeque<f32>,
+    spinner_stop_tx: tokio::sync::oneshot::Sender<()>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1045,6 +1063,9 @@ See the Codex keymap documentation for supported actions and examples."
             file_search,
             enhanced_keys_supported,
             keymap: runtime_keymap,
+            transcribe_arm: None,
+            transcribe_next_arm_id: 1,
+            transcribe_capture: None,
             transcript_cells: Vec::new(),
             overlay: None,
             deferred_history_lines: Vec::new(),
@@ -1158,6 +1179,10 @@ See the Codex keymap documentation for supported actions and examples."
 
         let mut listen_for_app_server_events = true;
         let mut waiting_for_initial_session_configured = wait_for_initial_session_configured;
+        let mut clipboard_repair = crate::clipboard_repair::ClipboardRepairMonitor::new();
+        let mut clipboard_repair_tick =
+            tokio::time::interval(crate::clipboard_repair::POLL_INTERVAL);
+        clipboard_repair_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         #[cfg(not(debug_assertions))]
         let pre_loop_exit_reason = if let Some(latest_version) = upgrade_version {
@@ -1185,6 +1210,12 @@ See the Codex keymap documentation for supported actions and examples."
         } else {
             loop {
                 let control = select! {
+                    _ = clipboard_repair_tick.tick(), if clipboard_repair.is_enabled() => {
+                        clipboard_repair.poll(|| {
+                            crate::clipboard_repair::documents_from_history(&app.transcript_cells)
+                        });
+                        AppRunControl::Continue
+                    }
                     Some(event) = app_event_rx.recv() => {
                         match Box::pin(app.handle_event(tui, &mut app_server, event)).await {
                             Ok(control) => control,

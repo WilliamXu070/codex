@@ -88,6 +88,7 @@ impl KeymapActionDescriptor {
 pub(super) const KEYMAP_ACTIONS: &[KeymapActionDescriptor] = &[
     action("global", "Global", "open_transcript", "Open the transcript overlay."),
     action("global", "Global", "open_external_editor", "Open the current draft in an external editor."),
+    action("global", "Global", "transcribe", "Capture speech and insert the transcription into the composer."),
     action("global", "Global", "copy", "Copy the last agent response to the clipboard."),
     action("global", "Global", "clear_terminal", "Clear the terminal UI."),
     action("global", "Global", "toggle_vim_mode", "Turn Vim composer mode on or off."),
@@ -232,6 +233,7 @@ pub(super) fn binding_slot<'a>(
     match (context, action) {
         ("global", "open_transcript") => Some(&mut keymap.global.open_transcript),
         ("global", "open_external_editor") => Some(&mut keymap.global.open_external_editor),
+        ("global", "transcribe") => Some(&mut keymap.global.transcribe),
         ("global", "copy") => Some(&mut keymap.global.copy),
         ("global", "clear_terminal") => Some(&mut keymap.global.clear_terminal),
         ("global", "toggle_vim_mode") => Some(&mut keymap.global.toggle_vim_mode),
@@ -358,6 +360,7 @@ pub(super) fn bindings_for_action<'a>(
     match (context, action) {
         ("global", "open_transcript") => Some(runtime_keymap.app.open_transcript.as_slice()),
         ("global", "open_external_editor") => Some(runtime_keymap.app.open_external_editor.as_slice()),
+        ("global", "transcribe") => Some(runtime_keymap.app.transcribe.as_slice()),
         ("global", "copy") => Some(runtime_keymap.app.copy.as_slice()),
         ("global", "clear_terminal") => Some(runtime_keymap.app.clear_terminal.as_slice()),
         ("global", "toggle_vim_mode") => Some(runtime_keymap.app.toggle_vim_mode.as_slice()),

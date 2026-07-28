@@ -95,6 +95,8 @@ pub struct TuiGlobalKeymap {
     pub open_transcript: Option<KeybindingsSpec>,
     /// Open the external editor for the current draft.
     pub open_external_editor: Option<KeybindingsSpec>,
+    /// Capture speech and insert the transcription into the composer.
+    pub transcribe: Option<KeybindingsSpec>,
     /// Copy the last agent response to the clipboard.
     pub copy: Option<KeybindingsSpec>,
     /// Clear the terminal UI.

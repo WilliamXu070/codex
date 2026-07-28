@@ -67,6 +67,18 @@ impl ChatWidget {
         )
     }
 
+    /// Show a transient status indicator for short-lived workflows (like dictation)
+    /// without marking the chat as task-running.
+    pub(crate) fn show_transcribe_status(&mut self, header: String) {
+        self.bottom_pane.ensure_status_indicator();
+        self.set_status_header(header);
+    }
+
+    /// Hide the transient status indicator used by short-lived workflows.
+    pub(crate) fn hide_transcribe_status(&mut self) {
+        self.bottom_pane.hide_status_indicator();
+    }
+
     /// Sets the currently rendered footer status-line value.
     pub(crate) fn set_status_line(&mut self, status_line: Option<Line<'static>>) {
         self.bottom_pane.set_status_line(status_line);

@@ -103,6 +103,23 @@ pub(crate) enum HistoryLookupResponse {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SoundMenu {
+    Root,
+    Enabled,
+    Volume,
+    Completion,
+    Approval,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TranscribeMenu {
+    Root,
+    Provider,
+    Language,
+    ApiKey,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConsolidationScrollbackReflow {
     IfResizeReflowRan,
     Required,
@@ -818,6 +835,36 @@ pub(crate) enum AppEvent {
     /// Open the full model picker (non-auto models).
     OpenAllModelsPopup {
         models: Vec<ModelPreset>,
+    },
+
+    /// Open the sound settings popup.
+    OpenSoundPopup {
+        menu: SoundMenu,
+    },
+
+    /// Open the transcribe settings popup.
+    OpenTranscribePopup {
+        menu: TranscribeMenu,
+    },
+
+    /// Open text entry for the transcribe API key.
+    OpenTranscribeApiKeyPrompt,
+
+    /// Apply the completed transcribe capture result to the composer.
+    TranscribeCaptureFinished {
+        marker_id: u64,
+        result: Result<String, String>,
+    },
+
+    /// Advance the inline transcribe waveform if capture is still active.
+    TranscribeMarkerTick {
+        marker_id: u64,
+        amplitude: f32,
+    },
+
+    /// Start transcription only if the shortcut has stayed held long enough.
+    TranscribeHoldElapsed {
+        arm_id: u64,
     },
 
     /// Open the confirmation prompt before enabling full access mode.

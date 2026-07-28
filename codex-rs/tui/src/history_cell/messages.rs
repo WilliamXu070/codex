@@ -405,6 +405,18 @@ impl AgentMarkdownCell {
             rendered_lines,
         }
     }
+
+    /// Render the assistant response without viewport wrapping or the `• ` / `  ` display gutter.
+    ///
+    /// Clipboard repair uses this as its canonical visible-text source. Inline cyan paths and
+    /// links remain single spans, while paragraph, list, and code boundaries remain logical lines.
+    pub(crate) fn clipboard_repair_lines(&self) -> Vec<HyperlinkLine> {
+        crate::markdown::render_markdown_agent_with_links_and_cwd(
+            &self.markdown_source,
+            /*width*/ None,
+            Some(self.cwd.as_path()),
+        )
+    }
 }
 
 fn normalize_whitespace_only_hyperlink_lines(mut lines: Vec<HyperlinkLine>) -> Vec<HyperlinkLine> {

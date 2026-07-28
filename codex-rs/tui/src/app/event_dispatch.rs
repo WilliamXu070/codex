@@ -1154,6 +1154,51 @@ impl App {
             AppEvent::OpenAllModelsPopup { models } => {
                 self.chat_widget.open_all_models_popup(models);
             }
+            AppEvent::OpenSoundPopup { menu } => {
+                self.chat_widget.open_sound_popup(menu);
+            }
+            AppEvent::OpenTranscribePopup { menu } => {
+                self.chat_widget.open_transcribe_popup(menu);
+            }
+            AppEvent::OpenTranscribeApiKeyPrompt => {
+                self.chat_widget.open_transcribe_api_key_prompt();
+            }
+            AppEvent::TranscribeCaptureFinished { marker_id, result } => {
+                let replacement = match result {
+                    Ok(text) => text,
+                    Err(err) => format!("transcribe failed: {err}"),
+                };
+                if !self
+                    .chat_widget
+                    .replace_transcribe_marker(marker_id, &replacement)
+                {
+                    self.chat_widget.apply_external_edit(replacement);
+                }
+                self.chat_widget.hide_transcribe_status();
+            }
+            AppEvent::TranscribeMarkerTick {
+                marker_id,
+                amplitude,
+            } => {
+                if let Some(capture) = self
+                    .transcribe_capture
+                    .as_mut()
+                    .filter(|capture| capture.marker_id == marker_id)
+                {
+                    if capture.waveform_samples.len() >= super::TRANSCRIBE_WAVEFORM_SAMPLES {
+                        capture.waveform_samples.pop_front();
+                    }
+                    capture
+                        .waveform_samples
+                        .push_back(amplitude.clamp(/*min*/ 0.0, /*max*/ 1.0));
+                    let samples: Vec<f32> = capture.waveform_samples.iter().copied().collect();
+                    self.chat_widget
+                        .update_transcribe_marker(marker_id, &samples);
+                }
+            }
+            AppEvent::TranscribeHoldElapsed { arm_id } => {
+                self.start_armed_transcribe_capture(tui, arm_id);
+            }
             AppEvent::OpenFullAccessConfirmation {
                 preset,
                 return_to_permissions,

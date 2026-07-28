@@ -3280,7 +3280,8 @@
               "toggle_raw_output": null,
               "toggle_shortcuts": null,
               "toggle_side_conversation": null,
-              "toggle_vim_mode": null
+              "toggle_vim_mode": null,
+              "transcribe": null
             },
             "list": {
               "accept": null,
@@ -3873,6 +3874,14 @@
             }
           ],
           "description": "Toggle Vim mode for the composer input."
+        },
+        "transcribe": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Capture speech and insert the transcription into the composer."
         }
       },
       "type": "object"
@@ -3968,7 +3977,8 @@
             "toggle_raw_output": null,
             "toggle_shortcuts": null,
             "toggle_side_conversation": null,
-            "toggle_vim_mode": null
+            "toggle_vim_mode": null,
+            "transcribe": null
           }
         },
         "list": {

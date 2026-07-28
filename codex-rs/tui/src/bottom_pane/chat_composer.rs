@@ -285,6 +285,47 @@ use crate::app_event::ConnectorsSnapshot;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::LocalImageAttachment;
 use crate::bottom_pane::MentionBinding;
+
+const TRANSCRIBE_WAVEFORM_WIDTH: usize = 5;
+const TRANSCRIBE_BRAILLE_BLANK: u32 = 0x2800;
+const TRANSCRIBE_BRAILLE_LEFT_DOTS: [u32; 4] = [0x02, 0x04, 0x01, 0x40];
+const TRANSCRIBE_BRAILLE_RIGHT_DOTS: [u32; 4] = [0x10, 0x20, 0x08, 0x80];
+
+fn transcribe_sample_level(sample: f32) -> usize {
+    let sample = sample.clamp(/*min*/ 0.0, /*max*/ 1.0);
+    if sample < 0.02 {
+        0
+    } else {
+        (sample.sqrt() * TRANSCRIBE_BRAILLE_LEFT_DOTS.len() as f32)
+            .ceil()
+            .clamp(
+                /*min*/ 1.0,
+                /*max*/ TRANSCRIBE_BRAILLE_LEFT_DOTS.len() as f32,
+            ) as usize
+    }
+}
+
+fn transcribe_braille_column(sample: f32, dots: &[u32; 4]) -> u32 {
+    dots.iter()
+        .take(transcribe_sample_level(sample))
+        .fold(/*init*/ 0, |cell, dot| cell | dot)
+}
+
+fn transcribe_marker_text(samples: &[f32]) -> String {
+    samples
+        .chunks(/*chunk_size*/ 2)
+        .take(TRANSCRIBE_WAVEFORM_WIDTH)
+        .map(|chunk| {
+            let left = chunk.first().copied().unwrap_or(/*default*/ 0.0);
+            let right = chunk.get(/*index*/ 1).copied().unwrap_or(/*default*/ 0.0);
+            let cell = TRANSCRIBE_BRAILLE_BLANK
+                | transcribe_braille_column(left, &TRANSCRIBE_BRAILLE_LEFT_DOTS)
+                | transcribe_braille_column(right, &TRANSCRIBE_BRAILLE_RIGHT_DOTS);
+            char::from_u32(cell).unwrap_or('\u{2800}')
+        })
+        .collect()
+}
+
 use crate::bottom_pane::textarea::TextArea;
 use crate::clipboard_paste::normalize_pasted_path;
 use crate::clipboard_paste::pasted_image_format;
@@ -1245,6 +1286,24 @@ impl ChatComposer {
             .textarea
             .set_cursor(self.draft.textarea.text().len());
         self.sync_popups();
+    }
+
+    pub(crate) fn start_transcribe_marker(&mut self) -> u64 {
+        let marker = transcribe_marker_text(&[0.0; TRANSCRIBE_WAVEFORM_WIDTH * 2]);
+        self.draft.textarea.insert_protected_element(&marker)
+    }
+
+    pub(crate) fn update_transcribe_marker(&mut self, marker_id: u64, samples: &[f32]) -> bool {
+        let marker = transcribe_marker_text(samples);
+        self.draft
+            .textarea
+            .replace_element_payload_by_id(marker_id, &marker)
+    }
+
+    pub(crate) fn replace_transcribe_marker(&mut self, marker_id: u64, text: &str) -> bool {
+        self.draft
+            .textarea
+            .replace_element_with_text_by_id(marker_id, text)
     }
 
     /// Enable or disable Vim editing for the composer textarea.
@@ -12117,6 +12176,49 @@ mod tests {
         assert_eq!(
             composer.draft.textarea.cursor(),
             composer.current_text().len()
+        );
+    }
+
+    #[test]
+    fn transcribe_marker_replaces_in_place() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ false,
+            "Ask Codex to do anything".to_string(),
+            /*disable_paste_burst*/ false,
+        );
+        composer.set_text_content("before  after".to_string(), Vec::new(), Vec::new());
+        composer.draft.textarea.set_cursor("before ".len());
+
+        let marker_id = composer.start_transcribe_marker();
+
+        assert_eq!(composer.current_text(), "before ⠀⠀⠀⠀⠀ after");
+        assert!(composer.update_transcribe_marker(
+            marker_id,
+            &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        ));
+        assert_eq!(composer.current_text(), "before ⠀⠀⠀⠀⢸ after");
+        assert!(composer.update_transcribe_marker(
+            marker_id,
+            &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.16],
+        ));
+        assert_eq!(composer.current_text(), "before ⠀⠀⠀⠀⡷ after");
+        assert!(composer.replace_transcribe_marker(marker_id, "hello"));
+        assert_eq!(composer.current_text(), "before hello after");
+    }
+
+    #[test]
+    fn transcribe_marker_text_is_computed_from_amplitude_samples() {
+        assert_eq!(
+            transcribe_marker_text(&[0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            "⠀⠀⠀⠀⠀"
+        );
+        assert_eq!(
+            transcribe_marker_text(&[0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.04, 0.16, 0.36]),
+            "⠀⠀⠀⠐⠾"
         );
     }
 
