@@ -3,16 +3,22 @@
 //! The `ContextAgent` is the main entry point for processing folders,
 //! querying context, and managing the user's knowledge tree.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Instant;
 
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 use walkdir::WalkDir;
 
 use crate::chunker::SemanticChunker;
 use crate::entity::EntityExtractor;
-use crate::error::{ContextError, Result};
-use crate::llm::{AnalysisContext, LlmAnalyzer, LlmConfig};
+use crate::error::ContextError;
+use crate::error::Result;
+use crate::llm::AnalysisContext;
+use crate::llm::LlmAnalyzer;
+use crate::llm::LlmConfig;
 use crate::node::ContextNode;
 use crate::tree::ContextTree;
 

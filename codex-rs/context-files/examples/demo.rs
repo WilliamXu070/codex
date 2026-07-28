@@ -2,7 +2,8 @@
 //!
 //! Usage: cargo run -p codex-context-files --example demo
 
-use codex_context_files::{AgentBuilder, TreeStore};
+use codex_context_files::AgentBuilder;
+use codex_context_files::TreeStore;
 use std::path::PathBuf;
 
 #[tokio::main]

@@ -9,9 +9,15 @@ use std::collections::HashMap;
 use tracing::info;
 
 use crate::chunker::SemanticChunker;
-use crate::entity::{Entity, EntityExtractor, EntityType};
+use crate::entity::Entity;
+use crate::entity::EntityExtractor;
+use crate::entity::EntityType;
 use crate::error::Result;
-use crate::node::{ContextNode, CrossLinkType, DocumentAnalysis, DomainDetection, RelatedNode};
+use crate::node::ContextNode;
+use crate::node::CrossLinkType;
+use crate::node::DocumentAnalysis;
+use crate::node::DomainDetection;
+use crate::node::RelatedNode;
 
 /// Configuration for the LLM analyzer.
 #[derive(Debug, Clone)]

@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import tomllib
 import urllib.request
 from pathlib import Path
@@ -30,13 +31,14 @@ DEFAULT_STATE_DIR = Path.home() / ".local/lib/codex/release-agent"
 DEFAULT_UPSTREAM_URL = "https://github.com/openai/codex.git"
 DEFAULT_REPOSITORY = "openai/codex"
 DEFAULT_MAX_REPAIR_ATTEMPTS = 2
+DEFAULT_REQUIRED_CI_CHECK = "CI required"
+DEFAULT_CI_TIMEOUT_SECONDS = 7200
+DEFAULT_CI_POLL_INTERVAL_SECONDS = 10
 DEFAULT_INSTALL_ROOT = Path.home() / ".local/lib/codex/releases"
 DEFAULT_ACTIVE_CLI = Path.home() / ".local/bin/codex"
 DEFAULT_ACTIVE_TUI = Path.home() / ".local/bin/codex-tui"
 DEFAULT_CURRENT_LINK = Path.home() / ".local/lib/codex/current"
-TAG_RE = re.compile(
-    r"^rust-v(?P<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$"
-)
+TAG_RE = re.compile(r"^rust-v(?P<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$")
 
 
 class ReleaseAgentError(RuntimeError):
@@ -106,9 +108,7 @@ class ReleaseLedger:
             }
             for column in ("merge_commit", "installed_cli", "previous_cli"):
                 if column not in columns:
-                    conn.execute(
-                        f"ALTER TABLE release_runs ADD COLUMN {column} TEXT"
-                    )
+                    conn.execute(f"ALTER TABLE release_runs ADD COLUMN {column} TEXT")
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30)
@@ -323,9 +323,7 @@ def discover_latest_release(repository: str, channel: str) -> str:
         tag = str(release.get("tag_name", ""))
         if TAG_RE.fullmatch(tag):
             return tag
-    raise ReleaseAgentError(
-        f"no {channel} Codex release found for {repository}"
-    )
+    raise ReleaseAgentError(f"no {channel} Codex release found for {repository}")
 
 
 def safe_tag_name(tag: str) -> str:
@@ -464,9 +462,7 @@ def prepare_workspace(
         )
         run_command(["git", "switch", "-c", branch, source_head], cwd=workspace)
     elif git_output(workspace, "branch", "--show-current") != branch:
-        raise ReleaseAgentError(
-            f"retry workspace is on unexpected branch: {workspace}"
-        )
+        raise ReleaseAgentError(f"retry workspace is on unexpected branch: {workspace}")
 
     remotes = set(git_output(workspace, "remote").splitlines())
     if "upstream" not in remotes:
@@ -525,9 +521,9 @@ def integration_prompt(
            the newer upstream architecture while reapplying William's custom behavior.
            Do not merely change the Cargo version.
         4. Port every intentional dirty tracked edit from
-           {context_dir / 'dirty.patch'}. Use `git apply --3way` as a starting point
+           {context_dir / "dirty.patch"}. Use `git apply --3way` as a starting point
            when useful, then resolve manually.
-        5. Inspect {context_dir / 'untracked.json'} and port intentional untracked
+        5. Inspect {context_dir / "untracked.json"} and port intentional untracked
            source/scripts. Exclude generated `*.snap.new` files and the accidental
            `.bazelversion 2`. Preserve real Rust source, regression tests, updater
            scripts, sound/transcription helpers, and documentation.
@@ -536,8 +532,10 @@ def integration_prompt(
            repair/copy work, and their helper scripts. Adapt them to upstream APIs
            when source structure changed.
         7. Ensure `codex-rs/Cargo.toml` reports workspace version {version}. Run
-           `cargo fmt --all` from `codex-rs`, the focused custom tests you can
-           identify, and `CODEX_ROOT={workspace} bash scripts/test-codex-sound-path.sh`.
+           `cargo fmt -- --config imports_granularity=Item`,
+           `cargo shear --deny-warnings` from `codex-rs`, the focused custom
+           tests you can identify, and
+           `CODEX_ROOT={workspace} bash scripts/test-codex-sound-path.sh`.
            If Cargo cannot fetch an uncached dependency in the network-restricted
            sandbox, record the exact failure and continue to step 8; do not install
            replacement tools. The orchestrator repeats formatting, tests, and the
@@ -579,11 +577,13 @@ def repair_prompt(
         --- end validation failure ---
 
         Inspect the current branch and any build-created changes, diagnose the root
-        cause, implement the smallest correct integration repair, run focused checks
-        plus `cargo fmt --all`, and commit every intended change. Do not replace
-        missing tools or weaken tests. If a dependency cannot be fetched in this
-        network-restricted sandbox, preserve the correct source/lockfile state and
-        let the orchestrator retry the full build with normal dependency access.
+        cause, implement the smallest correct integration repair, run focused
+        checks plus `cargo fmt -- --config imports_granularity=Item` and
+        `cargo shear --deny-warnings`, and commit every intended change. Do not
+        replace missing tools or weaken tests. If a dependency cannot be fetched
+        in this network-restricted sandbox, preserve the correct source/lockfile
+        state and let the orchestrator retry the full build with normal dependency
+        access.
         """
     ).strip()
 
@@ -617,14 +617,14 @@ def run_codex_agent(
         'default_permissions="release_agent"',
         "-c",
         (
-            'permissions.release_agent.filesystem={'
+            "permissions.release_agent.filesystem={"
             '":minimal"="read",'
             '":tmpdir"="write",'
             '":slash_tmp"="write",'
-            f"{json.dumps(str(cargo_home))}=\"read\","
-            f"{json.dumps(str(rustup_home))}=\"read\","
-            f"{json.dumps(str(git_config))}=\"read\","
-            f"{json.dumps(str(git_config_dir))}=\"read\","
+            f'{json.dumps(str(cargo_home))}="read",'
+            f'{json.dumps(str(rustup_home))}="read",'
+            f'{json.dumps(str(git_config))}="read",'
+            f'{json.dumps(str(git_config_dir))}="read",'
             '":workspace_roots"={'
             '"."="write",'
             '".git"="write",'
@@ -721,9 +721,7 @@ def verify_workspace(
     ]
     missing = [path for path in required_paths if not (workspace / path).exists()]
     if missing:
-        raise ReleaseAgentError(
-            "custom Codex files are missing: " + ", ".join(missing)
-        )
+        raise ReleaseAgentError("custom Codex files are missing: " + ", ".join(missing))
 
     test_env = os.environ.copy()
     test_env["CODEX_ROOT"] = str(workspace)
@@ -733,7 +731,18 @@ def verify_workspace(
         env=test_env,
     )
     run_command(
-        ["cargo", "fmt", "--all", "--", "--check"],
+        [
+            "cargo",
+            "fmt",
+            "--",
+            "--config",
+            "imports_granularity=Item",
+            "--check",
+        ],
+        cwd=workspace / "codex-rs",
+    )
+    run_command(
+        ["cargo", "shear", "--deny-warnings"],
         cwd=workspace / "codex-rs",
     )
     if not skip_build:
@@ -881,6 +890,132 @@ def publish_branch(
         ).stdout.strip()
     finally:
         body_path.unlink(missing_ok=True)
+
+
+def read_pull_request_checks(
+    *,
+    workspace: Path,
+    pr_url: str,
+) -> list[dict[str, object]]:
+    completed = subprocess.run(
+        [
+            "gh",
+            "pr",
+            "checks",
+            pr_url,
+            "--json",
+            "name,state,bucket,link",
+        ],
+        cwd=workspace,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=60,
+    )
+    output = completed.stdout.strip()
+    if not output:
+        detail = completed.stderr.strip()
+        if completed.returncode in {0, 8} or "no checks reported" in detail.lower():
+            return []
+        raise ReleaseAgentError(
+            f"failed to read pull request checks for {pr_url}"
+            + (f": {detail}" if detail else "")
+        )
+
+    try:
+        checks = json.loads(output)
+    except json.JSONDecodeError as exc:
+        detail = completed.stderr.strip()
+        raise ReleaseAgentError(
+            f"invalid pull request checks response for {pr_url}: {output}"
+            + (f"\n{detail}" if detail else "")
+        ) from exc
+    if not isinstance(checks, list) or not all(
+        isinstance(check, dict) for check in checks
+    ):
+        raise ReleaseAgentError(
+            f"invalid pull request checks response for {pr_url}: {output}"
+        )
+    return checks
+
+
+def wait_for_pull_request_ci(
+    *,
+    workspace: Path,
+    pr_url: str,
+    required_check: str,
+    timeout_seconds: int,
+    poll_interval_seconds: int,
+) -> None:
+    if not required_check:
+        raise ReleaseAgentError("required CI check name cannot be empty")
+    if timeout_seconds < 0:
+        raise ReleaseAgentError("CI timeout cannot be negative")
+    if poll_interval_seconds < 0:
+        raise ReleaseAgentError("CI poll interval cannot be negative")
+
+    deadline = time.monotonic() + timeout_seconds
+    observed = "not reported"
+    while True:
+        checks = read_pull_request_checks(workspace=workspace, pr_url=pr_url)
+        matching = [
+            check for check in checks if str(check.get("name", "")) == required_check
+        ]
+        if matching:
+            observed = ", ".join(
+                f"{check.get('state', 'UNKNOWN')}/{check.get('bucket', 'unknown')}"
+                for check in matching
+            )
+            failed = [
+                check
+                for check in matching
+                if str(check.get("bucket", "")).lower() in {"fail", "cancel"}
+                or str(check.get("state", "")).upper()
+                in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
+            ]
+            if failed:
+                detail = "; ".join(
+                    " ".join(
+                        part
+                        for part in (
+                            str(check.get("state", "UNKNOWN")),
+                            str(check.get("link", "")),
+                        )
+                        if part
+                    )
+                    for check in failed
+                )
+                raise ReleaseAgentError(
+                    f"required CI check {required_check!r} failed for {pr_url}: {detail}"
+                )
+
+            if all(
+                str(check.get("bucket", "")).lower() == "pass"
+                or str(check.get("state", "")).upper() == "SUCCESS"
+                for check in matching
+            ):
+                return
+
+            unexpected = [
+                check
+                for check in matching
+                if str(check.get("bucket", "")).lower() not in {"pending", "pass"}
+                and str(check.get("state", "")).upper()
+                not in {"EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "SUCCESS"}
+            ]
+            if unexpected:
+                raise ReleaseAgentError(
+                    f"required CI check {required_check!r} did not produce a "
+                    f"mergeable result for {pr_url}: {observed}"
+                )
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ReleaseAgentError(
+                f"timed out waiting for required CI check {required_check!r} "
+                f"for {pr_url}; last observed: {observed}"
+            )
+        time.sleep(min(poll_interval_seconds, remaining))
 
 
 def merge_pull_request(
@@ -1142,6 +1277,13 @@ def execute(args: argparse.Namespace) -> RunResult:
                     tag=args.release_tag,
                     version=version,
                 )
+                wait_for_pull_request_ci(
+                    workspace=workspace,
+                    pr_url=pr_url,
+                    required_check=args.required_ci_check,
+                    timeout_seconds=args.ci_timeout_seconds,
+                    poll_interval_seconds=args.ci_poll_interval_seconds,
+                )
                 merge_commit = merge_pull_request(
                     workspace=workspace,
                     pr_url=pr_url,
@@ -1216,7 +1358,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--state-dir",
         type=Path,
-        default=Path(os.environ.get("CODEX_RELEASE_AGENT_STATE_DIR", DEFAULT_STATE_DIR)),
+        default=Path(
+            os.environ.get("CODEX_RELEASE_AGENT_STATE_DIR", DEFAULT_STATE_DIR)
+        ),
     )
     parser.add_argument(
         "--upstream-url",
@@ -1230,6 +1374,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--timeout-seconds",
         type=int,
         default=int(os.environ.get("CODEX_RELEASE_AGENT_TIMEOUT", "7200")),
+    )
+    parser.add_argument(
+        "--required-ci-check",
+        default=os.environ.get(
+            "CODEX_RELEASE_REQUIRED_CI_CHECK",
+            DEFAULT_REQUIRED_CI_CHECK,
+        ),
+        help="Pull-request check that must succeed before merge.",
+    )
+    parser.add_argument(
+        "--ci-timeout-seconds",
+        type=int,
+        default=int(
+            os.environ.get(
+                "CODEX_RELEASE_CI_TIMEOUT",
+                str(DEFAULT_CI_TIMEOUT_SECONDS),
+            )
+        ),
+        help="Maximum time to wait for the required pull-request check.",
+    )
+    parser.add_argument(
+        "--ci-poll-interval-seconds",
+        type=int,
+        default=int(
+            os.environ.get(
+                "CODEX_RELEASE_CI_POLL_INTERVAL",
+                str(DEFAULT_CI_POLL_INTERVAL_SECONDS),
+            )
+        ),
+        help="Delay between pull-request check status reads.",
     )
     parser.add_argument(
         "--max-repair-attempts",

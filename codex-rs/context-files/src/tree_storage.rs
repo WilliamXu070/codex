@@ -5,12 +5,17 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use serde::Deserialize;
+use serde::Serialize;
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
-use crate::error::{ContextError, Result};
+use crate::error::ContextError;
+use crate::error::Result;
 use crate::node::ContextNode;
 use crate::tree::ContextTree;
 

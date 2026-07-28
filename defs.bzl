@@ -181,6 +181,7 @@ workspace_root_test = rule(
 def codex_rust_crate(
         name,
         crate_name,
+        binary_test_target_compatible_with = [],
         crate_features = [],
         crate_srcs = None,
         crate_edition = None,
@@ -215,6 +216,8 @@ def codex_rust_crate(
             Example: `app-server`.
         crate_name: Cargo crate name from Cargo.toml
             Example: `codex_app_server`.
+        binary_test_target_compatible_with: Compatibility constraints applied
+            to the generated raw unit-test binary.
         crate_features: Cargo features to enable for this crate.
             Crates are only compiled in a single configuration across the workspace, i.e.
             with all features in this list enabled. So use sparingly, and prefer to refactor
@@ -345,6 +348,7 @@ def codex_rust_crate(
             ],
             rustc_env = rustc_env,
             data = test_data_extra,
+            target_compatible_with = binary_test_target_compatible_with,
             tags = test_tags + ["manual"],
         )
 

@@ -2630,9 +2630,7 @@ dependencies = [
 name = "codex-context-files"
 version = "0.146.0-alpha.14"
 dependencies = [
- "anyhow",
  "chrono",
- "codex-embeddings",
  "codex-utils-cargo-bin",
  "dirs",
  "pretty_assertions",
@@ -2642,12 +2640,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tokio-test",
  "tracing",
  "tracing-subscriber",
  "uuid",
  "walkdir",
- "zip",
 ]
 
 [[package]]
@@ -2901,7 +2897,6 @@ dependencies = [
 name = "codex-directory-watcher"
 version = "0.146.0-alpha.14"
 dependencies = [
- "anyhow",
  "chrono",
  "glob",
  "notify",
@@ -2911,7 +2906,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tokio-test",
  "tracing",
  "walkdir",
 ]
@@ -2920,16 +2914,14 @@ dependencies = [
 name = "codex-embeddings"
 version = "0.146.0-alpha.14"
 dependencies = [
- "anyhow",
+ "codex-http-client",
+ "http 1.4.0",
  "pretty_assertions",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
- "tokio-test",
  "tracing",
- "wiremock",
 ]
 
 [[package]]
@@ -3903,19 +3895,14 @@ dependencies = [
 name = "codex-retrieval"
 version = "0.146.0-alpha.14"
 dependencies = [
- "anyhow",
- "chrono",
  "codex-context-files",
  "codex-directory-watcher",
  "codex-embeddings",
  "dirs",
- "pretty_assertions",
  "serde",
- "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tokio-test",
  "tracing",
 ]
 
@@ -4220,7 +4207,6 @@ dependencies = [
 name = "codex-tool-gen"
 version = "0.146.0-alpha.14"
 dependencies = [
- "anyhow",
  "chrono",
  "pretty_assertions",
  "serde",
@@ -4229,7 +4215,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tokio-test",
  "tracing",
  "uuid",
 ]

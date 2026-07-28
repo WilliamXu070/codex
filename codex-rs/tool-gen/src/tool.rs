@@ -2,8 +2,10 @@
 //!
 //! A tool represents a reusable capability that the AI can create, use, and share.
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::DateTime;
+use chrono::Utc;
+use serde::Deserialize;
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::spec::ToolSpec;
@@ -102,7 +104,8 @@ impl Tool {
 
     /// Compute a signature hash for this tool.
     pub fn compute_signature(&self) -> String {
-        use sha2::{Digest, Sha256};
+        use sha2::Digest;
+        use sha2::Sha256;
 
         let mut hasher = Sha256::new();
         hasher.update(self.name.as_bytes());

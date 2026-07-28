@@ -3,7 +3,8 @@
 //! Concepts are high-level topics that organize the context file system.
 //! They form a graph with relationships between them.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 /// A concept represents a high-level topic in the knowledge graph.
 ///

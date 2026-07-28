@@ -2,7 +2,8 @@
 //!
 //! Defines the inputs, outputs, and schema for tools.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 /// Specification for a tool's interface.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

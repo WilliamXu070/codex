@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any
 
 
-CODEX_ROOT = Path(os.environ.get("CODEX_ROOT", "/Users/williamxu/Desktop/Projects/codex"))
+CODEX_ROOT = Path(
+    os.environ.get("CODEX_ROOT", "/Users/williamxu/Desktop/Projects/codex")
+)
 AGENT_SCRIPT = Path(
     os.environ.get(
         "CODEX_RELEASE_AGENT_SCRIPT",
@@ -28,9 +30,7 @@ PORT = int(os.environ.get("CODEX_RELEASE_WEBHOOK_PORT", "8765"))
 WEBHOOK_PATH = os.environ.get("CODEX_RELEASE_WEBHOOK_PATH", "/github-release-webhook")
 EXPECTED_REPO = os.environ.get("CODEX_RELEASE_WEBHOOK_REPO", "openai/codex")
 CHANNEL = os.environ.get("CODEX_RELEASE_CHANNEL", "all")
-TAG_RE = re.compile(
-    r"^rust-v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$"
-)
+TAG_RE = re.compile(r"^rust-v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$")
 
 
 def log(message: str) -> None:

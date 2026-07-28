@@ -1,0 +1,95 @@
+name: Fork CI
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  updater:
+    name: Release updater tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Test release updater
+        run: python3 -m unittest discover -s scripts/tests -p 'test_codex_release_*.py'
+
+      - name: Test GitHub CI policy helpers
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
+      - name: Check Python syntax
+        run: |
+          python3 -m py_compile \
+            scripts/codex-release-agent.py \
+            scripts/codex-release-webhook-server.py \
+            .github/scripts/check_ci_results.py
+
+      - name: Check updater shell syntax
+        run: |
+          bash -n scripts/update-codex-local.sh
+          bash -n scripts/install-codex-release-watch.sh
+          bash -n scripts/install-codex-release-webhook.sh
+
+      - name: Check for a clean worktree
+        if: always() && !cancelled()
+        uses: ./.github/actions/check-clean-worktree
+
+  rust:
+    name: Cargo format, shear, and build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: codex-rs
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-ci
+
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          components: rustfmt
+
+      - uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
+        with:
+          tool: cargo-shear@1.11.2
+
+      - name: Check CI formatting
+        run: cargo fmt -- --config imports_granularity=Item --check
+
+      - name: Check dependency hygiene
+        run: cargo shear --deny-warnings
+
+      - name: Build active CLI targets
+        run: cargo build --locked -p codex-cli -p codex-tui
+
+      - name: Check for a clean worktree
+        if: always() && !cancelled()
+        uses: ./.github/actions/check-clean-worktree
+
+  bazel-analysis:
+    name: Bazel analysis
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bazel-ci
+        with:
+          target: x86_64-unknown-linux-gnu
+
+      - name: Analyze previously failing packages
+        run: |
+          bazel query //codex-rs/windows-sandbox-rs:all
+          bazel query //codex-rs/context-files:all
+
+      - name: Check for a clean worktree
+        if: always() && !cancelled()
+        uses: ./.github/actions/check-clean-worktree

@@ -3,9 +3,11 @@
 //! Extracts named entities (people, projects, technologies, dates, etc.)
 //! from document chunks using regex patterns and heuristics.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::chunker::Chunk;
 

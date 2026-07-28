@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "Semantic embeddings for Codex context retrieval"
 
+[lib]
+doctest = false
+
 [dependencies]
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
@@ -15,18 +18,16 @@ serde_json.workspace = true
 
 # Error handling
 thiserror.workspace = true
-anyhow.workspace = true
 
 # HTTP client for embedding APIs
-reqwest = { workspace = true, features = ["json"] }
+codex-http-client.workspace = true
+http.workspace = true
 
 # Logging
 tracing.workspace = true
 
 [dev-dependencies]
-tokio-test.workspace = true
 pretty_assertions.workspace = true
-wiremock.workspace = true
 
 [lints]
 workspace = true

@@ -1,17 +1,28 @@
 //! Directory watcher implementation.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use tokio::sync::{RwLock, mpsc};
-use tracing::{debug, error, info, warn};
+use notify::RecommendedWatcher;
+use notify::RecursiveMode;
+use notify::Watcher;
+use tokio::sync::RwLock;
+use tokio::sync::mpsc;
+use tracing::debug;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
-use crate::config::{DirectoryConfig, WatchMode};
-use crate::error::{Result, WatcherError};
-use crate::event::{FileAttributes, FileEvent, FileEventKind};
+use crate::config::DirectoryConfig;
+use crate::config::WatchMode;
+use crate::error::Result;
+use crate::error::WatcherError;
+use crate::event::FileAttributes;
+use crate::event::FileEvent;
+use crate::event::FileEventKind;
 
 /// Directory watcher that monitors file system changes.
 pub struct DirectoryWatcher {

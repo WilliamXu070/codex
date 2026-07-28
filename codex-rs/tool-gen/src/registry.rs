@@ -7,11 +7,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::debug;
+use tracing::info;
 
-use crate::error::{Result, ToolError};
+use crate::error::Result;
+use crate::error::ToolError;
 use crate::storage::ToolStore;
-use crate::tool::{Tool, ToolCategory};
+use crate::tool::Tool;
+use crate::tool::ToolCategory;
 
 /// Runtime registry for available tools.
 ///

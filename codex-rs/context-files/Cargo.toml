@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "Context file system for persistent AI memory in Codex"
 
+[lib]
+doctest = false
+
 [dependencies]
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
@@ -15,7 +18,6 @@ serde_json.workspace = true
 
 # Error handling
 thiserror.workspace = true
-anyhow.workspace = true
 
 # Time handling
 chrono = { workspace = true, features = ["serde"] }
@@ -26,9 +28,6 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 # File system utilities
 walkdir.workspace = true
 
-# ZIP archive reading (for Office documents)
-zip.workspace = true
-
 # Regex for pattern matching
 regex-lite.workspace = true
 
@@ -38,12 +37,8 @@ tracing.workspace = true
 # Directory utilities
 dirs.workspace = true
 
-# Internal dependencies
-codex-embeddings = { workspace = true }
-
 [dev-dependencies]
 codex-utils-cargo-bin = { workspace = true }
-tokio-test.workspace = true
 tempfile.workspace = true
 pretty_assertions.workspace = true
 tracing-subscriber.workspace = true

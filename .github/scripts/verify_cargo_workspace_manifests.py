@@ -31,6 +31,9 @@ MANIFEST_FEATURE_EXCEPTIONS = {
 }
 OPTIONAL_DEPENDENCY_EXCEPTIONS = set()
 INTERNAL_DEPENDENCY_FEATURE_EXCEPTIONS = {}
+NON_WORKSPACE_MANIFESTS = {
+    "codex-rs/context-files/tests/fixtures/Cargo.toml",
+}
 
 
 def main() -> int:
@@ -380,6 +383,7 @@ def cargo_manifests() -> list[Path]:
         path
         for path in CARGO_RS_ROOT.rglob("Cargo.toml")
         if path != CARGO_RS_ROOT / "Cargo.toml"
+        and manifest_key(path) not in NON_WORKSPACE_MANIFESTS
     )
 
 

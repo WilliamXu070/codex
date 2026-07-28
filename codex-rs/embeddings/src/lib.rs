@@ -30,10 +30,15 @@ pub mod provider;
 pub mod similarity;
 
 pub use cache::EmbeddingCache;
-pub use error::{EmbeddingError, Result};
+pub use error::EmbeddingError;
+pub use error::Result;
 pub use index::SimilarityIndex;
-pub use provider::{EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, OpenAIProvider};
-pub use similarity::{SimilarityResult, cosine_similarity};
+pub use provider::EmbeddingProvider;
+pub use provider::EmbeddingRequest;
+pub use provider::EmbeddingResponse;
+pub use provider::OpenAIProvider;
+pub use similarity::SimilarityResult;
+pub use similarity::cosine_similarity;
 
 /// A dense vector embedding.
 pub type Embedding = Vec<f32>;

@@ -10,9 +10,13 @@
 
 use std::path::PathBuf;
 
-use codex_context_files::{
-    AgentBuilder, ContextAgent, LlmConfig, NodeType, OptimizerConfig, TreeOptimizer, TreeStore,
-};
+use codex_context_files::AgentBuilder;
+use codex_context_files::ContextAgent;
+use codex_context_files::LlmConfig;
+use codex_context_files::NodeType;
+use codex_context_files::OptimizerConfig;
+use codex_context_files::TreeOptimizer;
+use codex_context_files::TreeStore;
 use tempfile::TempDir;
 
 fn fixtures_dir() -> PathBuf {

@@ -29,8 +29,12 @@ pub mod event;
 pub mod indexer;
 pub mod watcher;
 
-pub use config::{DirectoryConfig, WatchMode};
-pub use error::{Result, WatcherError};
-pub use event::{FileEvent, FileEventKind};
-pub use indexer::{FileIndexer, IndexedFile};
+pub use config::DirectoryConfig;
+pub use config::WatchMode;
+pub use error::Result;
+pub use error::WatcherError;
+pub use event::FileEvent;
+pub use event::FileEventKind;
+pub use indexer::FileIndexer;
+pub use indexer::IndexedFile;
 pub use watcher::DirectoryWatcher;

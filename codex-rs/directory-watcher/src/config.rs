@@ -2,7 +2,8 @@
 
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 /// Configuration for a watched directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]

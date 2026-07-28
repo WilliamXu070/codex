@@ -5,10 +5,12 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::chunker::Chunk;
-use crate::entity::{Entity, EntityType};
+use crate::entity::Entity;
+use crate::entity::EntityType;
 
 /// A relationship between two entities.
 #[derive(Debug, Clone, Serialize, Deserialize)]

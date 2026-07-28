@@ -42,7 +42,7 @@ pub enum EmbeddingError {
 
     /// HTTP error.
     #[error("http error: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(#[from] codex_http_client::HttpError),
 
     /// Text too long for embedding.
     #[error("text too long: {length} characters, max {max_length}")]
