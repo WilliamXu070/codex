@@ -40,6 +40,8 @@ A published `openai/codex` release should claim its tag exactly once, launch one
 - `cargo build -p codex-cli -p codex-tui`, formatting, and the sound regression pass.
 - The built binary reports `codex-cli 0.146.0-alpha.14`.
 - The original checkout's HEAD, tracked patch, untracked list, and untracked file contents still match the retry snapshot.
+- Exact-tag, latest-release, and launchd deliveries all skipped the completed tag without starting another agent or incrementing the ledger.
+- The 900-second launchd watcher completed its first check with exit status 0.
 
 ## Status
 
