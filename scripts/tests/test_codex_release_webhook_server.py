@@ -38,12 +38,8 @@ class SignatureTests(unittest.TestCase):
         body = b'{"action":"published"}'
         secret = "secret"
         digest = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-        self.assertTrue(
-            webhook.verify_signature(body, f"sha256={digest}", secret)
-        )
-        self.assertFalse(
-            webhook.verify_signature(body, "sha256=wrong", secret)
-        )
+        self.assertTrue(webhook.verify_signature(body, f"sha256={digest}", secret))
+        self.assertFalse(webhook.verify_signature(body, "sha256=wrong", secret))
 
 
 class ReleaseDecisionTests(unittest.TestCase):
@@ -68,9 +64,7 @@ class ReleaseDecisionTests(unittest.TestCase):
 
     def test_ignores_created_redelivery_wrong_repo_and_wrong_event(self) -> None:
         self.assertFalse(self.decide(payload(action="created"))[0])
-        self.assertFalse(
-            self.decide(payload(repository="WilliamXu070/codex"))[0]
-        )
+        self.assertFalse(self.decide(payload(repository="WilliamXu070/codex"))[0])
         self.assertFalse(self.decide(payload(), event="push")[0])
 
     def test_channel_filter_does_not_promote_wrong_release_type(self) -> None:
@@ -89,9 +83,7 @@ class ReleaseDecisionTests(unittest.TestCase):
         )
 
     def test_rejects_non_codex_tag(self) -> None:
-        self.assertFalse(
-            self.decide(payload(tag="rusty-v8-v146.4.0"))[0]
-        )
+        self.assertFalse(self.decide(payload(tag="rusty-v8-v146.4.0"))[0])
 
 
 if __name__ == "__main__":

@@ -38,9 +38,7 @@ DEFAULT_INSTALL_ROOT = Path.home() / ".local/lib/codex/releases"
 DEFAULT_ACTIVE_CLI = Path.home() / ".local/bin/codex"
 DEFAULT_ACTIVE_TUI = Path.home() / ".local/bin/codex-tui"
 DEFAULT_CURRENT_LINK = Path.home() / ".local/lib/codex/current"
-TAG_RE = re.compile(
-    r"^rust-v(?P<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$"
-)
+TAG_RE = re.compile(r"^rust-v(?P<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$")
 
 
 class ReleaseAgentError(RuntimeError):
@@ -110,9 +108,7 @@ class ReleaseLedger:
             }
             for column in ("merge_commit", "installed_cli", "previous_cli"):
                 if column not in columns:
-                    conn.execute(
-                        f"ALTER TABLE release_runs ADD COLUMN {column} TEXT"
-                    )
+                    conn.execute(f"ALTER TABLE release_runs ADD COLUMN {column} TEXT")
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30)
@@ -327,9 +323,7 @@ def discover_latest_release(repository: str, channel: str) -> str:
         tag = str(release.get("tag_name", ""))
         if TAG_RE.fullmatch(tag):
             return tag
-    raise ReleaseAgentError(
-        f"no {channel} Codex release found for {repository}"
-    )
+    raise ReleaseAgentError(f"no {channel} Codex release found for {repository}")
 
 
 def safe_tag_name(tag: str) -> str:
@@ -468,9 +462,7 @@ def prepare_workspace(
         )
         run_command(["git", "switch", "-c", branch, source_head], cwd=workspace)
     elif git_output(workspace, "branch", "--show-current") != branch:
-        raise ReleaseAgentError(
-            f"retry workspace is on unexpected branch: {workspace}"
-        )
+        raise ReleaseAgentError(f"retry workspace is on unexpected branch: {workspace}")
 
     remotes = set(git_output(workspace, "remote").splitlines())
     if "upstream" not in remotes:
@@ -529,9 +521,9 @@ def integration_prompt(
            the newer upstream architecture while reapplying William's custom behavior.
            Do not merely change the Cargo version.
         4. Port every intentional dirty tracked edit from
-           {context_dir / 'dirty.patch'}. Use `git apply --3way` as a starting point
+           {context_dir / "dirty.patch"}. Use `git apply --3way` as a starting point
            when useful, then resolve manually.
-        5. Inspect {context_dir / 'untracked.json'} and port intentional untracked
+        5. Inspect {context_dir / "untracked.json"} and port intentional untracked
            source/scripts. Exclude generated `*.snap.new` files and the accidental
            `.bazelversion 2`. Preserve real Rust source, regression tests, updater
            scripts, sound/transcription helpers, and documentation.
@@ -625,14 +617,14 @@ def run_codex_agent(
         'default_permissions="release_agent"',
         "-c",
         (
-            'permissions.release_agent.filesystem={'
+            "permissions.release_agent.filesystem={"
             '":minimal"="read",'
             '":tmpdir"="write",'
             '":slash_tmp"="write",'
-            f"{json.dumps(str(cargo_home))}=\"read\","
-            f"{json.dumps(str(rustup_home))}=\"read\","
-            f"{json.dumps(str(git_config))}=\"read\","
-            f"{json.dumps(str(git_config_dir))}=\"read\","
+            f'{json.dumps(str(cargo_home))}="read",'
+            f'{json.dumps(str(rustup_home))}="read",'
+            f'{json.dumps(str(git_config))}="read",'
+            f'{json.dumps(str(git_config_dir))}="read",'
             '":workspace_roots"={'
             '"."="write",'
             '".git"="write",'
@@ -729,9 +721,7 @@ def verify_workspace(
     ]
     missing = [path for path in required_paths if not (workspace / path).exists()]
     if missing:
-        raise ReleaseAgentError(
-            "custom Codex files are missing: " + ", ".join(missing)
-        )
+        raise ReleaseAgentError("custom Codex files are missing: " + ", ".join(missing))
 
     test_env = os.environ.copy()
     test_env["CODEX_ROOT"] = str(workspace)
@@ -1009,8 +999,7 @@ def wait_for_pull_request_ci(
             unexpected = [
                 check
                 for check in matching
-                if str(check.get("bucket", "")).lower()
-                not in {"pending", "pass"}
+                if str(check.get("bucket", "")).lower() not in {"pending", "pass"}
                 and str(check.get("state", "")).upper()
                 not in {"EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "SUCCESS"}
             ]
@@ -1369,7 +1358,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--state-dir",
         type=Path,
-        default=Path(os.environ.get("CODEX_RELEASE_AGENT_STATE_DIR", DEFAULT_STATE_DIR)),
+        default=Path(
+            os.environ.get("CODEX_RELEASE_AGENT_STATE_DIR", DEFAULT_STATE_DIR)
+        ),
     )
     parser.add_argument(
         "--upstream-url",
