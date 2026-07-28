@@ -150,7 +150,7 @@ impl CommunityHub {
         self.validate_for_publish(tool)?;
 
         // This is a placeholder - actual implementation would call the API
-        info!("Publishing tool: {} to community", tool.name);
+        info!("Publishing tool {} to {}", tool.name, self.api_url);
 
         // Simulate successful publish
         let shared = SharedTool {

@@ -27,7 +27,7 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 walkdir.workspace = true
 
 # ZIP archive reading (for Office documents)
-zip = "0.6"
+zip.workspace = true
 
 # Regex for pattern matching
 regex-lite.workspace = true
@@ -39,9 +39,10 @@ tracing.workspace = true
 dirs.workspace = true
 
 # Internal dependencies
-codex-embeddings = { path = "../embeddings" }
+codex-embeddings = { workspace = true }
 
 [dev-dependencies]
+codex-utils-cargo-bin = { workspace = true }
 tokio-test.workspace = true
 tempfile.workspace = true
 pretty_assertions.workspace = true

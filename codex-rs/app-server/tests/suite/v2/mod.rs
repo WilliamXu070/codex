@@ -15,6 +15,7 @@ mod config_rpc;
 mod connection_handling_websocket;
 #[cfg(unix)]
 mod connection_handling_websocket_unix;
+mod context;
 #[cfg(unix)]
 mod curated_mcp_sync;
 mod current_time;

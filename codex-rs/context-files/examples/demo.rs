@@ -74,7 +74,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Query Examples:");
 
     let pasta_query = agent.query("pasta");
-    println!("   'pasta' → {} results in {}ms",
+    println!(
+        "   'pasta' → {} results in {}ms",
         pasta_query.nodes.len(),
         pasta_query.processing_time_ms
     );
@@ -83,7 +84,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let meeting_query = agent.query("meeting");
-    println!("   'meeting' → {} results in {}ms",
+    println!(
+        "   'meeting' → {} results in {}ms",
         meeting_query.nodes.len(),
         meeting_query.processing_time_ms
     );

@@ -7,7 +7,7 @@
 //! - Context file updates
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -112,7 +112,7 @@ pub struct SyncManager {
     event_tx: mpsc::Sender<SyncEvent>,
 
     /// Event receiver for processing events.
-    event_rx: Arc<RwLock<mpsc::Receiver<SyncEvent>>>,
+    _event_rx: Arc<RwLock<mpsc::Receiver<SyncEvent>>>,
 
     /// Conflict resolution strategy.
     conflict_strategy: ConflictResolution,
@@ -126,7 +126,7 @@ impl SyncManager {
         Self {
             states: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
-            event_rx: Arc::new(RwLock::new(event_rx)),
+            _event_rx: Arc::new(RwLock::new(event_rx)),
             conflict_strategy,
         }
     }
@@ -171,7 +171,7 @@ impl SyncManager {
             .read()
             .await
             .get(concept)
-            .map_or(false, |s| s.dirty)
+            .is_some_and(|s| s.dirty)
     }
 
     /// Process a sync event.
@@ -214,7 +214,7 @@ impl SyncManager {
     }
 
     /// Handle a newly created file.
-    async fn handle_file_created(&self, path: &PathBuf, _store: &mut ContextStore) -> Result<()> {
+    async fn handle_file_created(&self, path: &Path, _store: &mut ContextStore) -> Result<()> {
         // TODO: Extract concept from file, create context file if needed
         info!(
             "File created handler not yet implemented: {}",
@@ -224,7 +224,7 @@ impl SyncManager {
     }
 
     /// Handle a modified file.
-    async fn handle_file_modified(&self, path: &PathBuf, _store: &mut ContextStore) -> Result<()> {
+    async fn handle_file_modified(&self, path: &Path, _store: &mut ContextStore) -> Result<()> {
         // TODO: Update relevant context files with new information
         debug!(
             "File modified handler not yet implemented: {}",
@@ -234,7 +234,7 @@ impl SyncManager {
     }
 
     /// Handle a deleted file.
-    async fn handle_file_deleted(&self, path: &PathBuf, _store: &mut ContextStore) -> Result<()> {
+    async fn handle_file_deleted(&self, path: &Path, _store: &mut ContextStore) -> Result<()> {
         // TODO: Update context files to remove references
         info!(
             "File deleted handler not yet implemented: {}",

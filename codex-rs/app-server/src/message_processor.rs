@@ -25,6 +25,7 @@ use crate::request_processors::AppsRequestProcessor;
 use crate::request_processors::CatalogRequestProcessor;
 use crate::request_processors::CommandExecRequestProcessor;
 use crate::request_processors::ConfigRequestProcessor;
+use crate::request_processors::ContextRequestProcessor;
 use crate::request_processors::EnvironmentRequestProcessor;
 use crate::request_processors::FeedbackRequestProcessor;
 use crate::request_processors::FsRequestProcessor;
@@ -104,6 +105,7 @@ pub(crate) struct MessageProcessor {
     command_exec_processor: CommandExecRequestProcessor,
     process_exec_processor: ProcessExecRequestProcessor,
     config_processor: ConfigRequestProcessor,
+    context_processor: ContextRequestProcessor,
     environment_processor: EnvironmentRequestProcessor,
     external_agent_config_processor: ExternalAgentConfigRequestProcessor,
     feedback_processor: FeedbackRequestProcessor,
@@ -329,6 +331,7 @@ impl MessageProcessor {
             thread_manager.clone(),
             analytics_events_client.clone(),
         );
+        let context_processor = ContextRequestProcessor::new(&config.codex_home, outgoing.clone());
         let on_effective_plugins_changed =
             crate::effective_plugin_change::effective_plugins_changed_callback(
                 auth_manager.clone(),
@@ -496,6 +499,7 @@ impl MessageProcessor {
             command_exec_processor,
             process_exec_processor,
             config_processor,
+            context_processor,
             environment_processor,
             external_agent_config_processor,
             feedback_processor,
@@ -1123,6 +1127,26 @@ impl MessageProcessor {
                 self.thread_processor.thread_memory_mode_set(params).await
             }
             ClientRequest::MemoryReset { .. } => self.thread_processor.memory_reset().await,
+            ClientRequest::IndexDirectory { params, .. } => self
+                .context_processor
+                .index_directory(params)
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::QueryContext { params, .. } => self
+                .context_processor
+                .query_context(params)
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::GetNodeContext { params, .. } => self
+                .context_processor
+                .get_node_context(params)
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::ListDomains { params, .. } => self
+                .context_processor
+                .list_domains(params)
+                .await
+                .map(|response| Some(response.into())),
             ClientRequest::ThreadUnarchive { params, .. } => {
                 self.thread_processor
                     .thread_unarchive(request_id.clone(), params)

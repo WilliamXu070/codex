@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::Embedding;
-use crate::error::{EmbeddingError, Result};
+use crate::error::Result;
 
 /// Cache entry for an embedding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,7 +54,7 @@ impl EmbeddingCache {
     pub async fn with_persistence(path: impl AsRef<Path>, max_entries: usize) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
 
-        let mut cache = Self {
+        let cache = Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
             cache_path: Some(path.clone()),
             max_entries,
@@ -178,18 +178,18 @@ impl EmbeddingCache {
 
     /// Load cache from disk.
     async fn load(&self) -> Result<()> {
-        if let Some(ref path) = self.cache_path {
-            if path.exists() {
-                let content = fs::read_to_string(path).await?;
-                let entries: Vec<CacheEntry> = serde_json::from_str(&content)?;
+        if let Some(ref path) = self.cache_path
+            && path.exists()
+        {
+            let content = fs::read_to_string(path).await?;
+            let entries: Vec<CacheEntry> = serde_json::from_str(&content)?;
 
-                let mut cache = self.cache.write().await;
-                for entry in entries {
-                    cache.insert(entry.text_hash.clone(), entry);
-                }
-
-                info!("Loaded {} cache entries from disk", cache.len());
+            let mut cache = self.cache.write().await;
+            for entry in entries {
+                cache.insert(entry.text_hash.clone(), entry);
             }
+
+            info!("Loaded {} cache entries from disk", cache.len());
         }
         Ok(())
     }

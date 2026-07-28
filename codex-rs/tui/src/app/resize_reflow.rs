@@ -198,11 +198,7 @@ impl App {
     }
 
     pub(crate) fn history_line_wrap_policy(&self) -> HistoryLineWrapPolicy {
-        if self.chat_widget.raw_output_mode() {
-            HistoryLineWrapPolicy::Terminal
-        } else {
-            HistoryLineWrapPolicy::PreWrap
-        }
+        HistoryLineWrapPolicy::PreWrap
     }
 
     /// Retain only the newest rendered rows for initial resume replay.

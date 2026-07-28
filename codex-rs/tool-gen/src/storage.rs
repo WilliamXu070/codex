@@ -98,7 +98,7 @@ impl ToolStore {
                 .map_err(|e| StorageError::ReadFile(format!("{e}")))?
             {
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "json") {
+                if path.extension().is_some_and(|ext| ext == "json") {
                     match self.load_file(&path).await {
                         Ok(tool) => {
                             debug!("Loaded tool: {}", tool.name);

@@ -584,6 +584,30 @@ client_request_definitions! {
         serialization: global("memory"),
         response: v2::MemoryResetResponse,
     },
+    #[experimental("context/index")]
+    IndexDirectory => "context/index" {
+        params: v2::IndexDirectoryParams,
+        serialization: global("context"),
+        response: v2::IndexDirectoryResponse,
+    },
+    #[experimental("context/query")]
+    QueryContext => "context/query" {
+        params: v2::QueryContextParams,
+        serialization: global_shared_read("context"),
+        response: v2::QueryContextResponse,
+    },
+    #[experimental("context/node/get")]
+    GetNodeContext => "context/node/get" {
+        params: v2::GetNodeContextParams,
+        serialization: global_shared_read("context"),
+        response: v2::GetNodeContextResponse,
+    },
+    #[experimental("context/domains/list")]
+    ListDomains => "context/domains/list" {
+        params: v2::ListDomainsParams,
+        serialization: global_shared_read("context"),
+        response: v2::ListDomainsResponse,
+    },
     ThreadUnarchive => "thread/unarchive" {
         params: v2::ThreadUnarchiveParams,
         serialization: thread_id(params.thread_id),
@@ -1667,6 +1691,10 @@ server_notification_definitions! {
     EnvironmentDisconnected => "thread/environment/disconnected" (v2::EnvironmentConnectionNotification),
     #[experimental("thread/settings/updated")]
     ThreadSettingsUpdated => "thread/settings/updated" (v2::ThreadSettingsUpdatedNotification),
+    #[experimental("context/indexProgress")]
+    IndexProgress => "context/indexProgress" (v2::IndexProgressNotification),
+    #[experimental("context/indexComplete")]
+    IndexComplete => "context/indexComplete" (v2::IndexCompleteNotification),
     ThreadTokenUsageUpdated => "thread/tokenUsage/updated" (v2::ThreadTokenUsageUpdatedNotification),
     TurnStarted => "turn/started" (v2::TurnStartedNotification),
     HookStarted => "hook/started" (v2::HookStartedNotification),

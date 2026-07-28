@@ -32,6 +32,7 @@ members = [
     "collaboration-mode-templates",
     "connectors",
     "config",
+    "context-files",
     "context-fragments",
     "shell-command",
     "shell-escalation",
@@ -62,6 +63,8 @@ members = [
     "ext/skills",
     "ext/web-search",
     "external-agent-migration",
+    "directory-watcher",
+    "embeddings",
     "keyring-store",
     "file-search",
     "file-watcher",
@@ -84,6 +87,7 @@ members = [
     "rmcp-client",
     "responses-api-proxy",
     "response-debug-context",
+    "retrieval",
     "sandboxing",
     "stdio-to-uds",
     "otel",
@@ -122,6 +126,7 @@ members = [
     "test-binary-support",
     "thread-manager-sample",
     "thread-store",
+    "tool-gen",
     "uds",
     "codex-experimental-api-macros",
     "plugin",
@@ -173,11 +178,14 @@ codex-config = { path = "config" }
 codex-connectors = { path = "connectors" }
 codex-agent-extension = { path = "ext/agent" }
 codex-connectors-extension = { path = "ext/connectors" }
+codex-context-files = { path = "context-files" }
 codex-context-fragments = { path = "context-fragments" }
 codex-core = { path = "core" }
 codex-core-api = { path = "core-api" }
 codex-core-plugins = { path = "core-plugins" }
 codex-core-skills = { path = "core-skills" }
+codex-directory-watcher = { path = "directory-watcher" }
+codex-embeddings = { path = "embeddings" }
 codex-exec = { path = "exec" }
 codex-file-system = { path = "file-system" }
 codex-exec-server-protocol = { path = "exec-server-protocol" }
@@ -223,6 +231,7 @@ codex-protocol = { path = "protocol" }
 codex-prompts = { path = "prompts" }
 codex-responses-api-proxy = { path = "responses-api-proxy" }
 codex-response-debug-context = { path = "response-debug-context" }
+codex-retrieval = { path = "retrieval" }
 codex-rmcp-client = { path = "rmcp-client" }
 codex-rollout = { path = "rollout" }
 codex-rollout-trace = { path = "rollout-trace" }
@@ -237,6 +246,7 @@ codex-stdio-to-uds = { path = "stdio-to-uds" }
 codex-terminal-detection = { path = "terminal-detection" }
 codex-test-binary-support = { path = "test-binary-support" }
 codex-thread-store = { path = "thread-store" }
+codex-tool-gen = { path = "tool-gen" }
 codex-tools = { path = "tools" }
 codex-tui = { path = "tui" }
 codex-uds = { path = "uds" }

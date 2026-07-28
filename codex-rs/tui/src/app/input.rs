@@ -102,25 +102,6 @@ impl App {
         tui.frame_requester().schedule_frame();
     }
 
-    pub(super) fn apply_raw_output_mode(
-        &mut self,
-        tui: &mut tui::Tui,
-        enabled: bool,
-        notify: bool,
-    ) {
-        if notify {
-            self.chat_widget.set_raw_output_mode_and_notify(enabled);
-        } else {
-            self.chat_widget.set_raw_output_mode(enabled);
-        }
-        if let Err(err) = self.reflow_transcript_now(tui) {
-            tracing::warn!(error = %err, "failed to reflow transcript after raw output mode toggle");
-            self.chat_widget
-                .add_error_message(format!("Failed to redraw transcript: {err}"));
-        }
-        tui.frame_requester().schedule_frame();
-    }
-
     pub(super) async fn handle_key_event(
         &mut self,
         tui: &mut tui::Tui,
@@ -208,13 +189,6 @@ impl App {
             && self.chat_widget.can_toggle_fast_mode_from_keybinding()
         {
             self.chat_widget.toggle_fast_mode_from_ui();
-            return;
-        }
-
-        if app_keymap_shortcuts_available && self.keymap.app.toggle_raw_output.is_pressed(key_event)
-        {
-            let enabled = !self.chat_widget.raw_output_mode();
-            self.apply_raw_output_mode(tui, enabled, /*notify*/ false);
             return;
         }
 
@@ -349,8 +323,7 @@ impl App {
     }
 
     fn transcribe_start_key_matches(&self, key_event: KeyEvent) -> bool {
-        key_event.kind == KeyEventKind::Press
-            && self.keymap.app.transcribe.is_pressed(key_event)
+        key_event.kind == KeyEventKind::Press && self.keymap.app.transcribe.is_pressed(key_event)
     }
 
     fn transcribe_release_key_matches(&self, key_event: KeyEvent) -> bool {

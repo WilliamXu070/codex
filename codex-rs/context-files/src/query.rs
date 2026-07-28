@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::context_file::ContextFile;
-use crate::error::Result;
 
 /// A parsed query with identified intent and concepts.
 #[derive(Debug, Clone, Serialize, Deserialize)]

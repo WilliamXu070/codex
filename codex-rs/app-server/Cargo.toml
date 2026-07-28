@@ -40,6 +40,7 @@ codex-cloud-config = { workspace = true }
 codex-code-mode = { workspace = true }
 codex-config = { workspace = true }
 codex-connectors = { workspace = true }
+codex-context-files = { workspace = true }
 codex-core = { workspace = true }
 codex-core-plugins = { workspace = true }
 codex-home = { workspace = true }

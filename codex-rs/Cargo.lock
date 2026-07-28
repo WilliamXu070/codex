@@ -1969,6 +1969,7 @@ dependencies = [
  "codex-code-mode",
  "codex-config",
  "codex-connectors",
+ "codex-context-files",
  "codex-core",
  "codex-core-plugins",
  "codex-exec-server",
@@ -2626,6 +2627,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-context-files"
+version = "0.146.0-alpha.14"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "codex-embeddings",
+ "codex-utils-cargo-bin",
+ "dirs",
+ "pretty_assertions",
+ "regex-lite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "walkdir",
+ "zip",
+]
+
+[[package]]
 name = "codex-context-fragments"
 version = "0.0.0"
 dependencies = [
@@ -2870,6 +2895,41 @@ dependencies = [
  "toml 0.9.11+spec-1.1.0",
  "tracing",
  "zip",
+]
+
+[[package]]
+name = "codex-directory-watcher"
+version = "0.146.0-alpha.14"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "glob",
+ "notify",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
+name = "codex-embeddings"
+version = "0.146.0-alpha.14"
+dependencies = [
+ "anyhow",
+ "pretty_assertions",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "wiremock",
 ]
 
 [[package]]
@@ -3840,6 +3900,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-retrieval"
+version = "0.146.0-alpha.14"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "codex-context-files",
+ "codex-directory-watcher",
+ "codex-embeddings",
+ "dirs",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-test",
+ "tracing",
+]
+
+[[package]]
 name = "codex-rmcp-client"
 version = "0.0.0"
 dependencies = [
@@ -4134,6 +4214,24 @@ dependencies = [
  "tracing",
  "uuid",
  "zstd",
+]
+
+[[package]]
+name = "codex-tool-gen"
+version = "0.146.0-alpha.14"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

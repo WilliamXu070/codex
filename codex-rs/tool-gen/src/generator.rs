@@ -4,7 +4,7 @@
 //! and user requests.
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::error::{Result, ToolError};
 use crate::spec::{DataType, ToolInput, ToolOutput, ToolSpec};
@@ -213,30 +213,30 @@ impl ToolGenerator {
         let mut spec = ToolSpec::new();
 
         // Infer inputs from example
-        if let Some(ref example) = request.example_inputs {
-            if let Some(obj) = example.as_object() {
-                for (key, value) in obj {
-                    let data_type = Self::infer_type(value);
-                    spec = spec.with_input(ToolInput::required(
-                        key,
-                        data_type,
-                        format!("Input parameter: {key}"),
-                    ));
-                }
+        if let Some(ref example) = request.example_inputs
+            && let Some(obj) = example.as_object()
+        {
+            for (key, value) in obj {
+                let data_type = Self::infer_type(value);
+                spec = spec.with_input(ToolInput::required(
+                    key,
+                    data_type,
+                    format!("Input parameter: {key}"),
+                ));
             }
         }
 
         // Infer outputs from example
-        if let Some(ref example) = request.example_outputs {
-            if let Some(obj) = example.as_object() {
-                for (key, value) in obj {
-                    let data_type = Self::infer_type(value);
-                    spec = spec.with_output(ToolOutput::new(
-                        key,
-                        data_type,
-                        format!("Output parameter: {key}"),
-                    ));
-                }
+        if let Some(ref example) = request.example_outputs
+            && let Some(obj) = example.as_object()
+        {
+            for (key, value) in obj {
+                let data_type = Self::infer_type(value);
+                spec = spec.with_output(ToolOutput::new(
+                    key,
+                    data_type,
+                    format!("Output parameter: {key}"),
+                ));
             }
         }
 
@@ -400,7 +400,7 @@ mod tests {
             DataType::Integer
         );
         assert_eq!(
-            ToolGenerator::infer_type(&serde_json::json!(3.14)),
+            ToolGenerator::infer_type(&serde_json::json!(1.25)),
             DataType::Number
         );
         assert_eq!(

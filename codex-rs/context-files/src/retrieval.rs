@@ -138,20 +138,20 @@ impl RetrievalEngine {
                     let via_concept = result.concept.clone();
                     let related = index.get_related(&result.concept);
                     for (related_concept, _relation) in related {
-                        if let Some(cf) = store.get(&related_concept.name) {
-                            if !scores.contains_key(&cf.id) {
-                                let relevance = self.config.relation_weight;
-                                new_entries.push((
-                                    cf.id.clone(),
-                                    ScoredResult::new(
-                                        cf,
-                                        relevance,
-                                        MatchReason::RelatedMatch {
-                                            via_concept: via_concept.clone(),
-                                        },
-                                    ),
-                                ));
-                            }
+                        if let Some(cf) = store.get(&related_concept.name)
+                            && !scores.contains_key(&cf.id)
+                        {
+                            let relevance = self.config.relation_weight;
+                            new_entries.push((
+                                cf.id.clone(),
+                                ScoredResult::new(
+                                    cf,
+                                    relevance,
+                                    MatchReason::RelatedMatch {
+                                        via_concept: via_concept.clone(),
+                                    },
+                                ),
+                            ));
                         }
                     }
                 }
@@ -204,8 +204,8 @@ impl RetrievalEngine {
     fn semantic_search(
         &self,
         query: &Query,
-        store: &ContextStore,
-        scores: &mut HashMap<String, ScoredResult>,
+        _store: &ContextStore,
+        _scores: &mut HashMap<String, ScoredResult>,
     ) -> Result<()> {
         // TODO: Implement using codex-embeddings crate
         // 1. Generate embedding for query text

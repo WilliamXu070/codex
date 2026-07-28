@@ -3277,7 +3277,6 @@
               "queue": null,
               "submit": null,
               "toggle_fast_mode": null,
-              "toggle_raw_output": null,
               "toggle_shortcuts": null,
               "toggle_side_conversation": null,
               "toggle_vim_mode": null,
@@ -3413,11 +3412,6 @@
           ],
           "default": "composer",
           "description": "Where the terminal pet should anchor vertically.\n\nDefaults to `composer`, which follows the current TUI composer viewport."
-        },
-        "raw_output_mode": {
-          "default": false,
-          "description": "Start the TUI in raw scrollback mode for copy-friendly transcript output. Defaults to `false`.",
-          "type": "boolean"
         },
         "resume_cwd": {
           "allOf": [
@@ -3843,14 +3837,6 @@
           ],
           "description": "Toggle Fast mode."
         },
-        "toggle_raw_output": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/KeybindingsSpec"
-            }
-          ],
-          "description": "Toggle raw scrollback mode for copy-friendly transcript selection."
-        },
         "toggle_shortcuts": {
           "allOf": [
             {
@@ -3974,7 +3960,6 @@
             "queue": null,
             "submit": null,
             "toggle_fast_mode": null,
-            "toggle_raw_output": null,
             "toggle_shortcuts": null,
             "toggle_side_conversation": null,
             "toggle_vim_mode": null,

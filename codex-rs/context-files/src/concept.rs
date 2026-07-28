@@ -27,7 +27,7 @@ impl Concept {
     /// Create a new concept.
     pub fn new(name: impl Into<String>) -> Self {
         let name = name.into();
-        let display_name = name.replace('-', " ").replace('_', " ");
+        let display_name = name.replace(['-', '_'], " ");
         Self {
             name,
             display_name,

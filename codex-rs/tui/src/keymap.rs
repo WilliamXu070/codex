@@ -70,8 +70,6 @@ pub(crate) struct AppKeymap {
     pub(crate) toggle_vim_mode: Vec<KeyBinding>,
     /// Toggle Fast mode.
     pub(crate) toggle_fast_mode: Vec<KeyBinding>,
-    /// Toggle raw scrollback mode for copy-friendly transcript selection.
-    pub(crate) toggle_raw_output: Vec<KeyBinding>,
     /// Switch between a side conversation and its parent without closing either.
     pub(crate) toggle_side_conversation: Vec<KeyBinding>,
 }
@@ -431,11 +429,6 @@ impl RuntimeKeymap {
                 keymap.global.toggle_fast_mode.as_ref(),
                 &defaults.app.toggle_fast_mode,
                 "tui.keymap.global.toggle_fast_mode",
-            )?,
-            toggle_raw_output: resolve_bindings(
-                keymap.global.toggle_raw_output.as_ref(),
-                &defaults.app.toggle_raw_output,
-                "tui.keymap.global.toggle_raw_output",
             )?,
             toggle_side_conversation: if side_toggle_default_is_shadowed {
                 Vec::new()
@@ -816,10 +809,7 @@ impl RuntimeKeymap {
                 keymap.global.open_external_editor.as_ref(),
                 app.open_external_editor.as_slice(),
             ),
-            (
-                keymap.global.transcribe.as_ref(),
-                app.transcribe.as_slice(),
-            ),
+            (keymap.global.transcribe.as_ref(), app.transcribe.as_slice()),
             (keymap.global.copy.as_ref(), app.copy.as_slice()),
             (
                 keymap.global.clear_terminal.as_ref(),
@@ -832,10 +822,6 @@ impl RuntimeKeymap {
             (
                 keymap.global.toggle_fast_mode.as_ref(),
                 app.toggle_fast_mode.as_slice(),
-            ),
-            (
-                keymap.global.toggle_raw_output.as_ref(),
-                app.toggle_raw_output.as_slice(),
             ),
             (
                 keymap.global.toggle_side_conversation.as_ref(),
@@ -951,7 +937,6 @@ impl RuntimeKeymap {
                 clear_terminal: default_bindings![ctrl(KeyCode::Char('l'))],
                 toggle_vim_mode: default_bindings![],
                 toggle_fast_mode: default_bindings![],
-                toggle_raw_output: default_bindings![alt(KeyCode::Char('r'))],
                 toggle_side_conversation: default_bindings![ctrl(KeyCode::Char('/'))],
             },
             chat: ChatKeymap {
@@ -1221,7 +1206,6 @@ impl RuntimeKeymap {
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
-                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 ("toggle_side_conversation", side_toggle_bindings.as_slice()),
                 ("chat.interrupt_turn", self.chat.interrupt_turn.as_slice()),
                 (
@@ -1266,7 +1250,6 @@ impl RuntimeKeymap {
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
-                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 ("toggle_side_conversation", side_toggle_bindings.as_slice()),
                 ("chat.interrupt_turn", self.chat.interrupt_turn.as_slice()),
                 (
@@ -1317,7 +1300,6 @@ impl RuntimeKeymap {
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
-                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 ("toggle_side_conversation", side_toggle_bindings.as_slice()),
             ],
             [
@@ -1393,7 +1375,6 @@ impl RuntimeKeymap {
                 ("composer.submit", self.composer.submit.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
-                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 ("toggle_side_conversation", side_toggle_bindings.as_slice()),
                 (
                     "composer.history_search_previous",
@@ -2910,28 +2891,6 @@ mod tests {
         keymap.composer.toggle_shortcuts = Some(KeybindingsSpec::Many(vec![]));
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
         assert!(runtime.composer.toggle_shortcuts.is_empty());
-    }
-
-    #[test]
-    fn raw_output_toggle_defaults_to_alt_r() {
-        let runtime = RuntimeKeymap::defaults();
-        assert_eq!(
-            runtime.app.toggle_raw_output,
-            vec![key_hint::alt(KeyCode::Char('r'))]
-        );
-    }
-
-    #[test]
-    fn raw_output_toggle_can_be_remapped() {
-        let mut keymap = TuiKeymap::default();
-        keymap.global.toggle_raw_output = Some(one("f12"));
-
-        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
-
-        assert_eq!(
-            runtime.app.toggle_raw_output,
-            vec![key_hint::plain(KeyCode::F(12))]
-        );
     }
 
     #[test]

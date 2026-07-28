@@ -108,12 +108,12 @@ impl Tool {
         hasher.update(self.name.as_bytes());
         hasher.update(self.version.as_bytes());
         hasher.update(format!("{:?}", self.definition).as_bytes());
-        hex::encode(hasher.finalize())
+        format!("{:x}", hasher.finalize())
     }
 }
 
 /// Category of tool.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCategory {
     /// MCP server integration.

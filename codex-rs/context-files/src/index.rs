@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::concept::{Concept, ConceptRelation, RelationType};
-use crate::error::Result;
 
 /// An inverted index for concept lookup.
 ///
