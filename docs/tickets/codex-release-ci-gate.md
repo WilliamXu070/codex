@@ -34,6 +34,9 @@ that previously failed analysis.
 - OpenAI's workflows reference private runner groups and paid macOS capacity
   that the personal fork does not have, so those jobs cannot be a meaningful
   required gate in the fork.
+- The standalone V8 canary also launched an expensive cross-platform matrix in
+  the fork whenever shared Bazel metadata changed; only its lightweight change
+  detector is useful outside `openai/codex`.
 
 ## Plan
 
