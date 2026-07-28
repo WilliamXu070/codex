@@ -138,7 +138,7 @@ impl ChatWidget {
                 self.submit_transcribe_action(&["set-language", language]);
             }
             "help" => {
-                self.add_info_message(TRANSCRIBE_USAGE.to_string(), None);
+                self.add_info_message(TRANSCRIBE_USAGE.to_string(), /*hint*/ None);
             }
             _ => {
                 self.add_error_message(format!("Unrecognized subcommand. {TRANSCRIBE_USAGE}"));
@@ -242,11 +242,14 @@ impl ChatWidget {
             })
             .unwrap_or_else(|_| "transcribe command unavailable".to_string());
         if output.is_empty() {
-            self.add_info_message("transcribe command produced no output".to_string(), None);
+            self.add_info_message(
+                "transcribe command produced no output".to_string(),
+                /*hint*/ None,
+            );
             return;
         }
         let has_error = output.contains("error:") || output.contains("Usage:");
-        self.add_info_message(output.clone(), None);
+        self.add_info_message(output.clone(), /*hint*/ None);
         if has_error {
             return;
         }

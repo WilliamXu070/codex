@@ -1,0 +1,24 @@
+[package]
+name = "dataflow"
+version = "0.1.0"
+edition = "2021"
+authors = ["Alice Johnson <alice@techcorp.com>"]
+description = "High-performance data processing pipeline"
+repository = "https://github.com/techcorp/dataflow"
+license = "MIT"
+
+[dependencies]
+tokio = { version = "1.35", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+axum = "0.7"
+sqlx = { version = "0.7", features = ["postgres", "runtime-tokio"] }
+redis = "0.24"
+rdkafka = "0.36"
+tracing = "0.1"
+thiserror = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+pretty_assertions = "1.4"

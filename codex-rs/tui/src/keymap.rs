@@ -70,8 +70,8 @@ pub(crate) struct AppKeymap {
     pub(crate) toggle_vim_mode: Vec<KeyBinding>,
     /// Toggle Fast mode.
     pub(crate) toggle_fast_mode: Vec<KeyBinding>,
-    /// Toggle raw scrollback mode for copy-friendly transcript selection.
-    pub(crate) toggle_raw_output: Vec<KeyBinding>,
+    /// Switch between a side conversation and its parent without closing either.
+    pub(crate) toggle_side_conversation: Vec<KeyBinding>,
 }
 
 /// Chat-level keybindings evaluated at the app event layer.
@@ -387,6 +387,12 @@ impl RuntimeKeymap {
     /// dispatch, or conflict guarantees from this resolver no longer hold.
     pub(crate) fn from_config(keymap: &TuiKeymap) -> Result<Self, String> {
         let defaults = Self::built_in_defaults();
+        let side_toggle_default_is_shadowed = keymap.global.toggle_side_conversation.is_none()
+            && ["ctrl-/", "ctrl-7"].into_iter().any(|alias| {
+                configured_main_surface_alias_is_used(keymap, alias)
+                    || configured_context_alias_is_used(&keymap.list, alias)
+                    || configured_context_alias_is_used(&keymap.approval, alias)
+            });
 
         let app = AppKeymap {
             open_transcript: resolve_bindings(
@@ -424,11 +430,15 @@ impl RuntimeKeymap {
                 &defaults.app.toggle_fast_mode,
                 "tui.keymap.global.toggle_fast_mode",
             )?,
-            toggle_raw_output: resolve_bindings(
-                keymap.global.toggle_raw_output.as_ref(),
-                &defaults.app.toggle_raw_output,
-                "tui.keymap.global.toggle_raw_output",
-            )?,
+            toggle_side_conversation: if side_toggle_default_is_shadowed {
+                Vec::new()
+            } else {
+                resolve_bindings(
+                    keymap.global.toggle_side_conversation.as_ref(),
+                    &defaults.app.toggle_side_conversation,
+                    "tui.keymap.global.toggle_side_conversation",
+                )?
+            },
         };
 
         let mut chat = ChatKeymap {
@@ -799,6 +809,7 @@ impl RuntimeKeymap {
                 keymap.global.open_external_editor.as_ref(),
                 app.open_external_editor.as_slice(),
             ),
+            (keymap.global.transcribe.as_ref(), app.transcribe.as_slice()),
             (keymap.global.copy.as_ref(), app.copy.as_slice()),
             (
                 keymap.global.clear_terminal.as_ref(),
@@ -813,8 +824,8 @@ impl RuntimeKeymap {
                 app.toggle_fast_mode.as_slice(),
             ),
             (
-                keymap.global.toggle_raw_output.as_ref(),
-                app.toggle_raw_output.as_slice(),
+                keymap.global.toggle_side_conversation.as_ref(),
+                app.toggle_side_conversation.as_slice(),
             ),
             (keymap.list.move_up.as_ref(), list_move_up.as_slice()),
             (keymap.list.move_down.as_ref(), list_move_down.as_slice()),
@@ -926,7 +937,7 @@ impl RuntimeKeymap {
                 clear_terminal: default_bindings![ctrl(KeyCode::Char('l'))],
                 toggle_vim_mode: default_bindings![],
                 toggle_fast_mode: default_bindings![],
-                toggle_raw_output: default_bindings![alt(KeyCode::Char('r'))],
+                toggle_side_conversation: default_bindings![ctrl(KeyCode::Char('/'))],
             },
             chat: ChatKeymap {
                 interrupt_turn: default_bindings![plain(KeyCode::Esc)],
@@ -1173,6 +1184,15 @@ impl RuntimeKeymap {
     /// 2. Contexts with hard-coded sequence behavior, such as edit-previous
     ///    backtracking, intentionally stay outside this configurable keymap.
     fn validate_conflicts(&self) -> Result<(), String> {
+        let mut side_toggle_bindings = self.app.toggle_side_conversation.clone();
+        let slash_binding = key_hint::ctrl(KeyCode::Char('/'));
+        let legacy_slash_binding = key_hint::ctrl(KeyCode::Char('7'));
+        if side_toggle_bindings.contains(&slash_binding)
+            && !side_toggle_bindings.contains(&legacy_slash_binding)
+        {
+            side_toggle_bindings.push(legacy_slash_binding);
+        }
+
         validate_unique(
             "app",
             [
@@ -1181,11 +1201,12 @@ impl RuntimeKeymap {
                     "open_external_editor",
                     self.app.open_external_editor.as_slice(),
                 ),
+                ("transcribe", self.app.transcribe.as_slice()),
                 ("copy", self.app.copy.as_slice()),
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
-                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
+                ("toggle_side_conversation", side_toggle_bindings.as_slice()),
                 ("chat.interrupt_turn", self.chat.interrupt_turn.as_slice()),
                 (
                     "chat.decrease_reasoning_effort",
@@ -1224,11 +1245,12 @@ impl RuntimeKeymap {
                     "open_external_editor",
                     self.app.open_external_editor.as_slice(),
                 ),
+                ("transcribe", self.app.transcribe.as_slice()),
                 ("copy", self.app.copy.as_slice()),
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
-                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
+                ("toggle_side_conversation", side_toggle_bindings.as_slice()),
                 ("chat.interrupt_turn", self.chat.interrupt_turn.as_slice()),
                 (
                     "chat.decrease_reasoning_effort",
@@ -1273,11 +1295,12 @@ impl RuntimeKeymap {
                     "open_external_editor",
                     self.app.open_external_editor.as_slice(),
                 ),
+                ("transcribe", self.app.transcribe.as_slice()),
                 ("copy", self.app.copy.as_slice()),
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
-                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
+                ("toggle_side_conversation", side_toggle_bindings.as_slice()),
             ],
             [
                 ("list.move_up", self.list.move_up.as_slice()),
@@ -1337,6 +1360,7 @@ impl RuntimeKeymap {
                     "open_external_editor",
                     self.app.open_external_editor.as_slice(),
                 ),
+                ("transcribe", self.app.transcribe.as_slice()),
                 ("copy", self.app.copy.as_slice()),
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("chat.interrupt_turn", self.chat.interrupt_turn.as_slice()),
@@ -1351,7 +1375,7 @@ impl RuntimeKeymap {
                 ("composer.submit", self.composer.submit.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
-                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
+                ("toggle_side_conversation", side_toggle_bindings.as_slice()),
                 (
                     "composer.history_search_previous",
                     self.composer.history_search_previous.as_slice(),
@@ -2696,6 +2720,55 @@ mod tests {
     }
 
     #[test]
+    fn toggle_side_conversation_can_be_remapped_and_rejects_conflicts() {
+        let mut keymap = TuiKeymap::default();
+        keymap.global.toggle_side_conversation = Some(one("f12"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("runtime keymap");
+        assert_eq!(
+            runtime.app.toggle_side_conversation,
+            vec![key_hint::plain(KeyCode::F(12))]
+        );
+
+        keymap.global.toggle_side_conversation = Some(one("ctrl-l"));
+        expect_conflict(&keymap, "clear_terminal", "toggle_side_conversation");
+    }
+
+    #[test]
+    fn toggle_side_conversation_default_yields_to_existing_configured_bindings() {
+        for binding in ["ctrl-/", "ctrl-7"] {
+            let mut keymap = TuiKeymap::default();
+            keymap.global.open_transcript = Some(one(binding));
+
+            let runtime =
+                RuntimeKeymap::from_config(&keymap).expect("existing keymap remains valid");
+
+            assert_eq!(
+                runtime.app.open_transcript,
+                vec![parse_keybinding(binding).expect("configured binding")]
+            );
+            assert!(runtime.app.toggle_side_conversation.is_empty());
+        }
+
+        let mut keymap = TuiKeymap::default();
+        keymap.global.open_transcript = Some(one("ctrl-/"));
+        keymap.global.copy = Some(one("ctrl-7"));
+
+        let runtime =
+            RuntimeKeymap::from_config(&keymap).expect("distinct legacy bindings remain valid");
+        assert!(runtime.app.toggle_side_conversation.is_empty());
+    }
+
+    #[test]
+    fn explicit_side_toggle_rejects_legacy_ctrl_slash_alias_conflicts() {
+        let mut keymap = TuiKeymap::default();
+        keymap.global.open_transcript = Some(one("ctrl-7"));
+        keymap.global.toggle_side_conversation = Some(one("ctrl-/"));
+
+        expect_conflict(&keymap, "open_transcript", "toggle_side_conversation");
+    }
+
+    #[test]
     fn rejects_main_bindings_that_collide_with_remaining_fixed_shortcuts() {
         let mut keymap = TuiKeymap::default();
         keymap.composer.submit = Some(one("ctrl-v"));
@@ -2818,28 +2891,6 @@ mod tests {
         keymap.composer.toggle_shortcuts = Some(KeybindingsSpec::Many(vec![]));
         let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
         assert!(runtime.composer.toggle_shortcuts.is_empty());
-    }
-
-    #[test]
-    fn raw_output_toggle_defaults_to_alt_r() {
-        let runtime = RuntimeKeymap::defaults();
-        assert_eq!(
-            runtime.app.toggle_raw_output,
-            vec![key_hint::alt(KeyCode::Char('r'))]
-        );
-    }
-
-    #[test]
-    fn raw_output_toggle_can_be_remapped() {
-        let mut keymap = TuiKeymap::default();
-        keymap.global.toggle_raw_output = Some(one("f12"));
-
-        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
-
-        assert_eq!(
-            runtime.app.toggle_raw_output,
-            vec![key_hint::plain(KeyCode::F(12))]
-        );
     }
 
     #[test]

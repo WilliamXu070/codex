@@ -24,7 +24,8 @@
     "ThreadSortKey": {
       "enum": [
         "created_at",
-        "updated_at"
+        "updated_at",
+        "recency_at"
       ],
       "type": "string"
     },
@@ -69,6 +70,13 @@
         }
       ],
       "description": "Optional cwd filter or filters; when set, only threads whose session cwd exactly matches one of these paths are returned."
+    },
+    "isPinned": {
+      "description": "Optional pinned filter; when set, only threads matching this value are returned.",
+      "type": [
+        "boolean",
+        "null"
+      ]
     },
     "limit": {
       "description": "Optional page size; defaults to a reasonable server-side value.",

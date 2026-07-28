@@ -3,6 +3,7 @@
 state_file="${CODEX_SOUND_STATE_FILE:-/Users/williamxu/.codex/codex-sound-state}"
 script_dir="${0:A:h}"
 repo_sound_dir="$script_dir/sounds"
+default_approval_sound="$script_dir/wilhelm-scream.mp3"
 [[ -r "$state_file" ]] && source "$state_file"
 
 sound_dir="${CODEX_SOUND_DIR:-$repo_sound_dir}"
@@ -140,6 +141,10 @@ fi
 
 if [[ "$event_kind" == "completion" && -n "${CODEX_SOUND_COMPLETION_FILE:-}" && -r "${CODEX_SOUND_COMPLETION_FILE}" ]]; then
   sound="${CODEX_SOUND_COMPLETION_FILE}"
+elif [[ "$event_kind" == "immediate" && -n "${CODEX_SOUND_APPROVAL_FILE:-}" && -r "${CODEX_SOUND_APPROVAL_FILE}" ]]; then
+  sound="${CODEX_SOUND_APPROVAL_FILE}"
+elif [[ "$event_kind" == "immediate" && -r "$default_approval_sound" ]]; then
+  sound="$default_approval_sound"
 else
   sound="${files[$(( RANDOM % ${#files[@]} + 1 ))]}"
 fi

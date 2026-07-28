@@ -9,10 +9,14 @@
 //! quits without reaching into the app loop or coupling to shutdown/exit sequencing.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
+use crate::inline_visualization::InlineVisualizationContext;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
-use codex_app_server_protocol::AppInfo;
+use codex_app_server_protocol::ConsumeAccountRateLimitResetCreditResponse;
+use codex_app_server_protocol::GetAccountRateLimitsResponse;
 use codex_app_server_protocol::GetAccountTokenUsageResponse;
 use codex_app_server_protocol::MarketplaceAddResponse;
 use codex_app_server_protocol::MarketplaceRemoveResponse;
@@ -25,14 +29,17 @@ use codex_app_server_protocol::PluginMarketplaceEntry;
 use codex_app_server_protocol::PluginReadParams;
 use codex_app_server_protocol::PluginReadResponse;
 use codex_app_server_protocol::PluginUninstallResponse;
-use codex_app_server_protocol::RateLimitSnapshot;
 use codex_app_server_protocol::SkillsListResponse;
+use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadGoalStatus;
+use codex_connectors::AppInfo;
 use codex_file_search::FileMatch;
+use codex_message_history::HistoryBatchCursor;
 use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ModelPreset;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_approval_presets::ApprovalPreset;
+use uuid::Uuid;
 
 use crate::app_command::AppCommand;
 use crate::app_server_session::AppServerStartedThread;
@@ -62,11 +69,37 @@ pub(crate) enum ThreadGoalSetMode {
     },
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct HistoryLookupResponse {
+/// One absolute history offset returned by a batch lookup.
+///
+/// Malformed rows retain their offset with `entry` set to `None` so the composer can cache the gap
+/// without shifting every older record.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct HistoryBatchEntryResponse {
     pub(crate) offset: usize,
-    pub(crate) log_id: u64,
     pub(crate) entry: Option<String>,
+}
+
+/// Persistent-history data routed back to the thread that requested it.
+///
+/// Batch responses preserve absolute offsets and malformed-row gaps so the composer can cache the
+/// data independently of whichever search query is active when the response arrives.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum HistoryLookupResponse {
+    Entry {
+        offset: usize,
+        log_id: u64,
+        entry: Option<String>,
+    },
+    Batch {
+        cursor: HistoryBatchCursor,
+        log_id: u64,
+        entries: Vec<HistoryBatchEntryResponse>,
+        next_older_cursor: Option<HistoryBatchCursor>,
+    },
+    BatchError {
+        cursor: HistoryBatchCursor,
+        log_id: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,17 +164,26 @@ pub(crate) struct PluginRemoteSectionError {
 /// handler can route the result correctly.
 ///
 /// A `StartupPrefetch` fires once, concurrently with the rest of TUI init, and
-/// only updates the cached snapshots (no status card to finalize). A
-/// `StatusCommand` is tied to a specific `/status` invocation and must call
-/// `finish_status_rate_limit_refresh` when done so the card stops showing a
-/// "refreshing" state.
+/// updates the cached snapshots and any available reset-credit notice (no
+/// status card to finalize). A `StatusCommand` is tied to a specific `/status`
+/// invocation and must call `finish_status_rate_limit_refresh` when done so the
+/// card stops showing a "refreshing" state. A `UsageMenu` refreshes a cached
+/// zero reset count so the disabled menu entry can become available without a
+/// restart. A `ResetPicker` refreshes the rate limits and detailed reset-credit
+/// rows before showing redemption choices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RateLimitRefreshOrigin {
-    /// Eagerly fetched after bootstrap so the first `/status` already has data.
-    StartupPrefetch,
+    /// Eagerly fetched after bootstrap for `/status` data and reset availability.
+    StartupPrefetch { reset_hint_request_id: u64 },
     /// User-initiated via `/status`; the `request_id` correlates with the
     /// status card that should be updated when the fetch completes.
     StatusCommand { request_id: u64 },
+    /// User reopened `/usage` while the cached reset-credit count was zero.
+    UsageMenu { request_id: u64 },
+    /// User opened the reset-credit picker.
+    ResetPicker { request_id: u64 },
+    /// Refresh requested after a reset credit was successfully consumed.
+    ResetConsume { request_id: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,6 +198,12 @@ pub(crate) enum KeymapEditIntent {
 pub(crate) enum AppEvent {
     /// Open the agent picker for switching active threads.
     OpenAgentPicker,
+    /// Merge a completed root-scoped agent-picker refresh without blocking terminal input.
+    AgentPickerThreadsLoaded {
+        primary_thread_id: ThreadId,
+        request_id: Uuid,
+        result: Result<Vec<Thread>, String>,
+    },
     /// Switch the active thread to the selected agent.
     SelectAgentThread(ThreadId),
 
@@ -169,6 +217,15 @@ pub(crate) enum AppEvent {
     SubmitThreadOp {
         thread_id: ThreadId,
         op: AppCommand,
+    },
+
+    /// Interrupt, fork, and retry a safety-buffered turn with the server-selected model.
+    RetrySafetyBufferedTurn {
+        thread_id: ThreadId,
+        turn_id: String,
+        model: String,
+        turn: AppCommand,
+        prompt: UserMessage,
     },
 
     /// Deliver a synthetic history lookup response to a specific thread channel.
@@ -196,8 +253,17 @@ pub(crate) enum AppEvent {
         log_id: u64,
     },
 
-    /// Start a new session.
-    NewSession,
+    /// Fetch a bounded batch of persistent history entries for reverse search.
+    LookupMessageHistoryBatch {
+        thread_id: ThreadId,
+        cursor: HistoryBatchCursor,
+        log_id: u64,
+    },
+
+    /// Start a new session, optionally assigning it a name.
+    NewSession {
+        name: Option<String>,
+    },
 
     /// Result of the fresh startup thread that is attached after the input UI is live.
     StartupThreadStarted {
@@ -206,11 +272,8 @@ pub(crate) enum AppEvent {
 
     /// Clear the terminal UI (screen + scrollback), start a fresh session, and keep the
     /// previous chat resumable.
-    ClearUi,
-
-    /// Re-render the transcript using the selected scrollback rendering mode.
-    RawOutputModeChanged {
-        enabled: bool,
+    ClearUi {
+        name: Option<String>,
     },
 
     /// Clear the current context, start a fresh session, and submit an initial user message.
@@ -239,6 +302,13 @@ pub(crate) enum AppEvent {
     /// Fork the current session into a new thread.
     ForkCurrentSession,
 
+    /// Branch before a selected prompt and reopen it in the new thread's composer.
+    ForkSessionForPromptEdit {
+        thread_id: ThreadId,
+        nth_user_message: usize,
+        prompt: UserMessage,
+    },
+
     /// Request to exit the application.
     ///
     /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the
@@ -257,9 +327,6 @@ pub(crate) enum AppEvent {
     /// Forward a command to the Agent. Using an `AppEvent` for this avoids
     /// bubbling channels through layers of widgets.
     CodexOp(AppCommand),
-
-    /// Restore an output-free interrupted turn into the composer and roll it back.
-    RestoreCancelledTurn(UserMessage),
 
     /// Approve one retry of a recent auto-review denial selected in the TUI.
     ApproveRecentAutoReviewDenial {
@@ -316,7 +383,38 @@ pub(crate) enum AppEvent {
     /// Result of refreshing rate limits.
     RateLimitsLoaded {
         origin: RateLimitRefreshOrigin,
-        result: Result<Vec<RateLimitSnapshot>, String>,
+        hard_stop_generation: u64,
+        result: Result<GetAccountRateLimitsResponse, String>,
+    },
+
+    /// Open the default token-activity view selected from the `/usage` menu.
+    OpenTokenActivity,
+
+    /// Open the reset-credit flow selected from the `/usage` menu.
+    OpenRateLimitResetCredits,
+
+    /// Confirm the reset credit selected from the reset-credit picker.
+    OpenRateLimitResetConfirmation {
+        picker_request_id: u64,
+        confirmation_gate: Arc<AtomicBool>,
+        credit_id: Option<String>,
+        reset_title: String,
+        reset_detail: Option<String>,
+        reset_description: String,
+    },
+
+    /// Consume one reset credit using a stable idempotency key.
+    ConsumeRateLimitResetCredit {
+        idempotency_key: String,
+        credit_id: Option<String>,
+    },
+
+    /// Result of consuming one reset credit.
+    RateLimitResetCreditConsumed {
+        request_id: u64,
+        idempotency_key: String,
+        credit_id: Option<String>,
+        result: Result<ConsumeAccountRateLimitResetCreditResponse, String>,
     },
 
     /// Fetch account-wide token activity for a `/usage` history card.
@@ -330,8 +428,16 @@ pub(crate) enum AppEvent {
         result: Result<GetAccountTokenUsageResponse, String>,
     },
 
-    /// Commit a settled token activity card after a stream shutdown barrier.
-    CommitCompletedTokenActivityOutput,
+    /// Fetch workspace messages for the status-line headline item.
+    RefreshStatusLineWorkspaceHeadline {
+        request_id: u64,
+    },
+
+    /// Commit settled asynchronous usage output after active-output barriers clear.
+    CommitPendingUsageOutput,
+
+    /// Commit settled asynchronous usage output after stream shutdown.
+    CommitPendingUsageOutputAfterStreamShutdown,
 
     /// Send a user-confirmed request to notify the workspace owner.
     SendAddCreditsNudgeEmail {
@@ -429,6 +535,12 @@ pub(crate) enum AppEvent {
     PluginsLoaded {
         cwd: PathBuf,
         result: Result<PluginListResponse, String>,
+    },
+
+    /// Open the plugin list from an already cached response.
+    OpenPluginsList {
+        cwd: PathBuf,
+        response: PluginListResponse,
     },
 
     /// Result of explicitly fetching remote-backed plugin sections.
@@ -647,6 +759,7 @@ pub(crate) enum AppEvent {
     ConsolidateAgentMessage {
         source: String,
         cwd: PathBuf,
+        inline_visualization_context: Option<InlineVisualizationContext>,
         scrollback_reflow: ConsolidationScrollbackReflow,
         deferred_history_cell: Option<Box<dyn HistoryCell>>,
     },
@@ -657,15 +770,6 @@ pub(crate) enum AppEvent {
     /// Emitted by `ChatWidget::on_plan_item_completed` after plan stream
     /// finalization.
     ConsolidateProposedPlan(String),
-
-    /// Apply rollback semantics to local transcript cells.
-    ///
-    /// This is emitted when rollback was not initiated by the current
-    /// backtrack flow so trimming occurs in AppEvent queue order relative to
-    /// inserted history cells.
-    ApplyThreadRollback {
-        num_turns: u32,
-    },
 
     StartCommitAnimation,
     StopCommitAnimation,
@@ -679,6 +783,11 @@ pub(crate) enum AppEvent {
 
     /// Update the current personality in the running app and widget.
     UpdatePersonality(Personality),
+
+    /// Finish a settings selection after its preceding update events have been applied.
+    SettingsSelectionClosed,
+    /// Run after any nested settings events emitted while handling the close event.
+    SettingsSelectionSettled,
 
     /// Persist the selected model and reasoning effort to the appropriate config.
     PersistModelSelection {
@@ -699,6 +808,17 @@ pub(crate) enum AppEvent {
     /// Open the reasoning selection popup after picking a model.
     OpenReasoningPopup {
         model: ModelPreset,
+    },
+
+    /// Open the explicit Max/Ultra reasoning selection popup for a model.
+    OpenAdvancedReasoningPopup {
+        model: ModelPreset,
+    },
+
+    /// Apply an advanced reasoning effort to the active conversation without changing defaults.
+    ApplyAdvancedReasoning {
+        model: String,
+        effort: ReasoningEffort,
     },
 
     /// Open the Plan-mode reasoning scope prompt for the selected model/effort.
@@ -731,10 +851,10 @@ pub(crate) enum AppEvent {
         result: Result<String, String>,
     },
 
-    /// Advance the inline transcribe marker spinner if capture is still active.
+    /// Advance the inline transcribe waveform if capture is still active.
     TranscribeMarkerTick {
         marker_id: u64,
-        frame: usize,
+        amplitude: f32,
     },
 
     /// Start transcription only if the shortcut has stayed held long enough.
@@ -843,9 +963,6 @@ pub(crate) enum AppEvent {
     /// Clear all persisted local memory artifacts via the app-server.
     ResetMemories,
 
-    /// Update whether the full access warning prompt has been acknowledged.
-    UpdateFullAccessWarningAcknowledged(bool),
-
     /// Update whether the world-writable directories warning has been acknowledged.
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     UpdateWorldWritableWarningAcknowledged(bool),
@@ -855,9 +972,6 @@ pub(crate) enum AppEvent {
 
     /// Update the Plan-mode-specific reasoning effort in memory.
     UpdatePlanModeReasoningEffort(Option<ReasoningEffort>),
-
-    /// Persist the acknowledgement flag for the full access warning prompt.
-    PersistFullAccessWarningAcknowledged,
 
     /// Persist the acknowledgement flag for the world-writable directories warning.
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -992,6 +1106,11 @@ pub(crate) enum AppEvent {
     StatusLineGitSummaryUpdated {
         cwd: PathBuf,
         summary: crate::chatwidget::StatusLineGitSummary,
+    },
+    /// Async update of the workspace notification headline for status line rendering.
+    StatusLineWorkspaceHeadlineUpdated {
+        request_id: u64,
+        result: Result<crate::workspace_messages::WorkspaceHeadlineFetchResult, String>,
     },
     /// Apply a user-confirmed status-line item ordering/selection.
     StatusLineSetup {

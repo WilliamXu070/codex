@@ -26,7 +26,7 @@ write_state() {
 }
 
 usage() {
-  print "Usage: transcribe-command [status|capture [seconds]|record-wav [seconds] [path]|record-wav-live <path>|transcribe-file <path>|set-provider <provider>|set-key <api_key>|set-language <language>|set-duration <seconds>|help]"
+  print "Usage: transcribe-command [status|capture [seconds]|record-wav [seconds] [path]|record-wav-live <path> [level-json]|transcribe-file <path>|set-provider <provider>|set-key <api_key>|set-language <language>|set-duration <seconds>|help]"
 }
 
 masked_api_key() {
@@ -73,6 +73,7 @@ record_wav() {
 
 record_wav_live() {
   local out="${1:-}"
+  local level_file="${2:-}"
   local input="${CODEX_TRANSCRIBE_FFMPEG_INPUT:-:default}"
   [[ -n "$out" ]] || { print "output wav path required" >&2; usage; exit 1; }
 
@@ -81,9 +82,11 @@ record_wav_live() {
     exit 1
   fi
 
-  exec ffmpeg -hide_banner -loglevel error -y \
-    -f avfoundation -i "$input" \
-    -ac 1 -ar 16000 "$out"
+  local args=(--output "$out" --input "$input")
+  if [[ -n "$level_file" ]]; then
+    args+=(--level-file "$level_file")
+  fi
+  exec python3 "$script_dir/record-wav-live.py" "${args[@]}"
 }
 
 transcribe_openai() {
@@ -188,7 +191,7 @@ case "$cmd" in
     record_wav "${1:-$CODEX_TRANSCRIBE_DURATION}" "${2:-}"
     ;;
   record-wav-live)
-    record_wav_live "${1:-}"
+    record_wav_live "${1:-}" "${2:-}"
     ;;
   transcribe-file)
     wav="${1:-}"

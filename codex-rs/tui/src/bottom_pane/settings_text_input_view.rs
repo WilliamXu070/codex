@@ -152,10 +152,10 @@ impl BottomPaneView for SettingsTextInputView {
 
 impl Renderable for SettingsTextInputView {
     fn desired_height(&self, width: u16) -> u16 {
-        let inner = menu_surface_inset(Rect::new(0, 0, width, u16::MAX));
+        let inner = menu_surface_inset(Rect::new(/*x*/ 0, /*y*/ 0, width, u16::MAX));
         let input_height = self
             .composer
-            .desired_height(inner.width.max(1))
+            .desired_height(inner.width.max(/*other*/ 1))
             .max(MIN_COMPOSER_HEIGHT);
         let error_height = u16::from(self.validation_error.is_some());
         1u16.saturating_add(input_height)
@@ -181,10 +181,10 @@ impl Renderable for SettingsTextInputView {
         Paragraph::new(Line::from(self.title.clone()).bold()).render(title_area, buf);
 
         let error_height = u16::from(self.validation_error.is_some());
-        let input_y = content.y.saturating_add(1);
+        let input_y = content.y.saturating_add(/*rhs*/ 1);
         let input_height = content
             .height
-            .saturating_sub(1)
+            .saturating_sub(/*rhs*/ 1)
             .saturating_sub(error_height);
         let input_area = Rect {
             x: content.x,
@@ -201,7 +201,7 @@ impl Renderable for SettingsTextInputView {
         if let Some(error) = &self.validation_error {
             let error_area = Rect {
                 x: content.x,
-                y: content.y + content.height.saturating_sub(1),
+                y: content.y + content.height.saturating_sub(/*rhs*/ 1),
                 width: content.width,
                 height: 1,
             };

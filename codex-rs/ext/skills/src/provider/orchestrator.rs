@@ -15,6 +15,7 @@ use crate::catalog::SkillReadResult;
 use crate::catalog::SkillResourceId;
 use crate::catalog::SkillSearchResult;
 use crate::catalog::SkillSourceKind;
+use crate::provider::MAX_SKILL_RESOURCE_CONTENT_BYTES;
 use crate::provider::SkillListQuery;
 use crate::provider::SkillProvider;
 use crate::provider::SkillProviderFuture;
@@ -28,11 +29,8 @@ const MAX_RESOURCE_PAGES: usize = 10;
 const MAX_ORCHESTRATOR_SKILLS: usize = 100;
 const MAX_SKILL_NAME_CHARS: usize = 64;
 const MAX_QUALIFIED_SKILL_NAME_CHARS: usize = 128;
-const MAX_SKILL_DESCRIPTION_CHARS: usize = 1_024;
 const MAX_SKILL_PACKAGE_URI_CHARS: usize = 1_024;
 const MAX_SKILL_RESOURCE_URI_CHARS: usize = 2_048;
-const MAX_SKILL_RESOURCE_CONTENT_BYTES: usize = 1024 * 1024;
-
 /// Discovers and reads skills owned by the orchestrator.
 ///
 /// The provider uses session-scoped resources without exposing the transport or
@@ -308,12 +306,17 @@ fn normalized_label(value: &str, max_chars: usize) -> Option<String> {
 }
 
 fn normalized_description(value: &str) -> Option<String> {
-    normalized_single_line(value, MAX_SKILL_DESCRIPTION_CHARS).map(|value| {
+    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if value.chars().any(char::is_control) {
+        return None;
+    }
+
+    Some(
         value
             .replace('&', "&amp;")
             .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    })
+            .replace('>', "&gt;"),
+    )
 }
 
 fn normalized_single_line(value: &str, max_chars: usize) -> Option<String> {

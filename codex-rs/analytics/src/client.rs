@@ -11,8 +11,14 @@ use crate::facts::AppMentionedInput;
 use crate::facts::AppUsedInput;
 use crate::facts::CodexGoalEvent;
 use crate::facts::CustomAnalyticsFact;
+use crate::facts::ExternalAgentConfigImportCompletedInput;
+use crate::facts::ExternalAgentConfigImportFailureInput;
 use crate::facts::HookRunFact;
 use crate::facts::HookRunInput;
+use crate::facts::PluginInstallFailedInput;
+use crate::facts::PluginInstallRequested;
+use crate::facts::PluginInstallRequestedInput;
+use crate::facts::PluginInstallSource;
 use crate::facts::PluginState;
 use crate::facts::PluginStateChangedInput;
 use crate::facts::SkillInvocation;
@@ -35,6 +41,7 @@ use codex_app_server_protocol::ServerResponse;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::default_client::create_client;
+use codex_plugin::PluginId;
 use codex_plugin::PluginTelemetryMetadata;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
 use std::collections::HashSet;
@@ -43,14 +50,22 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 const ANALYTICS_EVENTS_QUEUE_SIZE: usize = 256;
 const ANALYTICS_EVENTS_TIMEOUT: Duration = Duration::from_secs(10);
+// Covers two sequential POSTs plus queue/barrier scheduling; additional queued sends remain best-effort.
+const ANALYTICS_EVENTS_FLUSH_TIMEOUT: Duration = Duration::from_secs(25);
 const ANALYTICS_EVENT_DEDUPE_MAX_KEYS: usize = 4096;
+
+pub(crate) enum AnalyticsEventsQueueMessage {
+    Fact(Box<AnalyticsFact>),
+    Flush(oneshot::Sender<()>),
+}
 
 #[derive(Clone)]
 pub(crate) struct AnalyticsEventsQueue {
-    pub(crate) sender: mpsc::Sender<AnalyticsFact>,
+    pub(crate) sender: mpsc::Sender<AnalyticsEventsQueueMessage>,
     pub(crate) app_used_emitted_keys: Arc<Mutex<HashSet<(String, String)>>>,
     pub(crate) plugin_used_emitted_keys: Arc<Mutex<HashSet<(String, String)>>>,
 }
@@ -121,6 +136,13 @@ impl AnalyticsEventsQueue {
         tokio::spawn(async move {
             let mut reducer = AnalyticsReducer::default();
             while let Some(input) = receiver.recv().await {
+                let input = match input {
+                    AnalyticsEventsQueueMessage::Fact(input) => *input,
+                    AnalyticsEventsQueueMessage::Flush(done_tx) => {
+                        let _ = done_tx.send(());
+                        continue;
+                    }
+                };
                 let mut events = Vec::new();
                 reducer.ingest(input, &mut events).await;
                 send_track_events(&auth_manager, &destination, events).await;
@@ -134,7 +156,11 @@ impl AnalyticsEventsQueue {
     }
 
     fn try_send(&self, input: AnalyticsFact) {
-        if self.sender.try_send(input).is_err() {
+        if self
+            .sender
+            .try_send(AnalyticsEventsQueueMessage::Fact(Box::new(input)))
+            .is_err()
+        {
             //TODO: add a metric for this
             tracing::warn!("dropping analytics events: queue is full");
         }
@@ -170,7 +196,15 @@ impl AnalyticsEventsQueue {
         if emitted.len() >= ANALYTICS_EVENT_DEDUPE_MAX_KEYS {
             emitted.clear();
         }
-        emitted.insert((tracking.turn_id.clone(), plugin.plugin_id.as_key()))
+        let Some(plugin_id) = plugin
+            .plugin_id
+            .as_ref()
+            .map(PluginId::as_key)
+            .or_else(|| plugin.remote_plugin_id.clone())
+        else {
+            return true;
+        };
+        emitted.insert((tracking.turn_id.clone(), plugin_id))
     }
 }
 
@@ -189,6 +223,29 @@ impl AnalyticsEventsClient {
 
     pub fn disabled() -> Self {
         Self { queue: None }
+    }
+
+    pub async fn flush(&self) {
+        let Some(queue) = self.queue.as_ref() else {
+            return;
+        };
+        let (done_tx, done_rx) = oneshot::channel();
+        let flushed = tokio::time::timeout(ANALYTICS_EVENTS_FLUSH_TIMEOUT, async {
+            if queue
+                .sender
+                .send(AnalyticsEventsQueueMessage::Flush(done_tx))
+                .await
+                .is_err()
+            {
+                return false;
+            }
+            done_rx.await.is_ok()
+        })
+        .await;
+
+        if !matches!(flushed, Ok(true)) {
+            tracing::warn!("timed out or failed while flushing analytics events");
+        }
     }
 
     pub fn track_skill_invocations(
@@ -298,6 +355,19 @@ impl AnalyticsEventsClient {
         )));
     }
 
+    pub fn track_plugin_install_requested(
+        &self,
+        tracking: TrackEventsContext,
+        request: PluginInstallRequested,
+    ) {
+        self.record_fact(AnalyticsFact::Custom(
+            CustomAnalyticsFact::PluginInstallRequested(PluginInstallRequestedInput {
+                tracking,
+                request,
+            }),
+        ));
+    }
+
     pub fn track_compaction(&self, event: crate::facts::CodexCompactionEvent) {
         self.record_fact(AnalyticsFact::Custom(CustomAnalyticsFact::Compaction(
             Box::new(event),
@@ -343,6 +413,41 @@ impl AnalyticsEventsClient {
         ));
     }
 
+    pub fn track_plugin_install_failed(
+        &self,
+        plugin: PluginTelemetryMetadata,
+        source: PluginInstallSource,
+        error_type: String,
+        sub_error_type: Option<String>,
+    ) {
+        self.record_fact(AnalyticsFact::Custom(
+            CustomAnalyticsFact::PluginInstallFailed(PluginInstallFailedInput {
+                plugin,
+                source,
+                error_type,
+                sub_error_type,
+            }),
+        ));
+    }
+
+    pub fn track_external_agent_config_import_completed(
+        &self,
+        input: ExternalAgentConfigImportCompletedInput,
+    ) {
+        self.record_fact(AnalyticsFact::Custom(
+            CustomAnalyticsFact::ExternalAgentConfigImportCompleted(input),
+        ));
+    }
+
+    pub fn track_external_agent_config_import_failure(
+        &self,
+        input: ExternalAgentConfigImportFailureInput,
+    ) {
+        self.record_fact(AnalyticsFact::Custom(
+            CustomAnalyticsFact::ExternalAgentConfigImportFailure(input),
+        ));
+    }
+
     pub fn track_plugin_uninstalled(&self, plugin: PluginTelemetryMetadata) {
         self.record_fact(AnalyticsFact::Custom(
             CustomAnalyticsFact::PluginStateChanged(PluginStateChangedInput {
@@ -382,6 +487,31 @@ impl AnalyticsEventsClient {
         request_id: RequestId,
         response: ClientResponsePayload,
     ) {
+        self.track_response_inner(
+            connection_id,
+            request_id,
+            response,
+            /*thread_originator*/ None,
+        );
+    }
+
+    pub fn track_response_with_thread_originator(
+        &self,
+        connection_id: u64,
+        request_id: RequestId,
+        response: ClientResponsePayload,
+        thread_originator: String,
+    ) {
+        self.track_response_inner(connection_id, request_id, response, Some(thread_originator));
+    }
+
+    fn track_response_inner(
+        &self,
+        connection_id: u64,
+        request_id: RequestId,
+        response: ClientResponsePayload,
+        thread_originator: Option<String>,
+    ) {
         if !matches!(
             response,
             ClientResponsePayload::ThreadStart(_)
@@ -396,6 +526,7 @@ impl AnalyticsEventsClient {
             connection_id,
             request_id,
             response: Box::new(response),
+            thread_originator,
         });
     }
 
@@ -468,7 +599,7 @@ impl AnalyticsEventsClient {
 async fn send_track_events(
     auth_manager: &AuthManager,
     destination: &AnalyticsEventsDestination,
-    events: Vec<TrackEventRequest>,
+    mut events: Vec<TrackEventRequest>,
 ) {
     if events.is_empty() {
         return;
@@ -477,7 +608,12 @@ async fn send_track_events(
     let Some(auth) = auth_manager.auth().await else {
         return;
     };
-    if !auth.uses_codex_backend() {
+    if auth.is_api_key_auth() {
+        events.retain(TrackEventRequest::can_send_with_api_key_auth);
+    } else if !auth.uses_codex_backend() {
+        return;
+    }
+    if events.is_empty() {
         return;
     }
 

@@ -4,8 +4,8 @@ use crate::session::session::Session;
 use chrono::Utc;
 use codex_exec_server::LOCAL_FS;
 use codex_git_utils::resolve_root_git_project_for_trust;
-use codex_protocol::models::AgentMessageInputContent;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::plaintext_agent_message_content;
 use codex_thread_store::ListThreadsParams;
 use codex_thread_store::SortDirection;
 use codex_thread_store::StoredThread;
@@ -62,8 +62,10 @@ pub(crate) async fn build_realtime_startup_context(
 ) -> Option<String> {
     let config = sess.get_config().await;
     let cwd = config.cwd.clone();
-    let history = sess.clone_history().await;
-    let current_thread_section = build_current_thread_section(history.raw_items());
+    let current_thread_section = {
+        let history = sess.clone_history().await;
+        build_current_thread_section(history.raw_items())
+    };
     let recent_threads = load_recent_threads(sess).await;
     let recent_work_section = build_recent_work_section(&cwd, &recent_threads).await;
     let workspace_section = build_workspace_section_with_user_root(&cwd, home_dir()).await;
@@ -137,8 +139,9 @@ async fn load_recent_threads(sess: &Session) -> Vec<StoredThread> {
             allowed_sources: Vec::new(),
             model_providers: None,
             cwd_filters: None,
-            parent_thread_id: None,
+            relation_filter: None,
             archived: false,
+            is_pinned: None,
             search_term: None,
             use_state_db_only: false,
         })
@@ -243,16 +246,10 @@ fn build_current_thread_section(items: &[ResponseItem]) -> Option<String> {
             ResponseItem::AgentMessage {
                 author, content, ..
             } => {
-                let text = content
-                    .iter()
-                    .filter_map(|content| match content {
-                        AgentMessageInputContent::InputText { text } => Some(text.as_str()),
-                        AgentMessageInputContent::EncryptedContent { .. } => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if text.trim().is_empty() || current_user.is_empty() && current_assistant.is_empty()
-                {
+                let Some(text) = plaintext_agent_message_content(content) else {
+                    continue;
+                };
+                if current_user.is_empty() && current_assistant.is_empty() {
                     continue;
                 }
                 current_assistant.push(format!("Agent message from {author}:\n{text}"));

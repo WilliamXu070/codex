@@ -21,7 +21,6 @@ use crate::AppServerEvent;
 use crate::RequestResult;
 use crate::SHUTDOWN_TIMEOUT;
 use crate::TypedRequestError;
-use crate::request_method_name;
 use codex_app_server_protocol::ClientInfo;
 use codex_app_server_protocol::ClientNotification;
 use codex_app_server_protocol::ClientRequest;
@@ -86,11 +85,12 @@ pub struct RemoteAppServerConnectArgs {
     pub client_name: String,
     pub client_version: String,
     pub experimental_api: bool,
+    pub mcp_server_openai_form_elicitation: bool,
     pub opt_out_notification_methods: Vec<String>,
     pub channel_capacity: usize,
 }
 impl RemoteAppServerConnectArgs {
-    fn initialize_params(&self) -> InitializeParams {
+    pub(crate) fn initialize_params(&self) -> InitializeParams {
         let capabilities = InitializeCapabilities {
             experimental_api: self.experimental_api,
             request_attestation: false,
@@ -99,6 +99,7 @@ impl RemoteAppServerConnectArgs {
             } else {
                 Some(self.opt_out_notification_methods.clone())
             },
+            mcp_server_openai_form_elicitation: self.mcp_server_openai_form_elicitation,
         };
 
         InitializeParams {
@@ -496,20 +497,22 @@ impl RemoteAppServerClient {
     where
         T: DeserializeOwned,
     {
-        let method = request_method_name(&request);
+        let method = request.method_name();
         let response =
             self.request(request)
                 .await
                 .map_err(|source| TypedRequestError::Transport {
-                    method: method.clone(),
+                    method: method.to_string(),
                     source,
                 })?;
         let result = response.map_err(|source| TypedRequestError::Server {
-            method: method.clone(),
+            method: method.to_string(),
             source,
         })?;
-        serde_json::from_value(result)
-            .map_err(|source| TypedRequestError::Deserialize { method, source })
+        serde_json::from_value(result).map_err(|source| TypedRequestError::Deserialize {
+            method: method.to_string(),
+            source,
+        })
     }
 
     pub async fn notify(&self, notification: ClientNotification) -> IoResult<()> {
@@ -656,20 +659,22 @@ impl RemoteAppServerRequestHandle {
     where
         T: DeserializeOwned,
     {
-        let method = request_method_name(&request);
+        let method = request.method_name();
         let response =
             self.request(request)
                 .await
                 .map_err(|source| TypedRequestError::Transport {
-                    method: method.clone(),
+                    method: method.to_string(),
                     source,
                 })?;
         let result = response.map_err(|source| TypedRequestError::Server {
-            method: method.clone(),
+            method: method.to_string(),
             source,
         })?;
-        serde_json::from_value(result)
-            .map_err(|source| TypedRequestError::Deserialize { method, source })
+        serde_json::from_value(result).map_err(|source| TypedRequestError::Deserialize {
+            method: method.to_string(),
+            source,
+        })
     }
 }
 

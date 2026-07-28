@@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
 use serde_json::Value;
 use tokio::task::JoinHandle;
 
+use crate::responses_metadata::CODE_MODE_TOOL_NAMES_KEY;
 use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::CodexResponsesRequestKind;
 use crate::responses_metadata::TurnMetadataWorkspace;
@@ -21,10 +22,12 @@ use codex_git_utils::get_git_repo_root;
 use codex_git_utils::get_has_changes;
 use codex_git_utils::get_head_commit_hash;
 use codex_protocol::ThreadId;
+use codex_protocol::ToolName;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 const MODEL_KEY: &str = "model";
@@ -91,9 +94,11 @@ pub(crate) struct TurnMetadataState {
     parent_thread_id: Option<ThreadId>,
     subagent_header: Option<String>,
     subagent_kind: Option<String>,
+    thread_source: Option<ThreadSource>,
     turn_id: String,
     sandbox: Option<String>,
     enriched_workspaces: Arc<RwLock<Option<BTreeMap<String, TurnMetadataWorkspace>>>>,
+    code_mode_tool_names: Arc<RwLock<Option<BTreeMap<String, ToolName>>>>,
     turn_started_at_unix_ms: Arc<RwLock<Option<i64>>>,
     responsesapi_client_metadata: Arc<RwLock<BTreeMap<String, String>>>,
     user_input_requested_during_turn: Arc<AtomicBool>,
@@ -108,6 +113,7 @@ impl TurnMetadataState {
         forked_from_thread_id: Option<ThreadId>,
         parent_thread_id: Option<ThreadId>,
         session_source: &SessionSource,
+        thread_source: Option<ThreadSource>,
         turn_id: String,
         cwd: AbsolutePathBuf,
         permission_profile: &PermissionProfile,
@@ -132,9 +138,11 @@ impl TurnMetadataState {
             parent_thread_id,
             subagent_header: subagent_header_value(session_source),
             subagent_kind: subagent_metadata_kind(session_source),
+            thread_source,
             turn_id,
             sandbox,
             enriched_workspaces: Arc::new(RwLock::new(None)),
+            code_mode_tool_names: Arc::new(RwLock::new(None)),
             turn_started_at_unix_ms: Arc::new(RwLock::new(None)),
             responsesapi_client_metadata: Arc::new(RwLock::new(BTreeMap::new())),
             user_input_requested_during_turn: Arc::new(AtomicBool::new(false)),
@@ -151,6 +159,7 @@ impl TurnMetadataState {
         else {
             return None;
         };
+        metadata.remove(CODE_MODE_TOOL_NAMES_KEY); // Precaution: avoid exposing tool data to external MCPs.
         metadata.insert(
             MODEL_KEY.to_string(),
             Value::String(context.model.to_string()),
@@ -199,6 +208,17 @@ impl TurnMetadataState {
             .store(true, Ordering::Relaxed);
     }
 
+    pub(crate) fn set_code_mode_tool_names(
+        &self,
+        code_mode_tool_names: BTreeMap<String, ToolName>,
+    ) {
+        *self
+            .code_mode_tool_names
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            (!code_mode_tool_names.is_empty()).then_some(code_mode_tool_names);
+    }
+
     pub(crate) fn set_responsesapi_client_metadata(
         &self,
         responsesapi_client_metadata: HashMap<String, String>,
@@ -225,8 +245,14 @@ impl TurnMetadataState {
             parent_thread_id: self.parent_thread_id,
             subagent_header: self.subagent_header.clone(),
             subagent_kind: self.subagent_kind.clone(),
+            thread_source: self.thread_source.clone(),
             sandbox: self.sandbox.clone(),
             workspaces: self.current_workspaces(),
+            code_mode_tool_names: self
+                .code_mode_tool_names
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
             turn_started_at_unix_ms: self.current_turn_started_at_unix_ms(),
             extra: self
                 .responsesapi_client_metadata

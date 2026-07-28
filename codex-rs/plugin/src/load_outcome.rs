@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_plugins::PluginIdentity;
 use codex_utils_plugins::PluginSkillRoot;
+use codex_utils_plugins::SkillDiscoveryMode;
 
 use crate::AppConnectorId;
 use crate::AppDeclaration;
@@ -16,7 +18,9 @@ const MAX_CAPABILITY_SUMMARY_DESCRIPTION_LEN: usize = 1024;
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoadedPlugin<M> {
     pub config_name: String,
+    pub remote_plugin_id: Option<String>,
     pub manifest_name: Option<String>,
+    pub plugin_namespace: Option<String>,
     pub manifest_description: Option<String>,
     pub root: AbsolutePathBuf,
     pub enabled: bool,
@@ -83,7 +87,9 @@ pub fn prompt_safe_plugin_description(description: Option<&str>) -> Option<Strin
     )
 }
 
-/// Outcome of loading configured plugins (skills roots, MCP, apps, errors).
+/// Runtime view of loaded plugins and their derived capability summaries.
+///
+/// Callers must apply any runtime capability policies before constructing this outcome.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PluginLoadOutcome<M> {
     plugins: Vec<LoadedPlugin<M>>,
@@ -124,12 +130,20 @@ impl<M: Clone> PluginLoadOutcome<M> {
         let mut skill_roots = Vec::new();
         let mut seen_paths = HashSet::new();
         for plugin in self.plugins.iter().filter(|plugin| plugin.is_active()) {
+            let Some(plugin_namespace) = &plugin.plugin_namespace else {
+                continue;
+            };
             for path in &plugin.skill_roots {
                 if seen_paths.insert(path.clone()) {
                     skill_roots.push(PluginSkillRoot {
                         path: path.clone(),
-                        plugin_id: plugin.config_name.clone(),
+                        plugin_identity: PluginIdentity {
+                            plugin_id: plugin.config_name.clone(),
+                            remote_plugin_id: plugin.remote_plugin_id.clone(),
+                        },
+                        plugin_namespace: plugin_namespace.clone(),
                         plugin_root: plugin.root.clone(),
+                        discovery_mode: SkillDiscoveryMode::Recursive,
                     });
                 }
             }
@@ -215,7 +229,14 @@ mod tests {
     fn loaded_plugin(config_name: &str, skill_roots: Vec<AbsolutePathBuf>) -> LoadedPlugin<()> {
         LoadedPlugin {
             config_name: config_name.to_string(),
+            remote_plugin_id: None,
             manifest_name: None,
+            plugin_namespace: Some(
+                config_name
+                    .split_once('@')
+                    .map_or(config_name, |(name, _)| name)
+                    .to_string(),
+            ),
             manifest_description: None,
             root: test_path(config_name),
             enabled: true,
@@ -233,8 +254,10 @@ mod tests {
     #[test]
     fn effective_plugin_skill_roots_preserves_first_plugin_for_shared_root() {
         let shared_root = test_path("shared-skills");
+        let mut first_plugin = loaded_plugin("zeta@test", vec![shared_root.clone()]);
+        first_plugin.remote_plugin_id = Some("plugins~Plugin_zeta".to_string());
         let outcome = PluginLoadOutcome::from_plugins(vec![
-            loaded_plugin("zeta@test", vec![shared_root.clone()]),
+            first_plugin,
             loaded_plugin("alpha@test", vec![shared_root.clone()]),
         ]);
 
@@ -242,8 +265,13 @@ mod tests {
             outcome.effective_plugin_skill_roots(),
             vec![PluginSkillRoot {
                 path: shared_root,
-                plugin_id: "zeta@test".to_string(),
+                plugin_identity: PluginIdentity {
+                    plugin_id: "zeta@test".to_string(),
+                    remote_plugin_id: Some("plugins~Plugin_zeta".to_string()),
+                },
+                plugin_namespace: "zeta".to_string(),
                 plugin_root: test_path("zeta@test"),
+                discovery_mode: SkillDiscoveryMode::Recursive,
             }]
         );
     }

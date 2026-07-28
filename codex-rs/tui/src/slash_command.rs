@@ -44,7 +44,6 @@ pub enum SlashCommand {
     Side,
     Btw,
     Copy,
-    Raw,
     Diff,
     Mention,
     Status,
@@ -96,17 +95,16 @@ impl SlashCommand {
             SlashCommand::Delete => "permanently delete this session and exit",
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
-            SlashCommand::App => "continue this session in Codex Desktop",
+            SlashCommand::App => "continue this session in the Desktop app",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
-            SlashCommand::Raw => "toggle raw scrollback mode for copy-friendly terminal selection",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
             SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
             SlashCommand::Hooks => "view and manage lifecycle hooks",
             SlashCommand::Status => "show current session configuration and token usage",
-            SlashCommand::Usage => "show account usage activity",
+            SlashCommand::Usage => "view account usage or use a usage limit reset",
             SlashCommand::Sound => "configure Codex sounds",
             SlashCommand::TranscribeCommand => {
                 "configure Codex transcription provider and API settings"
@@ -162,12 +160,13 @@ impl SlashCommand {
             self,
             SlashCommand::Review
                 | SlashCommand::Rename
+                | SlashCommand::New
+                | SlashCommand::Clear
                 | SlashCommand::Plan
                 | SlashCommand::Goal
                 | SlashCommand::Ide
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
-                | SlashCommand::Raw
                 | SlashCommand::Usage
                 | SlashCommand::Pets
                 | SlashCommand::Side
@@ -183,7 +182,6 @@ impl SlashCommand {
         matches!(
             self,
             SlashCommand::Copy
-                | SlashCommand::Raw
                 | SlashCommand::Diff
                 | SlashCommand::Mention
                 | SlashCommand::Status
@@ -198,13 +196,9 @@ impl SlashCommand {
             SlashCommand::New
             | SlashCommand::Archive
             | SlashCommand::Delete
-            | SlashCommand::Resume
             | SlashCommand::Fork
             | SlashCommand::Init
             | SlashCommand::Compact
-            | SlashCommand::Model
-            | SlashCommand::Personality
-            | SlashCommand::Permissions
             | SlashCommand::Keymap
             | SlashCommand::Vim
             | SlashCommand::ElevateSandbox
@@ -219,8 +213,11 @@ impl SlashCommand {
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff
+            | SlashCommand::Resume
+            | SlashCommand::Model
+            | SlashCommand::Personality
+            | SlashCommand::Permissions
             | SlashCommand::Copy
-            | SlashCommand::Raw
             | SlashCommand::Rename
             | SlashCommand::Mention
             | SlashCommand::Skills
@@ -301,9 +298,6 @@ mod tests {
         assert!(SlashCommand::Ide.available_during_task());
         assert!(SlashCommand::Title.available_during_task());
         assert!(SlashCommand::Statusline.available_during_task());
-        assert!(SlashCommand::Raw.available_during_task());
-        assert!(SlashCommand::Raw.available_in_side_conversation());
-        assert!(SlashCommand::Raw.supports_inline_args());
         assert!(SlashCommand::App.available_during_task());
     }
 

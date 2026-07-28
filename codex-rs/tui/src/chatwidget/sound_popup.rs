@@ -185,7 +185,7 @@ impl ChatWidget {
                     state.volume = value
                         .parse::<f32>()
                         .map(|v| (v * 100.0).round() as u32)
-                        .unwrap_or(100);
+                        .unwrap_or(/*default*/ 100);
                 }
                 "track" => state.completion = sound_label(value),
                 "approval" => state.approval = sound_label(value),
@@ -216,6 +216,6 @@ fn sound_label(value: &str) -> String {
 }
 
 fn sound_volume_bar(value: u32) -> String {
-    let filled = (value / 10).min(10) as usize;
+    let filled = (value / 10).min(/*other*/ 10) as usize;
     format!("[{}{}]", "#".repeat(filled), "-".repeat(10 - filled))
 }

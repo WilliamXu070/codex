@@ -21,7 +21,14 @@ use crate::events::CodexImageGenerationEventParams;
 use crate::events::CodexImageGenerationEventRequest;
 use crate::events::CodexMcpToolCallEventParams;
 use crate::events::CodexMcpToolCallEventRequest;
+use crate::events::CodexOnboardingExternalAgentImportCompleteEventRequest;
+use crate::events::CodexOnboardingExternalAgentImportCompleteMetadata;
+use crate::events::CodexOnboardingExternalAgentImportFailureEventRequest;
+use crate::events::CodexOnboardingExternalAgentImportFailureMetadata;
 use crate::events::CodexPluginEventRequest;
+use crate::events::CodexPluginInstallFailedEventRequest;
+use crate::events::CodexPluginInstallFailedMetadata;
+use crate::events::CodexPluginInstallRequestedEventRequest;
 use crate::events::CodexPluginUsedEventRequest;
 use crate::events::CodexReviewEventParams;
 use crate::events::CodexReviewEventRequest;
@@ -54,6 +61,7 @@ use crate::events::codex_app_metadata;
 use crate::events::codex_compaction_event_params;
 use crate::events::codex_goal_event_params;
 use crate::events::codex_hook_run_metadata;
+use crate::events::codex_plugin_install_requested_metadata;
 use crate::events::codex_plugin_metadata;
 use crate::events::codex_plugin_used_metadata;
 use crate::events::plugin_state_event_type;
@@ -66,7 +74,11 @@ use crate::facts::AppUsedInput;
 use crate::facts::CodexCompactionEvent;
 use crate::facts::CodexGoalEvent;
 use crate::facts::CustomAnalyticsFact;
+use crate::facts::ExternalAgentConfigImportCompletedInput;
+use crate::facts::ExternalAgentConfigImportFailureInput;
 use crate::facts::HookRunInput;
+use crate::facts::PluginInstallFailedInput;
+use crate::facts::PluginInstallRequestedInput;
 use crate::facts::PluginState;
 use crate::facts::PluginStateChangedInput;
 use crate::facts::PluginUsedInput;
@@ -121,6 +133,7 @@ use codex_login::default_client::originator;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::items::is_safe_plugin_relative_path;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SkillScope;
@@ -153,6 +166,20 @@ struct ConnectionState {
 struct ThreadAnalyticsState {
     connection_id: Option<u64>,
     metadata: Option<ThreadMetadataState>,
+    originator: Option<String>,
+}
+
+impl ThreadAnalyticsState {
+    fn app_server_client(
+        &self,
+        connection_state: &ConnectionState,
+    ) -> CodexAppServerClientMetadata {
+        let mut app_server_client = connection_state.app_server_client.clone();
+        if let Some(originator) = self.originator.as_ref() {
+            app_server_client.product_client_id.clone_from(originator);
+        }
+        app_server_client
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -376,15 +403,15 @@ impl TurnToolCounts {
             ThreadItem::CollabAgentToolCall { .. } | ThreadItem::SubAgentActivity { .. } => {
                 self.subagent_tool_call += 1;
             }
-            ThreadItem::WebSearch { .. } => self.web_search += 1,
-            ThreadItem::ImageGeneration { .. } => self.image_generation += 1,
+            ThreadItem::WebSearch(_) => self.web_search += 1,
+            ThreadItem::ImageGeneration(_) => self.image_generation += 1,
             ThreadItem::UserMessage { .. }
             | ThreadItem::HookPrompt { .. }
             | ThreadItem::AgentMessage { .. }
             | ThreadItem::Plan { .. }
             | ThreadItem::Reasoning { .. }
             | ThreadItem::ImageView { .. }
-            | ThreadItem::Sleep { .. }
+            | ThreadItem::Sleep(_)
             | ThreadItem::EnteredReviewMode { .. }
             | ThreadItem::ExitedReviewMode { .. }
             | ThreadItem::ContextCompaction { .. } => return,
@@ -422,9 +449,11 @@ impl AnalyticsReducer {
                 connection_id,
                 request_id,
                 response,
+                thread_originator,
             } => {
                 if let Some(response) = response.into_client_response(request_id) {
-                    self.ingest_response(connection_id, response, out).await;
+                    self.ingest_response(connection_id, response, thread_originator, out)
+                        .await;
                 }
             }
             AnalyticsFact::ErrorResponse {
@@ -508,8 +537,20 @@ impl AnalyticsReducer {
                 CustomAnalyticsFact::PluginUsed(input) => {
                     self.ingest_plugin_used(input, out);
                 }
+                CustomAnalyticsFact::PluginInstallRequested(input) => {
+                    self.ingest_plugin_install_requested(input, out);
+                }
                 CustomAnalyticsFact::PluginStateChanged(input) => {
                     self.ingest_plugin_state_changed(input, out);
+                }
+                CustomAnalyticsFact::PluginInstallFailed(input) => {
+                    self.ingest_plugin_install_failed(input, out);
+                }
+                CustomAnalyticsFact::ExternalAgentConfigImportCompleted(input) => {
+                    self.ingest_external_agent_config_import_completed(input, out);
+                }
+                CustomAnalyticsFact::ExternalAgentConfigImportFailure(input) => {
+                    self.ingest_external_agent_config_import_failure(input, out);
                 }
             },
         }
@@ -552,6 +593,9 @@ impl AnalyticsReducer {
             .and_then(|thread| thread.connection_id);
         let thread_state = self.threads.entry(input.thread_id.clone()).or_default();
         thread_state
+            .originator
+            .get_or_insert_with(|| input.product_client_id.clone());
+        thread_state
             .metadata
             .get_or_insert_with(|| ThreadMetadataState {
                 session_id: input.session_id.clone(),
@@ -573,7 +617,7 @@ impl AnalyticsReducer {
         input: GuardianReviewEventParams,
         out: &mut Vec<TrackEventRequest>,
     ) {
-        let Some((connection_state, thread_metadata)) =
+        let Some((connection_state, thread_state, thread_metadata)) =
             self.thread_context_or_warn(AnalyticsDropSite::guardian(&input))
         else {
             return;
@@ -583,7 +627,7 @@ impl AnalyticsReducer {
                 event_type: "codex_guardian_review",
                 event_params: GuardianReviewEventPayload {
                     session_id: thread_metadata.session_id.clone(),
-                    app_server_client: connection_state.app_server_client.clone(),
+                    app_server_client: thread_state.app_server_client(connection_state),
                     runtime: connection_state.runtime.clone(),
                     guardian_review: input,
                 },
@@ -711,10 +755,11 @@ impl AnalyticsReducer {
                         turn_id: Some(tracking.turn_id.clone()),
                         invoke_type: Some(invocation.invocation_type),
                         model_slug: Some(tracking.model_slug.clone()),
-                        product_client_id: Some(originator().value),
+                        product_client_id: Some(tracking.product_client_id.clone()),
                         repo_url,
                         skill_scope: Some(skill_scope.to_string()),
                         plugin_id: invocation.plugin_id,
+                        remote_plugin_id: invocation.remote_plugin_id,
                     },
                 },
             ));
@@ -757,6 +802,20 @@ impl AnalyticsReducer {
         }));
     }
 
+    fn ingest_plugin_install_requested(
+        &mut self,
+        input: PluginInstallRequestedInput,
+        out: &mut Vec<TrackEventRequest>,
+    ) {
+        let PluginInstallRequestedInput { tracking, request } = input;
+        out.push(TrackEventRequest::PluginInstallRequested(
+            CodexPluginInstallRequestedEventRequest {
+                event_type: "codex_plugin_install_requested",
+                event_params: codex_plugin_install_requested_metadata(&tracking, request),
+            },
+        ));
+    }
+
     fn ingest_plugin_state_changed(
         &mut self,
         input: PluginStateChangedInput,
@@ -775,10 +834,78 @@ impl AnalyticsReducer {
         });
     }
 
+    fn ingest_plugin_install_failed(
+        &mut self,
+        input: PluginInstallFailedInput,
+        out: &mut Vec<TrackEventRequest>,
+    ) {
+        let PluginInstallFailedInput {
+            plugin,
+            source,
+            error_type,
+            sub_error_type,
+        } = input;
+        out.push(TrackEventRequest::PluginInstallFailed(
+            CodexPluginInstallFailedEventRequest {
+                event_type: "codex_plugin_install_failed",
+                event_params: CodexPluginInstallFailedMetadata {
+                    plugin: codex_plugin_metadata(plugin),
+                    source,
+                    error_type,
+                    sub_error_type,
+                },
+            },
+        ));
+    }
+
+    fn ingest_external_agent_config_import_completed(
+        &mut self,
+        input: ExternalAgentConfigImportCompletedInput,
+        out: &mut Vec<TrackEventRequest>,
+    ) {
+        out.push(TrackEventRequest::ExternalAgentConfigImportCompleted(
+            CodexOnboardingExternalAgentImportCompleteEventRequest {
+                event_type: "codex_onboarding_external_agent_import_complete",
+                event_params: CodexOnboardingExternalAgentImportCompleteMetadata {
+                    import_id: input.import_id,
+                    source: input.source,
+                    provider_id: input.provider_id,
+                    item_type: input.item_type,
+                    success_count: input.success_count,
+                    failed_count: input.failed_count,
+                    product_client_id: Some(originator().value),
+                },
+            },
+        ));
+    }
+
+    fn ingest_external_agent_config_import_failure(
+        &mut self,
+        input: ExternalAgentConfigImportFailureInput,
+        out: &mut Vec<TrackEventRequest>,
+    ) {
+        out.push(TrackEventRequest::ExternalAgentConfigImportFailure(
+            CodexOnboardingExternalAgentImportFailureEventRequest {
+                event_type: "codex_onboarding_external_agent_import_failure",
+                event_params: CodexOnboardingExternalAgentImportFailureMetadata {
+                    import_id: input.import_id,
+                    source: input.source,
+                    provider_id: input.provider_id,
+                    item_type: input.item_type,
+                    failure_stage: input.failure_stage,
+                    error_type: input.error_type,
+                    sub_error_type: input.sub_error_type,
+                    product_client_id: Some(originator().value),
+                },
+            },
+        ));
+    }
+
     async fn ingest_response(
         &mut self,
         connection_id: u64,
         response: ClientResponse,
+        thread_originator: Option<String>,
         out: &mut Vec<TrackEventRequest>,
     ) {
         match response {
@@ -788,6 +915,7 @@ impl AnalyticsReducer {
                     response.thread,
                     response.model,
                     ThreadInitializationMode::New,
+                    thread_originator,
                     out,
                 );
             }
@@ -797,6 +925,7 @@ impl AnalyticsReducer {
                     response.thread,
                     response.model,
                     ThreadInitializationMode::Resumed,
+                    thread_originator,
                     out,
                 );
             }
@@ -806,6 +935,7 @@ impl AnalyticsReducer {
                     response.thread,
                     response.model,
                     ThreadInitializationMode::Forked,
+                    thread_originator,
                     out,
                 );
             }
@@ -1153,7 +1283,7 @@ impl AnalyticsReducer {
                 else {
                     return;
                 };
-                let Some((connection_state, thread_metadata)) = self
+                let Some((connection_state, thread_state, thread_metadata)) = self
                     .thread_context_or_warn(AnalyticsDropSite::tool_item(&notification, item_id))
                 else {
                     return;
@@ -1165,6 +1295,7 @@ impl AnalyticsReducer {
                     started_at_ms,
                     completed_at_ms,
                     connection_state,
+                    thread_state,
                     thread_metadata,
                     review_summary: self.item_review_summaries.get(&key),
                 }) {
@@ -1221,6 +1352,7 @@ impl AnalyticsReducer {
         thread: codex_app_server_protocol::Thread,
         model: String,
         initialization_mode: ThreadInitializationMode,
+        thread_originator: Option<String>,
         out: &mut Vec<TrackEventRequest>,
     ) {
         let session_source: SessionSource = thread.source.into();
@@ -1238,20 +1370,20 @@ impl AnalyticsReducer {
             parent_thread_id,
             initialization_mode,
         );
-        self.threads.insert(
-            thread_id.clone(),
-            ThreadAnalyticsState {
-                connection_id: Some(connection_id),
-                metadata: Some(thread_metadata.clone()),
-            },
-        );
+        let thread_state = self.threads.entry(thread_id.clone()).or_default();
+        if let Some(originator) = thread_originator {
+            thread_state.originator = Some(originator);
+        }
+        thread_state.connection_id = Some(connection_id);
+        thread_state.metadata = Some(thread_metadata.clone());
+        let app_server_client = thread_state.app_server_client(connection_state);
         out.push(TrackEventRequest::ThreadInitialized(
             ThreadInitializedEvent {
                 event_type: "codex_thread_initialized",
                 event_params: ThreadInitializedEventParams {
                     thread_id,
                     session_id,
-                    app_server_client: connection_state.app_server_client.clone(),
+                    app_server_client,
                     runtime: connection_state.runtime.clone(),
                     model,
                     ephemeral: thread.ephemeral,
@@ -1267,7 +1399,7 @@ impl AnalyticsReducer {
     }
 
     fn ingest_compaction(&mut self, input: CodexCompactionEvent, out: &mut Vec<TrackEventRequest>) {
-        let Some((connection_state, thread_metadata)) =
+        let Some((connection_state, thread_state, thread_metadata)) =
             self.thread_context_or_warn(AnalyticsDropSite::compaction(&input))
         else {
             return;
@@ -1278,7 +1410,7 @@ impl AnalyticsReducer {
                 event_params: codex_compaction_event_params(
                     input,
                     thread_metadata.session_id.clone(),
-                    connection_state.app_server_client.clone(),
+                    thread_state.app_server_client(connection_state),
                     connection_state.runtime.clone(),
                     thread_metadata.thread_source.clone(),
                     thread_metadata.subagent_source.clone(),
@@ -1289,7 +1421,7 @@ impl AnalyticsReducer {
     }
 
     fn ingest_goal(&mut self, input: CodexGoalEvent, out: &mut Vec<TrackEventRequest>) {
-        let Some((connection_state, thread_metadata)) =
+        let Some((connection_state, thread_state, thread_metadata)) =
             self.thread_context_or_warn(AnalyticsDropSite::goal(&input))
         else {
             return;
@@ -1299,7 +1431,7 @@ impl AnalyticsReducer {
             event_params: codex_goal_event_params(
                 input,
                 thread_metadata.session_id.clone(),
-                connection_state.app_server_client.clone(),
+                thread_state.app_server_client(connection_state),
                 connection_state.runtime.clone(),
                 thread_metadata.thread_source.clone(),
                 thread_metadata.subagent_source.clone(),
@@ -1388,11 +1520,11 @@ impl AnalyticsReducer {
             return;
         };
         let drop_site = AnalyticsDropSite::turn_steer(&pending_request.thread_id);
-        let Some(thread_metadata) = self
-            .threads
-            .get(drop_site.thread_id)
-            .and_then(|thread| thread.metadata.as_ref())
-        else {
+        let Some(thread_state) = self.threads.get(drop_site.thread_id) else {
+            warn_missing_analytics_context(&drop_site, MissingAnalyticsContext::ThreadMetadata);
+            return;
+        };
+        let Some(thread_metadata) = thread_state.metadata.as_ref() else {
             warn_missing_analytics_context(&drop_site, MissingAnalyticsContext::ThreadMetadata);
             return;
         };
@@ -1403,7 +1535,7 @@ impl AnalyticsReducer {
                 session_id: thread_metadata.session_id.clone(),
                 expected_turn_id: Some(pending_request.expected_turn_id),
                 accepted_turn_id,
-                app_server_client: connection_state.app_server_client.clone(),
+                app_server_client: thread_state.app_server_client(connection_state),
                 runtime: connection_state.runtime.clone(),
                 thread_source: thread_metadata.thread_source.clone(),
                 subagent_source: thread_metadata.subagent_source.clone(),
@@ -1434,7 +1566,7 @@ impl AnalyticsReducer {
                 &pending_review,
             );
         }
-        let Some((connection_state, thread_metadata)) =
+        let Some((connection_state, thread_state, thread_metadata)) =
             self.thread_context_or_warn(AnalyticsDropSite::review(&pending_review))
         else {
             return;
@@ -1446,7 +1578,7 @@ impl AnalyticsReducer {
                 turn_id: pending_review.turn_id,
                 item_id: pending_review.item_id,
                 review_id: pending_review.review_id,
-                app_server_client: connection_state.app_server_client.clone(),
+                app_server_client: thread_state.app_server_client(connection_state),
                 runtime: connection_state.runtime.clone(),
                 thread_source: thread_metadata.thread_source.clone(),
                 subagent_source: thread_metadata.subagent_source.clone(),
@@ -1515,18 +1647,18 @@ impl AnalyticsReducer {
             );
             return;
         };
-        let Some(thread_metadata) = self
-            .threads
-            .get(drop_site.thread_id)
-            .and_then(|thread| thread.metadata.as_ref())
-        else {
+        let Some(thread_state) = self.threads.get(drop_site.thread_id) else {
+            warn_missing_analytics_context(&drop_site, MissingAnalyticsContext::ThreadMetadata);
+            return;
+        };
+        let Some(thread_metadata) = thread_state.metadata.as_ref() else {
             warn_missing_analytics_context(&drop_site, MissingAnalyticsContext::ThreadMetadata);
             return;
         };
         let turn_event = TrackEventRequest::TurnEvent(Box::new(CodexTurnEventRequest {
             event_type: "codex_turn_event",
             event_params: codex_turn_event_params(
-                connection_state.app_server_client.clone(),
+                thread_state.app_server_client(connection_state),
                 connection_state.runtime.clone(),
                 turn_id.to_string(),
                 turn_state,
@@ -1568,17 +1700,18 @@ impl AnalyticsReducer {
     fn thread_context_or_warn(
         &self,
         drop_site: AnalyticsDropSite<'_>,
-    ) -> Option<(&ConnectionState, &ThreadMetadataState)> {
+    ) -> Option<(
+        &ConnectionState,
+        &ThreadAnalyticsState,
+        &ThreadMetadataState,
+    )> {
         let connection_state = self.thread_connection_or_warn(drop_site)?;
-        let Some(thread_metadata) = self
-            .threads
-            .get(drop_site.thread_id)
-            .and_then(|thread| thread.metadata.as_ref())
-        else {
+        let thread_state = self.threads.get(drop_site.thread_id)?;
+        let Some(thread_metadata) = thread_state.metadata.as_ref() else {
             warn_missing_analytics_context(&drop_site, MissingAnalyticsContext::ThreadMetadata);
             return None;
         };
-        Some((connection_state, thread_metadata))
+        Some((connection_state, thread_state, thread_metadata))
     }
 }
 
@@ -1611,9 +1744,9 @@ fn tracked_tool_item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
         | ThreadItem::DynamicToolCall { id, .. }
-        | ThreadItem::CollabAgentToolCall { id, .. }
-        | ThreadItem::WebSearch { id, .. }
-        | ThreadItem::ImageGeneration { id, .. } => Some(id),
+        | ThreadItem::CollabAgentToolCall { id, .. } => Some(id),
+        ThreadItem::WebSearch(item) => Some(&item.id),
+        ThreadItem::ImageGeneration(item) => Some(&item.id),
         ThreadItem::UserMessage { .. }
         | ThreadItem::HookPrompt { .. }
         | ThreadItem::AgentMessage { .. }
@@ -1621,7 +1754,7 @@ fn tracked_tool_item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::Reasoning { .. }
         | ThreadItem::SubAgentActivity { .. }
         | ThreadItem::ImageView { .. }
-        | ThreadItem::Sleep { .. }
+        | ThreadItem::Sleep(_)
         | ThreadItem::EnteredReviewMode { .. }
         | ThreadItem::ExitedReviewMode { .. }
         | ThreadItem::ContextCompaction { .. } => None,
@@ -1648,6 +1781,7 @@ struct ToolItemEventInput<'a> {
     started_at_ms: u64,
     completed_at_ms: u64,
     connection_state: &'a ConnectionState,
+    thread_state: &'a ThreadAnalyticsState,
     thread_metadata: &'a ThreadMetadataState,
     review_summary: Option<&'a ItemReviewSummary>,
 }
@@ -1660,12 +1794,15 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
         started_at_ms,
         completed_at_ms,
         connection_state,
+        thread_state,
         thread_metadata,
         review_summary,
     } = input;
     match item {
         ThreadItem::CommandExecution {
             id,
+            plugin_id,
+            script_path,
             source,
             status,
             command_actions,
@@ -1689,6 +1826,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                     started_at_ms,
                     completed_at_ms,
                     connection_state,
+                    thread_state,
                     thread_metadata,
                     review_summary,
                 },
@@ -1698,6 +1836,11 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                     event_type: "codex_command_execution_event",
                     event_params: CodexCommandExecutionEventParams {
                         base,
+                        plugin_id: plugin_id.clone(),
+                        script_path: safe_plugin_relative_script_path(
+                            plugin_id.as_deref(),
+                            script_path.as_deref(),
+                        ),
                         command_execution_source: *source,
                         exit_code: *exit_code,
                         command_total_action_count: action_counts.total,
@@ -1730,6 +1873,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                     started_at_ms,
                     completed_at_ms,
                     connection_state,
+                    thread_state,
                     thread_metadata,
                     review_summary,
                 },
@@ -1754,6 +1898,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
             error,
             duration_ms,
             plugin_id,
+            app_context,
             ..
         } => {
             let (terminal_status, failure_kind) = mcp_tool_call_outcome(status)?;
@@ -1771,6 +1916,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                     started_at_ms,
                     completed_at_ms,
                     connection_state,
+                    thread_state,
                     thread_metadata,
                     review_summary,
                 },
@@ -1784,6 +1930,9 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                         mcp_tool_name: tool.clone(),
                         mcp_error_present: error.is_some(),
                         plugin_id: plugin_id.clone(),
+                        connector_id: app_context
+                            .as_ref()
+                            .map(|app_context| app_context.connector_id.clone()),
                     },
                 },
             ))
@@ -1815,6 +1964,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                     started_at_ms,
                     completed_at_ms,
                     connection_state,
+                    thread_state,
                     thread_metadata,
                     review_summary,
                 },
@@ -1829,6 +1979,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                         output_content_item_count: counts.map(|counts| counts.total),
                         output_text_item_count: counts.map(|counts| counts.text),
                         output_image_item_count: counts.map(|counts| counts.image),
+                        output_audio_item_count: counts.map(|counts| counts.audio),
                     },
                 },
             ))
@@ -1859,6 +2010,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                     started_at_ms,
                     completed_at_ms,
                     connection_state,
+                    thread_state,
                     thread_metadata,
                     review_summary,
                 },
@@ -1899,11 +2051,11 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                 },
             ))
         }
-        ThreadItem::WebSearch { id, query, action } => {
+        ThreadItem::WebSearch(item) => {
             let base = tool_item_base(
                 thread_id,
                 turn_id,
-                id.clone(),
+                item.id.clone(),
                 "web_search".to_string(),
                 ToolItemOutcome {
                     terminal_status: ToolItemTerminalStatus::Completed,
@@ -1914,6 +2066,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                     started_at_ms,
                     completed_at_ms,
                     connection_state,
+                    thread_state,
                     thread_metadata,
                     review_summary,
                 },
@@ -1922,24 +2075,18 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                 event_type: "codex_web_search_event",
                 event_params: CodexWebSearchEventParams {
                     base,
-                    web_search_action: action.as_ref().map(web_search_action_kind),
-                    query_present: !query.trim().is_empty(),
-                    query_count: web_search_query_count(query, action.as_ref()),
+                    web_search_action: item.action.as_ref().map(web_search_action_kind),
+                    query_present: !item.query.trim().is_empty(),
+                    query_count: web_search_query_count(&item.query, item.action.as_ref()),
                 },
             }))
         }
-        ThreadItem::ImageGeneration {
-            id,
-            status,
-            revised_prompt,
-            saved_path,
-            ..
-        } => {
-            let (terminal_status, failure_kind) = image_generation_outcome(status.as_str());
+        ThreadItem::ImageGeneration(item) => {
+            let (terminal_status, failure_kind) = image_generation_outcome(item.status.as_str());
             let base = tool_item_base(
                 thread_id,
                 turn_id,
-                id.clone(),
+                item.id.clone(),
                 "image_generation".to_string(),
                 ToolItemOutcome {
                     terminal_status,
@@ -1950,6 +2097,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                     started_at_ms,
                     completed_at_ms,
                     connection_state,
+                    thread_state,
                     thread_metadata,
                     review_summary,
                 },
@@ -1959,14 +2107,22 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                     event_type: "codex_image_generation_event",
                     event_params: CodexImageGenerationEventParams {
                         base,
-                        revised_prompt_present: revised_prompt.is_some(),
-                        saved_path_present: saved_path.is_some(),
+                        revised_prompt_present: item.revised_prompt.is_some(),
+                        saved_path_present: item.saved_path.is_some(),
                     },
                 },
             ))
         }
         _ => None,
     }
+}
+
+fn safe_plugin_relative_script_path(
+    plugin_id: Option<&str>,
+    script_path: Option<&str>,
+) -> Option<String> {
+    let script_path = script_path.filter(|path| is_safe_plugin_relative_path(path))?;
+    plugin_id.map(|_| script_path.to_string())
 }
 
 struct ToolItemOutcome {
@@ -2005,6 +2161,7 @@ struct ToolItemContext<'a> {
     started_at_ms: u64,
     completed_at_ms: u64,
     connection_state: &'a ConnectionState,
+    thread_state: &'a ThreadAnalyticsState,
     thread_metadata: &'a ThreadMetadataState,
     review_summary: Option<&'a ItemReviewSummary>,
 }
@@ -2021,9 +2178,12 @@ fn tool_item_base(
     let review_summary = context.review_summary.cloned().unwrap_or_default();
     CodexToolItemEventBase {
         thread_id: thread_id.to_string(),
+        session_id: thread_metadata.session_id.clone(),
         turn_id: turn_id.to_string(),
         item_id,
-        app_server_client: context.connection_state.app_server_client.clone(),
+        app_server_client: context
+            .thread_state
+            .app_server_client(context.connection_state),
         runtime: context.connection_state.runtime.clone(),
         thread_source: thread_metadata.thread_source.clone(),
         subagent_source: thread_metadata.subagent_source.clone(),
@@ -2365,26 +2525,30 @@ fn file_change_counts(changes: &[codex_app_server_protocol::FileUpdateChange]) -
     counts
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct DynamicContentCounts {
     total: u64,
     text: u64,
     image: u64,
+    audio: u64,
 }
 
 fn dynamic_content_counts(items: &[DynamicToolCallOutputContentItem]) -> DynamicContentCounts {
     let mut text = 0;
     let mut image = 0;
+    let mut audio = 0;
     for item in items {
         match item {
             DynamicToolCallOutputContentItem::InputText { .. } => text += 1,
             DynamicToolCallOutputContentItem::InputImage { .. } => image += 1,
+            DynamicToolCallOutputContentItem::InputAudio { .. } => audio += 1,
         }
     }
     DynamicContentCounts {
         total: usize_to_u64(items.len()),
         text,
         image,
+        audio,
     }
 }
 
@@ -2489,6 +2653,7 @@ fn codex_turn_event_params(
     let TurnProfile {
         before_first_sampling_ms,
         sampling_ms,
+        compaction_ms,
         between_sampling_overhead_ms,
         tool_blocking_ms,
         after_last_sampling_ms,
@@ -2547,6 +2712,9 @@ fn codex_turn_event_params(
         cached_input_tokens: token_usage
             .as_ref()
             .map(|token_usage| token_usage.cached_input_tokens),
+        cache_write_input_tokens: token_usage
+            .as_ref()
+            .map(|token_usage| token_usage.cache_write_input_tokens),
         output_tokens: token_usage
             .as_ref()
             .map(|token_usage| token_usage.output_tokens),
@@ -2558,6 +2726,7 @@ fn codex_turn_event_params(
             .map(|token_usage| token_usage.total_tokens),
         before_first_sampling_ms,
         sampling_ms,
+        compaction_ms,
         between_sampling_overhead_ms,
         tool_blocking_ms,
         after_last_sampling_ms,
@@ -2687,6 +2856,7 @@ mod tests {
     use codex_protocol::models::SandboxEnforcement;
     use codex_protocol::permissions::FileSystemSandboxPolicy;
     use codex_protocol::permissions::NetworkSandboxPolicy;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn managed_full_disk_with_restricted_network_reports_external_sandbox() {
@@ -2709,5 +2879,49 @@ mod tests {
             guardian_review_result(GuardianApprovalReviewStatus::TimedOut),
             Some((ReviewStatus::TimedOut, ReviewResolution::None))
         ));
+    }
+
+    #[test]
+    fn dynamic_content_counts_include_audio() {
+        let items = vec![
+            DynamicToolCallOutputContentItem::InputText {
+                text: "ok".to_string(),
+            },
+            DynamicToolCallOutputContentItem::InputImage {
+                image_url: "data:image/png;base64,AAA".to_string(),
+            },
+            DynamicToolCallOutputContentItem::InputAudio {
+                audio_url: "data:audio/wav;base64,YXVkaW8=".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            dynamic_content_counts(&items),
+            DynamicContentCounts {
+                total: 3,
+                text: 1,
+                image: 1,
+                audio: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn command_execution_script_paths_reject_unsafe_values() {
+        assert_eq!(
+            safe_plugin_relative_script_path(
+                Some("sample@openai-curated"),
+                Some("/home/user/.codex/plugins/cache/openai-curated/sample/scripts/run.py"),
+            ),
+            None
+        );
+        assert_eq!(
+            safe_plugin_relative_script_path(Some("sample@openai-curated"), Some("scripts/run.py"),),
+            Some("scripts/run.py".to_string())
+        );
+        assert_eq!(
+            safe_plugin_relative_script_path(/*plugin_id*/ None, Some("scripts/run.py"),),
+            None
+        );
     }
 }
