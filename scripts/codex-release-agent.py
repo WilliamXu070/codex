@@ -611,6 +611,11 @@ def run_codex_agent(
     command = [
         codex_binary,
         "exec",
+        # Release integration must not initialize personal MCP servers, plugins,
+        # hooks, or other user-configured side effects. Authentication still uses
+        # the normal CODEX_HOME, and the explicit automation overrides below are
+        # applied after the user config is skipped.
+        "--ignore-user-config",
         "--ephemeral",
         "--json",
         "-c",
@@ -815,29 +820,12 @@ def publish_branch(
     version: str,
 ) -> str:
     run_command(["git", "push", "-u", "origin", branch], cwd=workspace)
-    origin_url = git_output(workspace, "remote", "get-url", "origin")
-    repository = parse_github_repository(origin_url)
-    existing = run_command(
-        [
-            "gh",
-            "pr",
-            "list",
-            "--repo",
-            repository,
-            "--head",
-            branch,
-            "--state",
-            "all",
-            "--json",
-            "url",
-            "--jq",
-            ".[0].url // empty",
-        ],
-        cwd=workspace,
-    ).stdout.strip()
+    existing = existing_pull_request_url(workspace=workspace, branch=branch)
     if existing:
         return existing
 
+    origin_url = git_output(workspace, "remote", "get-url", "origin")
+    repository = parse_github_repository(origin_url)
     body_path = workspace / ".codex-release-pr-body.md"
     body_path.write_text(
         textwrap.dedent(
@@ -890,6 +878,30 @@ def publish_branch(
         ).stdout.strip()
     finally:
         body_path.unlink(missing_ok=True)
+
+
+def existing_pull_request_url(*, workspace: Path, branch: str) -> str | None:
+    origin_url = git_output(workspace, "remote", "get-url", "origin")
+    repository = parse_github_repository(origin_url)
+    existing = run_command(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            repository,
+            "--head",
+            branch,
+            "--state",
+            "all",
+            "--json",
+            "url",
+            "--jq",
+            ".[0].url // empty",
+        ],
+        cwd=workspace,
+    ).stdout.strip()
+    return existing or None
 
 
 def read_pull_request_checks(
@@ -1212,6 +1224,7 @@ def execute(args: argparse.Namespace) -> RunResult:
     ledger = ReleaseLedger(state_dir / "state.sqlite3")
     branch: str | None = None
     workspace: Path | None = None
+    pr_url: str | None = None
 
     with exclusive_lock(state_dir / "agent.lock"):
         claim = ledger.claim(
@@ -1237,23 +1250,34 @@ def execute(args: argparse.Namespace) -> RunResult:
                 retry_failed=args.retry_failed,
                 upstream_url=args.upstream_url,
             )
-            prompt = integration_prompt(
-                source_root=source_root,
-                workspace=workspace,
-                context_dir=context_dir,
-                tag=args.release_tag,
-                version=version,
-                source_head=source_head,
-                branch=branch,
+            if args.retry_failed:
+                pr_url = existing_pull_request_url(
+                    workspace=workspace,
+                    branch=branch,
+                )
+            resume_published = bool(pr_url) and not git_output(
+                workspace,
+                "status",
+                "--porcelain",
             )
-            run_codex_agent(
-                workspace=workspace,
-                prompt=prompt,
-                state_dir=state_dir,
-                tag=args.release_tag,
-                codex_binary=args.codex_binary,
-                timeout_seconds=args.timeout_seconds,
-            )
+            if not resume_published:
+                prompt = integration_prompt(
+                    source_root=source_root,
+                    workspace=workspace,
+                    context_dir=context_dir,
+                    tag=args.release_tag,
+                    version=version,
+                    source_head=source_head,
+                    branch=branch,
+                )
+                run_codex_agent(
+                    workspace=workspace,
+                    prompt=prompt,
+                    state_dir=state_dir,
+                    tag=args.release_tag,
+                    codex_binary=args.codex_binary,
+                    timeout_seconds=args.timeout_seconds,
+                )
             verify_with_repairs(
                 workspace=workspace,
                 source_root=source_root,
@@ -1267,7 +1291,6 @@ def execute(args: argparse.Namespace) -> RunResult:
                 skip_build=args.skip_build,
                 max_repair_attempts=args.max_repair_attempts,
             )
-            pr_url = None
             merge_commit = None
             installed = None
             if not args.no_publish:
@@ -1321,7 +1344,7 @@ def execute(args: argparse.Namespace) -> RunResult:
                 installed_cli=str(installed.cli) if installed else None,
                 previous_cli=installed.previous_cli if installed else None,
             )
-        except Exception as exc:
+        except (Exception, KeyboardInterrupt) as exc:
             ledger.fail(
                 args.repository,
                 args.release_tag,
