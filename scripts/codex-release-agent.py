@@ -611,6 +611,11 @@ def run_codex_agent(
     command = [
         codex_binary,
         "exec",
+        # Release integration must not initialize personal MCP servers, plugins,
+        # hooks, or other user-configured side effects. Authentication still uses
+        # the normal CODEX_HOME, and the explicit automation overrides below are
+        # applied after the user config is skipped.
+        "--ignore-user-config",
         "--ephemeral",
         "--json",
         "-c",

@@ -351,7 +351,7 @@ class PullRequestCiGateTests(unittest.TestCase):
 
 
 class AgentSandboxTests(unittest.TestCase):
-    def test_agent_can_write_git_metadata_and_read_rust_toolchain(self) -> None:
+    def test_agent_ignores_user_config_and_scopes_filesystem_permissions(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             workspace = root / "workspace"
@@ -380,6 +380,16 @@ class AgentSandboxTests(unittest.TestCase):
                 )
 
             command = run_command.call_args.args[0]
+            self.assertEqual(
+                command[:5],
+                [
+                    "codex",
+                    "exec",
+                    "--ignore-user-config",
+                    "--ephemeral",
+                    "--json",
+                ],
+            )
             filesystem_config = command[command.index("-c", 6) + 1]
             git_config = Path.home() / ".gitconfig"
             git_config_dir = Path.home() / ".config/git"
