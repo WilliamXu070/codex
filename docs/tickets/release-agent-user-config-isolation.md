@@ -22,6 +22,11 @@ and the dirty live checkout must remain unchanged.
   Desktop accessed the same Keychain item.
 - The release merge retained both the fork and upstream declarations of
   `binary_test_target_compatible_with`, which made `defs.bzl` fail to parse.
+- Retrying a failed published release reran the full integration prompt, which
+  reapplied the captured dirty patch to an already-integrated branch and created
+  conflicts in the isolated workspace.
+- Interrupting that retry left its ledger row stuck as `running` because
+  `KeyboardInterrupt` was not recorded by the `Exception` handler.
 - The CI gate failed closed, so `0.147.0-alpha.2` was not merged or activated.
 
 ## Plan
@@ -31,9 +36,11 @@ and the dirty live checkout must remain unchanged.
 2. Add a command-construction regression test for the isolation flag.
 3. Remove the duplicate Bazel parameter and documentation entry.
 4. Reproduce the exact Python updater tests and Bazel queries locally.
-5. Push the focused repair to PR #5 and require `CI required` to pass before
+5. Resume clean published retry workspaces at validation/CI instead of invoking
+   the integration agent again, and record interruptions as failed attempts.
+6. Push the focused repair to PR #5 and require `CI required` to pass before
    retrying merge and activation.
-6. Verify the active CLI and dirty live-checkout fingerprints after activation.
+7. Verify the active CLI and dirty live-checkout fingerprints after activation.
 
 ## Verification
 
@@ -45,8 +52,9 @@ and the dirty live checkout must remain unchanged.
 - A real `codex exec --ignore-user-config --ephemeral` probe returned
   `ISOLATION_OK`; its log window contained no non-desktop
   `codex_keyring_store` events.
-- Full PR `CI required` verification is pending.
+- Published-retry and interrupted-ledger regression tests pass.
+- The first repaired PR run passed `CI required`; final retry-path CI is pending.
 
 ## Status
 
-Local verification complete; awaiting PR CI.
+Retry-path hardening complete locally; awaiting final PR CI.

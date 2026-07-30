@@ -283,6 +283,111 @@ class ExecuteDeduplicationTests(unittest.TestCase):
             assert row is not None
             self.assertEqual(row["status"], "failed")
 
+    def test_retry_of_published_branch_skips_integration_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            workspace = root / "workspace"
+            source.mkdir()
+            workspace.mkdir()
+            args = self.make_args(source, root / "state")
+            args.retry_failed = True
+            args.no_publish = False
+            ledger = agent.ReleaseLedger(args.state_dir / "state.sqlite3")
+            ledger.claim(
+                args.repository,
+                args.release_tag,
+                "first-attempt",
+                retry_failed=False,
+            )
+            ledger.fail(args.repository, args.release_tag, error="CI failed")
+
+            with (
+                mock.patch.object(agent, "source_fingerprint", return_value="same"),
+                mock.patch.object(
+                    agent,
+                    "prepare_workspace",
+                    return_value=(
+                        workspace,
+                        "agent/upstream-0.146.0-alpha.14",
+                        "abc123",
+                        workspace / ".codex-release-context",
+                    ),
+                ),
+                mock.patch.object(
+                    agent,
+                    "existing_pull_request_url",
+                    return_value="https://example.test/pr/1",
+                ),
+                mock.patch.object(agent, "git_output", return_value=""),
+                mock.patch.object(agent, "run_codex_agent") as run_agent,
+                mock.patch.object(agent, "verify_with_repairs"),
+                mock.patch.object(
+                    agent,
+                    "publish_branch",
+                    return_value="https://example.test/pr/1",
+                ),
+                mock.patch.object(agent, "wait_for_pull_request_ci"),
+                mock.patch.object(
+                    agent,
+                    "merge_pull_request",
+                    return_value="abc123def456",
+                ),
+                mock.patch.object(
+                    agent,
+                    "install_active_cli",
+                    return_value=agent.InstalledRelease(
+                        release_dir=root / "release",
+                        cli=root / "release/debug/codex",
+                        tui=root / "release/debug/codex-tui",
+                        previous_cli=None,
+                        previous_tui=None,
+                        previous_current=None,
+                    ),
+                ),
+            ):
+                result = agent.execute(args)
+
+            self.assertEqual(result.status, "succeeded")
+            self.assertEqual(result.pr_url, "https://example.test/pr/1")
+            run_agent.assert_not_called()
+
+    def test_interruption_marks_release_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            workspace = root / "workspace"
+            source.mkdir()
+            workspace.mkdir()
+            args = self.make_args(source, root / "state")
+
+            with (
+                mock.patch.object(agent, "source_fingerprint", return_value="same"),
+                mock.patch.object(
+                    agent,
+                    "prepare_workspace",
+                    return_value=(
+                        workspace,
+                        "agent/upstream-0.146.0-alpha.14",
+                        "abc123",
+                        workspace / ".codex-release-context",
+                    ),
+                ),
+                mock.patch.object(
+                    agent,
+                    "run_codex_agent",
+                    side_effect=KeyboardInterrupt,
+                ),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    agent.execute(args)
+
+            ledger = agent.ReleaseLedger(args.state_dir / "state.sqlite3")
+            row = ledger.get(args.repository, args.release_tag)
+            self.assertIsNotNone(row)
+            assert row is not None
+            self.assertEqual(row["status"], "failed")
+
 
 class PullRequestCiGateTests(unittest.TestCase):
     def test_successful_required_check_allows_merge(self) -> None:
