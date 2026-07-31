@@ -21,11 +21,13 @@ codex-protocol = { workspace = true }
 codex-shell-command = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-path-uri = { workspace = true }
+schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
 strum_macros = { workspace = true }
 thiserror = { workspace = true }
+ts-rs = { workspace = true }
 rmcp = { workspace = true, default-features = false, features = [
     "base64",
     "macros",
@@ -46,7 +48,5 @@ rmcp = { workspace = true, default-features = false, features = [
     "schemars",
     "server",
 ] }
-schemars = { workspace = true }
 similar = { workspace = true }
 tempfile = { workspace = true }
-ts-rs = { workspace = true }
