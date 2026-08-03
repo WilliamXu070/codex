@@ -26,10 +26,11 @@ use crate::elicitation::ElicitationRequestManager;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::ToolPluginProvenance;
 use crate::openai_docs_source_attribution::maybe_with_openai_docs_source_attribution;
-use crate::pagination::collect_paginated;
+use crate::pagination::collect_paginated_with_limit;
 use crate::runtime::McpRuntimeContext;
 use crate::runtime::emit_duration;
 use crate::server::EffectiveMcpServer;
+use crate::server::has_explicit_http_authorization;
 use crate::tool_catalog_cache::McpToolCatalogCacheContext;
 use crate::tool_catalog_cache::McpToolCatalogFetchTicket;
 use crate::tools::ToolInfo;
@@ -39,6 +40,7 @@ use async_channel::Sender;
 use codex_api::SharedAuthProvider;
 use codex_async_utils::CancelErr;
 use codex_async_utils::OrCancelExt;
+use codex_config::McpServerAuth;
 use codex_config::McpServerConfig;
 use codex_config::McpServerTransportConfig;
 use codex_config::types::AuthKeyringBackendKind;
@@ -283,6 +285,7 @@ struct ManagedClientStartup {
     client_elicitation_capability: ElicitationCapability,
     supports_openai_form_elicitation: bool,
     protocol_mode: McpProtocolMode,
+    catalog_item_limit: usize,
     cancel_token: CancellationToken,
     startup_complete: Arc<AtomicBool>,
 }
@@ -304,6 +307,7 @@ impl ManagedClientStartup {
             client_elicitation_capability,
             supports_openai_form_elicitation,
             protocol_mode,
+            catalog_item_limit,
             cancel_token,
             startup_complete,
         } = self.clone();
@@ -358,6 +362,7 @@ impl ManagedClientStartup {
                         tool_catalog_fetch_ticket,
                         client_elicitation_capability,
                         supports_openai_form_elicitation,
+                        catalog_item_limit,
                     },
                 )
                 .await
@@ -421,6 +426,7 @@ impl AsyncManagedClient {
         client_elicitation_capability: ElicitationCapability,
         supports_openai_form_elicitation: bool,
         protocol_mode: McpProtocolMode,
+        catalog_item_limit: usize,
     ) -> Self {
         let is_codex_apps_mcp_server = server_name == CODEX_APPS_MCP_SERVER_NAME;
         let reconnect_server_name = server_name.clone();
@@ -448,6 +454,7 @@ impl AsyncManagedClient {
             client_elicitation_capability,
             supports_openai_form_elicitation,
             protocol_mode,
+            catalog_item_limit,
             cancel_token: cancel_token.clone(),
             startup_complete: Arc::clone(&startup_complete),
         });
@@ -588,11 +595,12 @@ pub(crate) async fn list_tools_for_client_uncached(
     codex_apps_refresh_trigger: &'static str,
     client: &Arc<RmcpClient>,
     timeout: Option<Duration>,
+    catalog_item_limit: usize,
     server_instructions: Option<&str>,
 ) -> Result<Vec<ToolInfo>> {
     let fetch_start = Instant::now();
     let protocol_mode = client.protocol_mode();
-    let tools = collect_paginated("tools/list", timeout, |params| {
+    let tools = collect_paginated_with_limit("tools/list", timeout, catalog_item_limit, |params| {
         let client = Arc::clone(client);
         async move {
             let response = client
@@ -848,6 +856,7 @@ async fn start_server_task(
         tool_catalog_fetch_ticket,
         client_elicitation_capability,
         supports_openai_form_elicitation,
+        catalog_item_limit,
     } = params;
     let params = mcp_initialize_request_params(
         client_elicitation_capability,
@@ -889,6 +898,7 @@ async fn start_server_task(
         /*codex_apps_refresh_trigger*/ "initial",
         &client,
         startup_timeout,
+        catalog_item_limit,
         initialize_result.instructions.as_deref(),
     )
     .await
@@ -980,6 +990,7 @@ struct StartServerTaskParams {
     tool_catalog_fetch_ticket: Option<McpToolCatalogFetchTicket>,
     client_elicitation_capability: ElicitationCapability,
     supports_openai_form_elicitation: bool,
+    catalog_item_limit: usize,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -995,9 +1006,18 @@ async fn make_rmcp_client(
     protocol_mode: McpProtocolMode,
 ) -> Result<RmcpClient, StartupOutcomeError> {
     let config = server.config().clone();
+    if matches!(config.auth, McpServerAuth::ChatGpt)
+        && !config.is_local_environment()
+        && !has_explicit_http_authorization(&config)
+    {
+        return Err(StartupOutcomeError::from(anyhow!(
+            "executor-owned MCP server `{server_name}` cannot use hosted ChatGPT authentication; configure executor-owned credentials instead"
+        )));
+    }
     let resolved_environment =
         resolved_environment.map_err(|err| StartupOutcomeError::from(anyhow!(err)))?;
     let is_local_environment = config.is_local_environment();
+    let oauth_credential_name = config.oauth_credential_name(server_name);
     let McpServerConfig { transport, .. } = config;
 
     match transport {
@@ -1063,7 +1083,7 @@ async fn make_rmcp_client(
                     Err(error) => return Err(error.into()),
                 };
             RmcpClient::new_streamable_http_client_with_protocol_mode(
-                server_name,
+                oauth_credential_name.as_ref(),
                 &url,
                 resolved_bearer_token,
                 http_headers,
