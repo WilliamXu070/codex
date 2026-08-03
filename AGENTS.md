@@ -69,6 +69,12 @@ Run `just fmt` (in the `codex-rs` directory) automatically after you have finish
 
 Before finalizing a large change to `codex-rs`, run `just fix -p <project>` (in `codex-rs` directory) to fix any linter issues in the code. Prefer scoping with `-p` to avoid slow workspace‑wide Clippy builds; only run `just fix` without `-p` if you changed shared crates. Do not re-run tests after running `fix` or `fmt`.
 
+All local Cargo builds, tests, Clippy runs, and `just` recipes must keep compiler
+state outside this Desktop-backed checkout. The `justfile` defaults
+`CARGO_TARGET_DIR` to `/private/tmp/codex-tui-target` and disables incremental
+state; direct Cargo commands must use the same settings. Never use
+`codex-rs/target` or a release-install directory as a Cargo target directory.
+
 ## The `codex-core` crate
 
 Over time, the `codex-core` crate (defined in `codex-rs/core/`) has become bloated because it is the largest crate, so it is often easier to add something new to `codex-core` rather than refactor out the library code you need so your new code neither takes a dependency on, nor contributes to the size of, `codex-core`.
