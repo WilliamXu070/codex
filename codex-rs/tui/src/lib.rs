@@ -415,10 +415,6 @@ async fn connect_remote_app_server(
 #[cfg(unix)]
 async fn maybe_probe_default_daemon_socket(codex_home: &Path) -> Option<AbsolutePathBuf> {
     let socket_path = codex_app_server_client::app_server_control_socket_path(codex_home).ok()?;
-    if !socket_path.as_path().try_exists().unwrap_or(false) {
-        return None;
-    }
-
     match tokio::time::timeout(
         AUTO_CONNECT_DAEMON_CONNECT_TIMEOUT,
         tokio::net::UnixStream::connect(socket_path.as_path()),
@@ -924,6 +920,9 @@ pub async fn run_main(
             cli.approval_policy.map(Into::into),
         )
     };
+
+    cli.shared
+        .take_auto_review_config_overrides(&mut cli.config_overrides);
 
     // Map the legacy --search flag to the canonical web_search mode.
     if cli.web_search {
@@ -2224,7 +2223,7 @@ mod tests {
         Ok(())
     }
 
-    async fn start_test_embedded_app_server(
+    pub(crate) async fn start_test_embedded_app_server(
         config: Config,
     ) -> color_eyre::Result<InProcessAppServerClient> {
         let state_db =

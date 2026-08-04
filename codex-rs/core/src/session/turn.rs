@@ -28,7 +28,6 @@ use crate::injection::ToolMentionKind;
 use crate::injection::app_id_from_path;
 use crate::injection::tool_kind_for_path;
 use crate::mcp_skill_dependencies::maybe_prompt_and_install_mcp_dependencies;
-use crate::mcp_tool_exposure::build_mcp_tool_runtimes;
 use crate::mentions::build_connector_slug_counts;
 use crate::mentions::build_skill_name_counts;
 use crate::mentions::collect_explicit_app_ids;
@@ -58,11 +57,9 @@ use crate::tools::ToolRouter;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::parallel::ToolCallRuntime;
 use crate::tools::registry::ToolArgumentDiffConsumer;
-use crate::tools::router::ToolRouterParams;
 use crate::tools::router::ToolSuggestCandidates;
 use crate::tools::router::ToolSuggestPresentation;
-use crate::tools::router::extension_tool_executors;
-use crate::tools::spec_plan::search_tool_enabled;
+use crate::tools::spec_plan::build_tool_router;
 use crate::tools::spec_plan::tool_suggest_enabled;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::turn_timing::record_turn_ttft_metric;
@@ -83,7 +80,6 @@ use codex_features::Feature;
 use codex_file_system::FindUpErrorPolicy;
 use codex_file_system::find_nearest_ancestor_with_markers;
 use codex_login::CodexAuth;
-use codex_mcp::ToolInfo;
 use codex_protocol::ResponseItemId;
 use codex_protocol::config_types::AutoCompactTokenLimitScope;
 use codex_protocol::config_types::ModeKind;
@@ -153,7 +149,6 @@ const POST_SAMPLING_TOKEN_ESTIMATE_TARGET: &str = "codex_core::post_sampling_tok
 pub(crate) async fn run_turn(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
-    turn_extension_data: Arc<codex_extension_api::ExtensionData>,
     input: Vec<TurnInput>,
     prewarmed_client_session: Option<ModelClientSession>,
     cancellation_token: CancellationToken,
@@ -213,10 +208,11 @@ pub(crate) async fn run_turn(
         Err(err) => return Err(err),
     };
     // Keep the exact model-visible state used by this turn and its inline compactions.
-    let (mut world_state, display_roots) = tokio::join!(
+    let (world_state, display_roots) = tokio::join!(
         sess.record_context_updates_and_set_reference_context_item(first_step_context.as_ref()),
         turn_diff_display_roots(first_step_context.as_ref()),
     );
+    let mut world_state = world_state?;
 
     let Some((injection_items, explicitly_enabled_connectors)) = build_skills_and_plugins(
         &sess,
@@ -328,7 +324,7 @@ pub(crate) async fn run_turn(
 
             world_state = sess
                 .record_step_world_state_if_changed(&world_state, step_context.as_ref())
-                .await;
+                .await?;
 
             // Construct the input that we will send to the model.
             let sampling_request_input: Vec<ResponseItem> = async {
@@ -347,7 +343,7 @@ pub(crate) async fn run_turn(
             run_sampling_request(
                 Arc::clone(&sess),
                 Arc::clone(&step_context),
-                Arc::clone(&turn_extension_data),
+                Arc::clone(&turn_context.extension_data),
                 Arc::clone(&turn_diff_tracker),
                 &mut client_session,
                 &responses_metadata,
@@ -689,7 +685,8 @@ async fn required_mcp_servers_for_input(
     } else {
         HashMap::new()
     };
-    let skills_outcome = turn_context.turn_skills.snapshot.outcome();
+    let skills_snapshot = turn_context.skills_snapshot();
+    let skills_outcome = skills_snapshot.outcome();
     let mentioned_skills = collect_explicit_skill_mentions(
         user_input,
         &skills_outcome.skills,
@@ -745,9 +742,9 @@ async fn build_skills_and_plugins(
         // Plugin mentions need raw MCP/app inventory even when app tools
         // are normally hidden so we can describe the plugin's currently
         // usable capabilities for this turn.
-        step_context.mcp.tools().to_vec()
+        step_context.mcp.tools()
     } else {
-        Vec::new()
+        &[]
     };
     let available_connectors = if turn_context.apps_enabled() {
         let connectors = codex_connectors::merge::merge_plugin_connectors_with_accessible(
@@ -755,13 +752,14 @@ async fn build_skills_and_plugins(
                 .connector_ids()
                 .iter()
                 .map(|connector_id| connector_id.0.clone()),
-            connectors::accessible_connectors_from_mcp_tools(&mcp_tools),
+            connectors::accessible_connectors_from_mcp_tools(mcp_tools),
         );
         connectors::with_app_enabled_state(connectors, &turn_context.config)
     } else {
         Vec::new()
     };
-    let skills_outcome = turn_context.turn_skills.snapshot.outcome();
+    let skills_snapshot = turn_context.skills_snapshot();
+    let skills_outcome = skills_snapshot.outcome();
     let connector_slug_counts = build_connector_slug_counts(&available_connectors);
     let extension_injection_items =
         build_extension_turn_input_items(sess, step_context, user_input, cancellation_token)
@@ -812,8 +810,7 @@ async fn build_skills_and_plugins(
         &available_connectors,
         &skill_name_counts_lower,
     );
-    let plugin_items =
-        build_plugin_injections(mentioned_plugins, &mcp_tools, &available_connectors);
+    let plugin_items = build_plugin_injections(mentioned_plugins, mcp_tools, &available_connectors);
     let mut explicitly_enabled_connectors = collect_explicit_app_ids(user_input);
     explicitly_enabled_connectors.extend(skill_connector_ids);
     let connector_names_by_id = available_connectors
@@ -1324,7 +1321,6 @@ async fn run_sampling_request(
     let base_instructions = sess.get_base_instructions().await;
 
     let tool_runtime = ToolCallRuntime::new(
-        Arc::clone(&router),
         Arc::clone(&sess),
         Arc::clone(&step_context),
         Arc::clone(&turn_diff_tracker),
@@ -1332,13 +1328,13 @@ async fn run_sampling_request(
     let _code_mode_worker = sess.services.code_mode_service.start_turn_worker(
         &sess,
         Arc::clone(&step_context),
-        Arc::clone(&router),
         Arc::clone(&turn_diff_tracker),
     );
     let max_retries = turn_context.provider.info().stream_max_retries();
     let mut retries = 0;
     let mut initial_input = Some(input);
     let mut original_input = None;
+    let mut executed_tool_calls_by_output = HashMap::new();
     loop {
         let prompt_input = if let Some(input) = initial_input.take() {
             input
@@ -1347,6 +1343,13 @@ async fn run_sampling_request(
                 .await
                 .for_prompt(&turn_context.model_info.input_modalities)
         };
+        let mut prompt_input = prompt_input;
+        if let Some(executed_tool_calls) = sess.services.executed_tool_calls.as_ref()
+            && executed_tool_calls
+                .attach_pending_to_prompt(&mut prompt_input, &mut executed_tool_calls_by_output)
+        {
+            codex_protocol::models::bound_executed_tool_calls_for_prompt(&mut prompt_input);
+        }
         let prompt = build_prompt(
             prompt_input,
             router.as_ref(),
@@ -1466,13 +1469,13 @@ pub(crate) async fn built_tools(
     mcp: &codex_mcp::McpBinding,
     step_store: &ExtensionData,
     prepared_recommendations: PreparedToolRecommendations,
-) -> (Vec<ToolInfo>, Arc<ToolRouter>) {
-    let all_mcp_tools = mcp.tools().to_vec();
+) -> Arc<ToolRouter> {
+    let all_mcp_tools = mcp.tools();
     let connector_snapshot = mcp.config().connector_snapshot.clone();
 
     let apps_enabled = turn_context.apps_enabled();
     let accessible_connectors =
-        apps_enabled.then(|| connectors::accessible_connectors_from_mcp_tools(&all_mcp_tools));
+        apps_enabled.then(|| connectors::accessible_connectors_from_mcp_tools(all_mcp_tools));
     let accessible_connectors_with_enabled_state =
         accessible_connectors.as_ref().map(|connectors| {
             connectors::with_app_enabled_state(connectors.clone(), &turn_context.config)
@@ -1548,29 +1551,15 @@ pub(crate) async fn built_tools(
             .instrument(trace_span!("built_tools.load_discoverable_tools"))
             .await
         };
-    let mcp_tool_runtimes = build_mcp_tool_runtimes(
-        &all_mcp_tools,
-        connectors.as_deref(),
-        &turn_context.config,
-        search_tool_enabled(turn_context),
-    );
-    let tool_router = Arc::new(ToolRouter::from_context(
+    Arc::new(build_tool_router(
+        sess,
         turn_context,
         environments,
         mcp,
-        ToolRouterParams {
-            tool_runtimes: mcp_tool_runtimes,
-            tool_suggest_candidates,
-            extension_tool_executors: extension_tool_executors(sess, step_store),
-            wait_for_environment_tool_config: sess
-                .services
-                .thread_extension_data
-                .get::<crate::WaitForEnvironmentToolConfig>(),
-            dynamic_tools: turn_context.dynamic_tools.as_slice(),
-        },
-        &sess.services.tool_search_handler_cache,
-    ));
-    (all_mcp_tools, tool_router)
+        connectors.as_deref(),
+        step_store,
+        tool_suggest_candidates.as_ref(),
+    ))
 }
 
 #[derive(Debug)]
@@ -2220,6 +2209,8 @@ async fn try_run_sampling_request(
     )> = None;
     let mut should_emit_turn_diff = false;
     let mut should_emit_token_count = false;
+    const MAX_ANALYTICS_TOOL_CALL_IDS_PER_RESPONSE: usize = 256;
+    let mut analytics_tool_call_ids = Vec::new();
     let reasoning_effort = turn_context.effective_reasoning_effort_for_tracing();
     let plan_mode = turn_context.mode == ModeKind::Plan;
     let mut assistant_message_stream_parsers = AssistantMessageStreamParsers::new(plan_mode);
@@ -2275,6 +2266,22 @@ async fn try_run_sampling_request(
             ResponseEvent::Created => {}
             ResponseEvent::OutputItemDone(mut item) => {
                 assign_missing_streamed_response_item_id(&mut item, active_item.as_ref());
+                if analytics_tool_call_ids.len() < MAX_ANALYTICS_TOOL_CALL_IDS_PER_RESPONSE {
+                    let call_id = match &item {
+                        ResponseItem::FunctionCall { call_id, .. }
+                        | ResponseItem::CustomToolCall { call_id, .. } => Some(call_id.as_str()),
+                        ResponseItem::ToolSearchCall { call_id, .. }
+                        | ResponseItem::LocalShellCall { call_id, .. } => call_id.as_deref(),
+                        ResponseItem::WebSearchCall { id, .. }
+                        | ResponseItem::ImageGenerationCall { id, .. } => {
+                            id.as_ref().map(codex_protocol::ResponseItemId::as_str)
+                        }
+                        _ => None,
+                    };
+                    if let Some(call_id) = call_id {
+                        analytics_tool_call_ids.push(call_id.to_string());
+                    }
+                }
                 if let Some((_, mut consumer)) = active_tool_argument_diff_consumer.take()
                     && let Ok(Some(event)) = consumer.finish()
                 {
@@ -2506,6 +2513,16 @@ async fn try_run_sampling_request(
                 token_usage,
                 end_turn,
             } => {
+                sess.services
+                    .analytics_events_client
+                    .track_code_mode_tool_call(
+                        codex_analytics::CodeModeToolCallFact::SamplingResponseCompleted {
+                            thread_id: sess.thread_id.to_string(),
+                            turn_id: turn_context.sub_id.clone(),
+                            response_id: response_id.clone(),
+                            tool_call_ids: std::mem::take(&mut analytics_tool_call_ids),
+                        },
+                    );
                 flush_assistant_text_segments_all(
                     &sess,
                     &turn_context,

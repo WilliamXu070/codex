@@ -2138,7 +2138,7 @@ name = "codex-app-server-protocol"
 version = "0.147.0-alpha.2"
 dependencies = [
  "anyhow",
- "clap",
+ "codex-app-server-protocol-noop-macros",
  "codex-experimental-api-macros",
  "codex-extension-items",
  "codex-protocol",
@@ -2160,7 +2160,12 @@ dependencies = [
  "tracing",
  "ts-rs",
  "uuid",
+ "zstd",
 ]
+
+[[package]]
+name = "codex-app-server-protocol-noop-macros"
+version = "0.0.0"
 
 [[package]]
 name = "codex-app-server-test-client"
@@ -2395,6 +2400,7 @@ dependencies = [
  "codex-rollout",
  "codex-rollout-trace",
  "codex-sandboxing",
+ "codex-skills-extension",
  "codex-state",
  "codex-stdio-to-uds",
  "codex-terminal-detection",
@@ -2534,17 +2540,15 @@ version = "0.147.0-alpha.2"
 dependencies = [
  "codex-code-mode-protocol",
  "codex-http-client",
+ "codex-install-context",
  "codex-protocol",
  "codex-websocket-client",
- "deno_core_icudata",
  "futures",
  "pretty_assertions",
- "serde_json",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
  "tracing",
- "v8",
 ]
 
 [[package]]
@@ -2556,6 +2560,7 @@ dependencies = [
  "clap",
  "codex-code-mode",
  "codex-code-mode-protocol",
+ "codex-code-mode-runtime",
  "codex-protocol",
  "codex-utils-cargo-bin",
  "futures",
@@ -2567,6 +2572,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -2579,6 +2585,22 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "codex-code-mode-runtime"
+version = "0.0.0"
+dependencies = [
+ "codex-code-mode-protocol",
+ "codex-protocol",
+ "deno_core_icudata",
+ "futures",
+ "pretty_assertions",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "v8",
 ]
 
 [[package]]
@@ -2761,6 +2783,7 @@ dependencies = [
  "codex-thread-store",
  "codex-tools",
  "codex-utils-absolute-path",
+ "codex-utils-audio",
  "codex-utils-cache",
  "codex-utils-cargo-bin",
  "codex-utils-home-dir",
@@ -2795,7 +2818,6 @@ dependencies = [
  "pretty_assertions",
  "rand 0.9.3",
  "regex-lite",
- "reqwest 0.12.28",
  "rmcp",
  "serde",
  "serde_json",
@@ -2803,7 +2825,6 @@ dependencies = [
  "sha1 0.10.6",
  "shlex",
  "similar",
- "symphonia",
  "tempfile",
  "test-case",
  "test-log",
@@ -2887,6 +2908,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.10.9",
  "tar",
  "tempfile",
  "thiserror 2.0.18",
@@ -2917,7 +2939,6 @@ dependencies = [
  "codex-shell-command",
  "codex-skills",
  "codex-utils-absolute-path",
- "codex-utils-output-truncation",
  "codex-utils-path-uri",
  "codex-utils-plugins",
  "dirs",
@@ -3160,6 +3181,7 @@ dependencies = [
  "codex-plugin",
  "codex-protocol",
  "codex-rollout",
+ "codex-thread-store",
  "codex-utils-output-truncation",
  "pretty_assertions",
  "serde",
@@ -3261,6 +3283,7 @@ dependencies = [
  "codex-protocol",
  "codex-utils-absolute-path",
  "codex-utils-path-uri",
+ "codex-utils-pty",
  "futures",
  "gix",
  "once_cell",
@@ -3573,12 +3596,15 @@ dependencies = [
  "codex-core",
  "codex-exec-server",
  "codex-extension-api",
+ "codex-features",
  "codex-git-attribution",
  "codex-home",
  "codex-image-generation-extension",
  "codex-login",
+ "codex-otel",
  "codex-protocol",
  "codex-shell-command",
+ "codex-skills-extension",
  "codex-utils-absolute-path",
  "codex-utils-cli",
  "codex-utils-json-to-toml",
@@ -3595,6 +3621,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "wiremock",
 ]
 
@@ -3785,11 +3812,11 @@ dependencies = [
  "async-stream",
  "bytes",
  "codex-core",
+ "codex-http-client",
  "codex-model-provider-info",
  "futures",
  "memchr",
  "pretty_assertions",
- "reqwest 0.12.28",
  "semver",
  "serde_json",
  "tokio",
@@ -4127,6 +4154,9 @@ dependencies = [
  "codex-utils-absolute-path",
  "codex-utils-path-uri",
  "include_dir",
+ "pretty_assertions",
+ "serde",
+ "serde_yaml",
  "thiserror 2.0.18",
 ]
 
@@ -4144,13 +4174,19 @@ dependencies = [
  "codex-skills",
  "codex-tools",
  "codex-utils-absolute-path",
+ "codex-utils-cargo-bin",
  "codex-utils-path-uri",
+ "codex-utils-plugins",
  "codex-utils-string",
  "futures",
+ "insta",
+ "opentelemetry_sdk",
  "pretty_assertions",
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "tempfile",
  "tokio",
  "tracing",
  "url",
@@ -4266,6 +4302,7 @@ dependencies = [
 name = "codex-tools"
 version = "0.147.0-alpha.2"
 dependencies = [
+ "bitflags 2.13.1",
  "codex-code-mode",
  "codex-connectors",
  "codex-extension-items",
@@ -4431,6 +4468,20 @@ name = "codex-utils-approval-presets"
 version = "0.147.0-alpha.2"
 dependencies = [
  "codex-protocol",
+]
+
+[[package]]
+name = "codex-utils-audio"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "codex-protocol",
+ "codex-utils-cache",
+ "codex-utils-string",
+ "pretty_assertions",
+ "symphonia",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
