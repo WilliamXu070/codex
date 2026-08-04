@@ -116,7 +116,6 @@ use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnPlanStepStatus;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
-use codex_config::ConfigLayerStackOrdering;
 use codex_config::Constrained;
 use codex_config::ConstraintResult;
 use codex_config::types::ApprovalsReviewer;
@@ -240,14 +239,24 @@ fn queued_message_edit_binding_for_terminal(terminal_info: TerminalInfo) -> KeyB
 }
 
 fn queued_message_edit_hint_binding(
-    bindings: &[KeyBinding],
+    keymap: &RuntimeKeymap,
     terminal_info: TerminalInfo,
-) -> Option<KeyBinding> {
+) -> Option<crate::key_hint::ShortcutHint> {
+    let configured = keymap.primary_hint(crate::keymap::KeymapContext::Chat, "edit_queued_message");
+    if matches!(
+        configured,
+        Some(crate::key_hint::ShortcutHint::Chord { .. })
+    ) {
+        return configured;
+    }
+
     let terminal_binding = queued_message_edit_binding_for_terminal(terminal_info);
-    bindings
+    keymap
+        .chat
+        .edit_queued_message
         .contains(&terminal_binding)
-        .then_some(terminal_binding)
-        .or_else(|| bindings.first().copied())
+        .then_some(crate::key_hint::ShortcutHint::Single(terminal_binding))
+        .or(configured)
 }
 
 fn normalize_thread_name(name: &str) -> Option<String> {
@@ -538,6 +547,7 @@ pub(crate) struct ChatWidget {
     bottom_pane: BottomPane,
     transcript: TranscriptState,
     config: Config,
+    raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
     effective_service_tier: Option<String>,
     /// The unmasked collaboration mode settings (always Default mode).
@@ -682,7 +692,7 @@ pub(crate) struct ChatWidget {
     /// Keybinding to show for popping the most-recently queued message back
     /// into the composer. This may differ from the first configured binding
     /// when the default set includes a terminal-specific fallback.
-    queued_message_edit_hint_binding: Option<KeyBinding>,
+    queued_message_edit_hint_binding: Option<crate::key_hint::ShortcutHint>,
     // Pending notification to show when unfocused on next Draw
     pending_notification: Option<Notification>,
     /// When `Some`, the user has pressed a quit shortcut and the second press
@@ -1575,7 +1585,44 @@ impl ChatWidget {
     }
 
     pub(crate) fn history_render_mode(&self) -> HistoryRenderMode {
-        HistoryRenderMode::Rich
+        if self.raw_output_mode {
+            HistoryRenderMode::Raw
+        } else {
+            HistoryRenderMode::Rich
+        }
+    }
+
+    pub(crate) fn raw_output_mode(&self) -> bool {
+        self.raw_output_mode
+    }
+
+    pub(crate) fn set_raw_output_mode(&mut self, enabled: bool) {
+        self.raw_output_mode = enabled;
+        self.config.tui_raw_output_mode = enabled;
+        let render_mode = self.history_render_mode();
+        if let Some(controller) = self.stream_controller.as_mut() {
+            controller.set_render_mode(render_mode);
+        }
+        if let Some(controller) = self.plan_stream_controller.as_mut() {
+            controller.set_render_mode(render_mode);
+        }
+        self.refresh_status_surfaces();
+    }
+
+    pub(crate) fn raw_output_mode_notice(enabled: bool) -> &'static str {
+        if enabled {
+            "Raw output mode on: transcript text is shown for clean terminal selection."
+        } else {
+            "Raw output mode off: rich transcript rendering restored."
+        }
+    }
+
+    pub(crate) fn set_raw_output_mode_and_notify(&mut self, enabled: bool) {
+        self.set_raw_output_mode(enabled);
+        self.add_info_message(
+            Self::raw_output_mode_notice(enabled).to_string(),
+            /*hint*/ None,
+        );
     }
 
     /// Update resize-sensitive chat widget state after the terminal width changes.

@@ -82,7 +82,7 @@ impl ChatWidget {
             .map(|keymap| keymap.chat.clone())
             .unwrap_or_else(|| default_keymap.chat.clone());
         let queued_message_edit_hint_binding = queued_message_edit_hint_binding(
-            &chat_keymap.edit_queued_message,
+            runtime_keymap.as_ref().unwrap_or(&default_keymap),
             current_terminal_info,
         );
         let pet_http_client = codex_http_client::RouteAwareClientPool::new(
@@ -111,6 +111,7 @@ impl ChatWidget {
                 skills: None,
             }),
             transcript: TranscriptState::new(active_cell),
+            raw_output_mode: config.tui_raw_output_mode,
             config,
             effective_service_tier,
             skills_all: Vec::new(),

@@ -41,6 +41,83 @@ fn read_transcribe_max_rms(path: &Path) -> f32 {
 }
 
 impl App {
+    pub(super) fn route_key_chord_event(
+        &mut self,
+        tui: &mut tui::Tui,
+        key_event: KeyEvent,
+    ) -> Option<KeyEvent> {
+        let contexts = self.active_keymap_contexts();
+        let was_pending = self.key_chord_matcher.is_pending();
+        match self.key_chord_matcher.advance(
+            key_event,
+            &self.keymap.chords,
+            contexts,
+            tokio::time::Instant::now(),
+        ) {
+            crate::keymap::KeyChordMatch::PassThrough => {
+                if was_pending && !self.key_chord_matcher.is_pending() {
+                    self.chat_widget.set_footer_hint_override(/*items*/ None);
+                }
+                Some(key_event)
+            }
+            crate::keymap::KeyChordMatch::Pending(prefix) => {
+                if self.backtrack.primed {
+                    self.reset_backtrack_state();
+                }
+                self.chat_widget.set_footer_hint_override(Some(vec![
+                    (
+                        format!("{} …", prefix.display_label()),
+                        "waiting for next key".to_string(),
+                    ),
+                    ("esc".to_string(), "cancel".to_string()),
+                ]));
+                tui.frame_requester()
+                    .schedule_frame_in(crate::keymap::KEY_CHORD_TIMEOUT);
+                None
+            }
+            crate::keymap::KeyChordMatch::Completed(dispatch_event) => {
+                self.chat_widget.set_footer_hint_override(/*items*/ None);
+                Some(dispatch_event)
+            }
+            crate::keymap::KeyChordMatch::Cancelled => {
+                self.chat_widget.set_footer_hint_override(/*items*/ None);
+                None
+            }
+            crate::keymap::KeyChordMatch::Ignored => None,
+        }
+    }
+
+    pub(super) fn expire_pending_key_chord(&mut self) {
+        let contexts = self.active_keymap_contexts();
+        if self
+            .key_chord_matcher
+            .expire(contexts, tokio::time::Instant::now())
+        {
+            self.chat_widget.set_footer_hint_override(/*items*/ None);
+        }
+    }
+
+    pub(super) fn cancel_pending_key_chord(&mut self) {
+        if self.key_chord_matcher.cancel() {
+            self.chat_widget.set_footer_hint_override(/*items*/ None);
+        }
+    }
+
+    fn active_keymap_contexts(&self) -> crate::keymap::KeymapContextSet {
+        if self.overlay.is_some() {
+            return crate::keymap::KeymapContextSet::new(crate::keymap::KeymapContext::Pager);
+        }
+
+        let contexts = self.chat_widget.keymap_contexts();
+        if self.chat_widget.no_modal_or_popup_active() {
+            contexts
+                .with(crate::keymap::KeymapContext::Global)
+                .with(crate::keymap::KeymapContext::Chat)
+        } else {
+            contexts
+        }
+    }
+
     pub(super) async fn launch_external_editor(&mut self, tui: &mut tui::Tui) {
         let editor_cmd = match external_editor::resolve_editor_command() {
             Ok(cmd) => cmd,
@@ -99,6 +176,26 @@ impl App {
         self.chat_widget
             .set_external_editor_state(ExternalEditorState::Closed);
         self.chat_widget.set_footer_hint_override(/*items*/ None);
+        tui.frame_requester().schedule_frame();
+    }
+
+    pub(super) fn apply_raw_output_mode(
+        &mut self,
+        tui: &mut tui::Tui,
+        enabled: bool,
+        notify: bool,
+    ) {
+        if notify {
+            self.chat_widget.set_raw_output_mode_and_notify(enabled);
+        } else {
+            self.chat_widget.set_raw_output_mode(enabled);
+        }
+        let terminal_width = tui.terminal.last_known_screen_size.into();
+        if let Err(err) = self.reflow_transcript_now(tui, terminal_width) {
+            tracing::warn!(error = %err, "failed to reflow transcript after raw output mode toggle");
+            self.chat_widget
+                .add_error_message(format!("Failed to redraw transcript: {err}"));
+        }
         tui.frame_requester().schedule_frame();
     }
 
@@ -189,6 +286,13 @@ impl App {
             && self.chat_widget.can_toggle_fast_mode_from_keybinding()
         {
             self.chat_widget.toggle_fast_mode_from_ui();
+            return;
+        }
+
+        if app_keymap_shortcuts_available && self.keymap.app.toggle_raw_output.is_pressed(key_event)
+        {
+            let enabled = !self.chat_widget.raw_output_mode();
+            self.apply_raw_output_mode(tui, enabled, /*notify*/ false);
             return;
         }
 
