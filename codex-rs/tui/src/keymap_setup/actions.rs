@@ -5,11 +5,9 @@
 //! context label, stable action name, and short description used by the picker
 //! and action menu.
 //!
-//! The accessors below deliberately mirror the descriptor table for both the
-//! editable root config and the resolved runtime keymap. Keeping those matches
-//! in one module makes it easier to audit a new action: if it appears in the
-//! catalog, it must also be readable from runtime state and writable in
-//! `TuiKeymap`.
+//! Root-config accessors mirror the descriptor table, while runtime lookups
+//! reuse the inventory owned by [`crate::keymap`]. A catalog action must remain
+//! both writable in `TuiKeymap` and readable from the shared runtime inventory.
 
 use std::collections::BTreeSet;
 
@@ -17,8 +15,8 @@ use codex_config::types::KeybindingsSpec;
 use codex_config::types::TuiKeymap;
 use crossterm::event::KeyEvent;
 
-use crate::key_hint::KeyBinding;
 use crate::keymap::RuntimeKeymap;
+use crate::keymap::bindings_for_action;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct KeymapActionDescriptor {
@@ -470,16 +468,25 @@ pub(super) fn bindings_for_action<'a>(
     }
 }
 
-/// Format a resolved binding list for compact menu display.
+/// Format an action's active single-key and chord alternatives in config order.
 ///
 /// Duplicate runtime variants that normalize to the same config spec are shown
-/// once so compatibility defaults, such as alternate SHIFT reporting forms, do
-/// not look like separate user choices.
-pub(super) fn format_binding_summary(bindings: &[KeyBinding]) -> String {
+/// once so compatibility defaults do not appear as separate user choices.
+pub(super) fn format_action_binding_summary(
+    runtime_keymap: &RuntimeKeymap,
+    context: &str,
+    action: &str,
+) -> String {
+    let specs = super::active_binding_specs(runtime_keymap, context, action).unwrap_or_else(|_| {
+        bindings_for_action(runtime_keymap, context, action)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|binding| super::binding_to_config_key_spec(*binding).ok())
+            .collect()
+    });
     let mut seen = BTreeSet::new();
-    let specs = bindings
-        .iter()
-        .filter_map(|binding| super::binding_to_config_key_spec(*binding).ok())
+    let specs = specs
+        .into_iter()
         .filter(|spec| seen.insert(spec.clone()))
         .collect::<Vec<_>>();
     if specs.is_empty() {
