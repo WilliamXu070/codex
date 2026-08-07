@@ -32,8 +32,10 @@ rmcp = { workspace = true, default-features = false, features = [
     "macros",
     "server",
 ] }
+schemars = { workspace = true }
 inventory = { workspace = true }
 tracing = { workspace = true }
+ts-rs = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v7"] }
 zstd = { workspace = true }
 
@@ -47,7 +49,5 @@ rmcp = { workspace = true, default-features = false, features = [
     "schemars",
     "server",
 ] }
-schemars = { workspace = true }
 similar = { workspace = true }
 tempfile = { workspace = true }
-ts-rs = { workspace = true }

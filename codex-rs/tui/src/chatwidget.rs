@@ -548,6 +548,7 @@ pub(crate) struct ChatWidget {
     bottom_pane: BottomPane,
     transcript: TranscriptState,
     config: Config,
+    raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
     effective_service_tier: Option<String>,
     /// The unmasked collaboration mode settings (always Default mode).
@@ -1591,8 +1592,45 @@ impl ChatWidget {
         })
     }
 
+    pub(crate) fn raw_output_mode(&self) -> bool {
+        self.raw_output_mode
+    }
+
     pub(crate) fn history_render_mode(&self) -> HistoryRenderMode {
-        HistoryRenderMode::Rich
+        if self.raw_output_mode {
+            HistoryRenderMode::Raw
+        } else {
+            HistoryRenderMode::Rich
+        }
+    }
+
+    pub(crate) fn set_raw_output_mode(&mut self, enabled: bool) {
+        self.raw_output_mode = enabled;
+        self.config.tui_raw_output_mode = enabled;
+        let render_mode = self.history_render_mode();
+        if let Some(controller) = self.stream_controller.as_mut() {
+            controller.set_render_mode(render_mode);
+        }
+        if let Some(controller) = self.plan_stream_controller.as_mut() {
+            controller.set_render_mode(render_mode);
+        }
+        self.refresh_status_surfaces();
+    }
+
+    pub(crate) fn raw_output_mode_notice(enabled: bool) -> &'static str {
+        if enabled {
+            "Raw output mode on: transcript text is shown for clean terminal selection."
+        } else {
+            "Raw output mode off: rich transcript rendering restored."
+        }
+    }
+
+    pub(crate) fn set_raw_output_mode_and_notify(&mut self, enabled: bool) {
+        self.set_raw_output_mode(enabled);
+        self.add_info_message(
+            Self::raw_output_mode_notice(enabled).to_string(),
+            /*hint*/ None,
+        );
     }
 
     /// Update resize-sensitive chat widget state after the terminal width changes.
