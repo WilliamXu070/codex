@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "codex-app-server-protocol-noop-macros"
-version = "0.0.0"
+version = "0.148.0-alpha.5"
 
 [[package]]
 name = "codex-app-server-test-client"
@@ -2600,7 +2600,7 @@ dependencies = [
 
 [[package]]
 name = "codex-code-mode-runtime"
-version = "0.0.0"
+version = "0.148.0-alpha.5"
 dependencies = [
  "codex-code-mode-protocol",
  "codex-protocol",
@@ -2935,7 +2935,7 @@ dependencies = [
 
 [[package]]
 name = "codex-diagnostics"
-version = "0.0.0"
+version = "0.148.0-alpha.5"
 dependencies = [
  "libc",
  "pretty_assertions",
@@ -3925,7 +3925,7 @@ dependencies = [
 
 [[package]]
 name = "codex-queue-extension"
-version = "0.0.0"
+version = "0.148.0-alpha.5"
 dependencies = [
  "anyhow",
  "codex-core",
@@ -4491,7 +4491,7 @@ dependencies = [
 
 [[package]]
 name = "codex-utils-audio"
-version = "0.0.0"
+version = "0.148.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "codex-protocol",

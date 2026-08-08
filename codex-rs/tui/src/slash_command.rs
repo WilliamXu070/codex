@@ -228,6 +228,7 @@ impl SlashCommand {
             | SlashCommand::Personality
             | SlashCommand::Permissions
             | SlashCommand::Copy
+            | SlashCommand::Raw
             | SlashCommand::Rename
             | SlashCommand::Mention
             | SlashCommand::Skills

@@ -648,6 +648,9 @@ impl App {
                     .handle_pet_selection_loaded(tui, request_id, pet_id, result)
                     .await;
             }
+            AppEvent::RawOutputModeChanged { enabled } => {
+                self.apply_raw_output_mode(tui, enabled, /*notify*/ false);
+            }
             AppEvent::ConfiguredPetLoaded { pet_id, result } => {
                 self.handle_configured_pet_loaded(tui, pet_id, result);
             }

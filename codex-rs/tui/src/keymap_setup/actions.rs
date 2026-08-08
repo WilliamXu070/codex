@@ -15,8 +15,8 @@ use codex_config::types::KeybindingsSpec;
 use codex_config::types::TuiKeymap;
 use crossterm::event::KeyEvent;
 
+use crate::key_hint::KeyBinding;
 use crate::keymap::RuntimeKeymap;
-use crate::keymap::bindings_for_action;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct KeymapActionDescriptor {
@@ -91,6 +91,7 @@ pub(super) const KEYMAP_ACTIONS: &[KeymapActionDescriptor] = &[
     action("global", "Global", "clear_terminal", "Clear the terminal UI."),
     action("global", "Global", "toggle_vim_mode", "Turn Vim composer mode on or off."),
     gated_action("global", "Global", "toggle_fast_mode", "Turn Fast mode on or off.", KeymapActionFeature::FastMode),
+    action("global", "Global", "toggle_raw_output", "Toggle raw scrollback mode."),
     action("global", "Global", "toggle_side_conversation", "Switch between a side conversation and its parent."),
     action("chat", "Chat", "interrupt_turn", "Interrupt the active turn."),
     action("chat", "Chat", "decrease_reasoning_effort", "Decrease reasoning effort."),
@@ -235,6 +236,7 @@ pub(super) fn binding_slot<'a>(
         ("global", "clear_terminal") => Some(&mut keymap.global.clear_terminal),
         ("global", "toggle_vim_mode") => Some(&mut keymap.global.toggle_vim_mode),
         ("global", "toggle_fast_mode") => Some(&mut keymap.global.toggle_fast_mode),
+        ("global", "toggle_raw_output") => Some(&mut keymap.global.toggle_raw_output),
         ("global", "toggle_side_conversation") => Some(&mut keymap.global.toggle_side_conversation),
         ("chat", "interrupt_turn") => Some(&mut keymap.chat.interrupt_turn),
         ("chat", "decrease_reasoning_effort") => Some(&mut keymap.chat.decrease_reasoning_effort),
@@ -361,6 +363,7 @@ pub(super) fn bindings_for_action<'a>(
         ("global", "clear_terminal") => Some(runtime_keymap.app.clear_terminal.as_slice()),
         ("global", "toggle_vim_mode") => Some(runtime_keymap.app.toggle_vim_mode.as_slice()),
         ("global", "toggle_fast_mode") => Some(runtime_keymap.app.toggle_fast_mode.as_slice()),
+        ("global", "toggle_raw_output") => Some(runtime_keymap.app.toggle_raw_output.as_slice()),
         ("global", "toggle_side_conversation") => Some(runtime_keymap.app.toggle_side_conversation.as_slice()),
         ("chat", "interrupt_turn") => Some(runtime_keymap.chat.interrupt_turn.as_slice()),
         ("chat", "decrease_reasoning_effort") => Some(runtime_keymap.chat.decrease_reasoning_effort.as_slice()),
