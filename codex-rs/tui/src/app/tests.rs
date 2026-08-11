@@ -2,6 +2,10 @@
 
 #[path = "tests/advanced_reasoning_tests.rs"]
 mod advanced_reasoning_tests;
+#[path = "tests/key_chords.rs"]
+mod key_chords;
+#[path = "tests/mcp_startup.rs"]
+mod mcp_startup;
 mod model_catalog;
 mod plugin_catalog;
 mod rate_limits;

@@ -210,6 +210,7 @@ pub(crate) mod app_server_requests;
 mod background_requests;
 mod config_persistence;
 mod event_dispatch;
+mod history_pagination;
 mod history_ui;
 mod input;
 mod loaded_threads;
@@ -228,6 +229,7 @@ mod thread_goal_actions;
 mod thread_routing;
 mod thread_session_state;
 mod thread_settings;
+mod transcript_export;
 
 use self::agent_navigation::AgentNavigationDirection;
 use self::agent_navigation::AgentNavigationState;
