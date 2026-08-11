@@ -6,6 +6,9 @@ set windows-shell := ["python", "-c", 'import os, runpy; runpy.run_path(os.envir
 
 rust_min_stack := "8388608" # 8 MiB
 python := if os_family() == "windows" { "python" } else { "python3" }
+cargo_target_dir := env_var_or_default("CARGO_TARGET_DIR", if os_family() == "windows" { env_var_or_default("TEMP", ".") + "/codex-tui-target" } else { "/private/tmp/codex-tui-target" })
+export CARGO_TARGET_DIR := cargo_target_dir
+export CARGO_INCREMENTAL := env_var_or_default("CARGO_INCREMENTAL", "0")
 
 # Display help
 help:
