@@ -537,6 +537,7 @@ pub(crate) struct App {
 
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) keymap: RuntimeKeymap,
+    pub(crate) key_chord_matcher: KeyChordMatcher,
     transcribe_arm: Option<TranscribeArmState>,
     transcribe_next_arm_id: u64,
     transcribe_capture: Option<TranscribeCaptureState>,
@@ -1065,6 +1066,7 @@ See the Codex keymap documentation for supported actions and examples."
             file_search,
             enhanced_keys_supported,
             keymap: runtime_keymap,
+            key_chord_matcher: KeyChordMatcher::default(),
             transcribe_arm: None,
             transcribe_next_arm_id: 1,
             transcribe_capture: None,

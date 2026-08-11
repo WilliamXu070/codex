@@ -40,6 +40,7 @@ pub(super) async fn make_test_app() -> App {
         initial_history_replay_buffer: None,
         enhanced_keys_supported: false,
         keymap: crate::keymap::RuntimeKeymap::defaults(),
+        key_chord_matcher: crate::keymap::KeyChordMatcher::default(),
         transcribe_arm: None,
         transcribe_next_arm_id: 1,
         transcribe_capture: None,

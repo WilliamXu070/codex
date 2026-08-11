@@ -102,6 +102,26 @@ impl App {
         tui.frame_requester().schedule_frame();
     }
 
+    pub(super) fn apply_raw_output_mode(
+        &mut self,
+        tui: &mut tui::Tui,
+        enabled: bool,
+        notify: bool,
+    ) {
+        if notify {
+            self.chat_widget.set_raw_output_mode_and_notify(enabled);
+        } else {
+            self.chat_widget.set_raw_output_mode(enabled);
+        }
+        let terminal_width = tui.terminal.last_known_screen_size.into();
+        if let Err(err) = self.reflow_transcript_now(tui, terminal_width) {
+            tracing::warn!(error = %err, "failed to reflow transcript after raw output mode toggle");
+            self.chat_widget
+                .add_error_message(format!("Failed to redraw transcript: {err}"));
+        }
+        tui.frame_requester().schedule_frame();
+    }
+
     pub(super) async fn handle_key_event(
         &mut self,
         tui: &mut tui::Tui,

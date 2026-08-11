@@ -470,7 +470,7 @@ pub(super) fn bindings_for_action<'a>(
     }
 }
 
-/// Format a resolved binding list for compact menu display.
+/// Format an action's active single-key and chord alternatives in config order.
 ///
 /// Duplicate runtime variants that normalize to the same config spec are shown
 /// once so compatibility defaults, such as alternate SHIFT reporting forms, do
