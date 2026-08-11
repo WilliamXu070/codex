@@ -460,7 +460,39 @@ def prepare_workspace(
             ["git", "remote", "set-url", "origin", origin_url],
             cwd=workspace,
         )
-        run_command(["git", "switch", "-c", branch, source_head], cwd=workspace)
+        remote_branch = ""
+        if retry_failed:
+            remote_branch = git_output(
+                workspace,
+                "ls-remote",
+                "--heads",
+                "origin",
+                f"refs/heads/{branch}",
+            )
+        if remote_branch:
+            run_command(
+                [
+                    "git",
+                    "fetch",
+                    "--force",
+                    "origin",
+                    f"refs/heads/{branch}:refs/remotes/origin/{branch}",
+                ],
+                cwd=workspace,
+            )
+            run_command(
+                [
+                    "git",
+                    "switch",
+                    "-c",
+                    branch,
+                    "--track",
+                    f"refs/remotes/origin/{branch}",
+                ],
+                cwd=workspace,
+            )
+        else:
+            run_command(["git", "switch", "-c", branch, source_head], cwd=workspace)
     elif git_output(workspace, "branch", "--show-current") != branch:
         raise ReleaseAgentError(f"retry workspace is on unexpected branch: {workspace}")
 
@@ -532,6 +564,7 @@ def integration_prompt(
            repair/copy work, and their helper scripts. Adapt them to upstream APIs
            when source structure changed.
         7. Ensure `codex-rs/Cargo.toml` reports workspace version {version}. Run
+           `python3 .github/scripts/verify_cargo_workspace_manifests.py`,
            `cargo fmt -- --config imports_granularity=Item`,
            `cargo shear --deny-warnings` from `codex-rs`, the focused custom
            tests you can identify, and
@@ -728,6 +761,10 @@ def verify_workspace(
     if missing:
         raise ReleaseAgentError("custom Codex files are missing: " + ", ".join(missing))
 
+    run_command(
+        [sys.executable, ".github/scripts/verify_cargo_workspace_manifests.py"],
+        cwd=workspace,
+    )
     test_env = os.environ.copy()
     test_env["CODEX_ROOT"] = str(workspace)
     run_command(
@@ -845,6 +882,7 @@ def publish_branch(
 
             - Both `origin/main` and `{tag}` are ancestors of this branch.
             - Workspace and built CLI version: `{version}`.
+            - Repository Cargo-manifest policy passed.
             - Custom sound-path regression passed.
             - `cargo fmt --all -- --check` passed.
             - `cargo build -p codex-cli -p codex-tui` passed.

@@ -106,6 +106,177 @@ class ReleaseValidationTests(unittest.TestCase):
             agent.validate_release("openai/codex", "rusty-v8-v146.4.0")
 
 
+class WorkspacePreparationTests(unittest.TestCase):
+    def test_retry_restores_existing_published_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            remote = root / "origin.git"
+            tag = "rust-v0.146.0-alpha.14"
+            branch = "agent/upstream-0.146.0-alpha.14"
+
+            subprocess.run(["git", "init", "--bare", "-q", remote], check=True)
+            subprocess.run(
+                ["git", "init", "-q", "-b", "main", source],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Release Agent Test"],
+                cwd=source,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "release-agent@example.test"],
+                cwd=source,
+                check=True,
+            )
+            (source / "base.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "base"],
+                cwd=source,
+                check=True,
+            )
+            subprocess.run(["git", "tag", tag], cwd=source, check=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin", str(remote)],
+                cwd=source,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "push", "-q", "-u", "origin", "main"],
+                cwd=source,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "push", "-q", "origin", f"refs/tags/{tag}"],
+                cwd=source,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "switch", "-q", "-c", branch],
+                cwd=source,
+                check=True,
+            )
+            (source / "integrated.txt").write_text(
+                "published integration\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "published integration"],
+                cwd=source,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "push", "-q", "-u", "origin", branch],
+                cwd=source,
+                check=True,
+            )
+            published_head = agent.git_output(source, "rev-parse", "HEAD")
+            subprocess.run(
+                ["git", "switch", "-q", "main"],
+                cwd=source,
+                check=True,
+            )
+
+            workspace, restored_branch, _, context_dir = agent.prepare_workspace(
+                source_root=source,
+                state_dir=root / "state",
+                tag=tag,
+                retry_failed=True,
+                upstream_url=str(remote),
+            )
+
+            self.assertEqual(restored_branch, branch)
+            self.assertEqual(
+                agent.git_output(workspace, "branch", "--show-current"),
+                branch,
+            )
+            self.assertEqual(
+                agent.git_output(workspace, "rev-parse", "HEAD"),
+                published_head,
+            )
+            self.assertTrue((workspace / "integrated.txt").is_file())
+            self.assertTrue(context_dir.is_dir())
+
+
+class WorkspaceVerificationTests(unittest.TestCase):
+    def test_manifest_policy_failure_stops_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            for relative in (
+                "scripts/test-codex-sound-path.sh",
+                "william/audio/random-sound",
+                "william/commands/sound",
+                "william/transcribe/transcribe-command",
+            ):
+                path = workspace / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("fixture\n", encoding="utf-8")
+
+            with (
+                mock.patch.object(agent, "git_output", return_value=""),
+                mock.patch.object(
+                    agent,
+                    "workspace_version",
+                    return_value="0.146.0-alpha.14",
+                ),
+                mock.patch.object(
+                    agent,
+                    "run_command",
+                    side_effect=[
+                        mock.DEFAULT,
+                        mock.DEFAULT,
+                        agent.ReleaseAgentError("manifest policy failed"),
+                    ],
+                ) as run_command,
+            ):
+                with self.assertRaisesRegex(
+                    agent.ReleaseAgentError,
+                    "manifest policy failed",
+                ):
+                    agent.verify_workspace(
+                        workspace=workspace,
+                        tag="rust-v0.146.0-alpha.14",
+                        version="0.146.0-alpha.14",
+                        skip_build=True,
+                    )
+
+            self.assertEqual(
+                run_command.call_args_list,
+                [
+                    mock.call(
+                        [
+                            "git",
+                            "merge-base",
+                            "--is-ancestor",
+                            "origin/main",
+                            "HEAD",
+                        ],
+                        cwd=workspace,
+                    ),
+                    mock.call(
+                        [
+                            "git",
+                            "merge-base",
+                            "--is-ancestor",
+                            "refs/tags/rust-v0.146.0-alpha.14",
+                            "HEAD",
+                        ],
+                        cwd=workspace,
+                    ),
+                    mock.call(
+                        [
+                            sys.executable,
+                            ".github/scripts/verify_cargo_workspace_manifests.py",
+                        ],
+                        cwd=workspace,
+                    ),
+                ],
+            )
+
+
 class ExecuteDeduplicationTests(unittest.TestCase):
     def make_args(self, source: Path, state: Path) -> argparse.Namespace:
         return argparse.Namespace(

@@ -12,19 +12,19 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentMessageEvent;
 use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::TokenCountEvent;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::UserMessageEvent;
+use codex_rollout::RolloutItem;
 use codex_utils_output_truncation::approx_tokens_from_byte_count_i64;
 use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 
-const EXTERNAL_SESSION_IMPORTED_MARKER: &str = "<EXTERNAL SESSION IMPORTED>";
+pub(super) const EXTERNAL_SESSION_IMPORTED_MARKER: &str = "<EXTERNAL SESSION IMPORTED>";
 
 #[cfg(test)]
 fn load_session_for_import(path: &Path) -> io::Result<Option<ImportedExternalAgentSession>> {
@@ -82,7 +82,7 @@ pub(crate) fn load_session_for_import_with_content_sha256(
     )))
 }
 
-fn rollout_items_from_messages(messages: Vec<ConversationMessage>) -> Vec<RolloutItem> {
+pub(super) fn rollout_items_from_messages(messages: Vec<ConversationMessage>) -> Vec<RolloutItem> {
     let mut items = Vec::new();
     let mut current_turn = None;
     let mut response_item_bytes = 0i64;
