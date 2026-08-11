@@ -298,11 +298,7 @@ fn rendered_history_rows(
     } else {
         RawReasoningVisibility::Hidden
     };
-    let mode = if config.tui_raw_output_mode {
-        HistoryRenderMode::Raw
-    } else {
-        HistoryRenderMode::Rich
-    };
+    let mode = HistoryRenderMode::Rich;
     thread_items_to_transcript_cells(
         Some(thread_id),
         &thread.cwd,
