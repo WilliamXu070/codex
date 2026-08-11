@@ -45,7 +45,6 @@ pub enum SlashCommand {
     Btw,
     Copy,
     Export,
-    Raw,
     Diff,
     Mention,
     Status,
@@ -101,7 +100,6 @@ impl SlashCommand {
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
             SlashCommand::Export => "export the conversation as markdown",
-            SlashCommand::Raw => "toggle raw scrollback mode for copy-friendly terminal selection",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
@@ -173,7 +171,6 @@ impl SlashCommand {
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
                 | SlashCommand::Export
-                | SlashCommand::Raw
                 | SlashCommand::Usage
                 | SlashCommand::Pets
                 | SlashCommand::Side
@@ -190,7 +187,6 @@ impl SlashCommand {
             self,
             SlashCommand::Copy
                 | SlashCommand::Export
-                | SlashCommand::Raw
                 | SlashCommand::Diff
                 | SlashCommand::Mention
                 | SlashCommand::Status
@@ -223,7 +219,6 @@ impl SlashCommand {
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff
             | SlashCommand::Export
-            | SlashCommand::Raw
             | SlashCommand::Resume
             | SlashCommand::Model
             | SlashCommand::Personality

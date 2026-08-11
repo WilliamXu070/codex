@@ -708,10 +708,6 @@ pub struct Tui {
     #[serde(default)]
     pub vim_mode_default: bool,
 
-    /// Start the TUI in raw scrollback mode for copy-friendly transcript output.
-    #[serde(default)]
-    pub raw_output_mode: bool,
-
     /// Controls whether the TUI uses the terminal's alternate screen buffer.
     ///
     /// - `auto` (default): Use alternate screen.
