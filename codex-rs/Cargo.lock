@@ -4397,6 +4397,7 @@ dependencies = [
  "codex-feedback",
  "codex-file-search",
  "codex-git-utils",
+ "codex-history",
  "codex-http-client",
  "codex-install-context",
  "codex-login",

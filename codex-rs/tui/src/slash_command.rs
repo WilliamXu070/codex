@@ -222,6 +222,8 @@ impl SlashCommand {
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff
+            | SlashCommand::Export
+            | SlashCommand::Raw
             | SlashCommand::Resume
             | SlashCommand::Model
             | SlashCommand::Personality
