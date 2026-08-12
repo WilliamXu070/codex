@@ -55,6 +55,10 @@ jobs:
         with:
           components: rustfmt
 
+      - uses: ./.github/actions/setup-rusty-v8
+        with:
+          target: x86_64-unknown-linux-gnu
+
       - uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
         with:
           tool: cargo-shear@1.11.2
@@ -66,7 +70,7 @@ jobs:
         run: cargo shear --deny-warnings
 
       - name: Build active CLI targets
-        run: cargo build --locked -p codex-cli -p codex-tui
+        run: cargo build --locked -p codex-cli -p codex-tui -p codex-code-mode-host
 
       - name: Check for a clean worktree
         if: always() && !cancelled()
