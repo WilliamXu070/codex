@@ -974,9 +974,6 @@ pub struct Config {
     /// Whether Codex-owned clients should respect host system proxy settings.
     pub respect_system_proxy: bool,
 
-    /// Process-only ChatGPT routing selection supplied when Codex is launched.
-    pub psp: bool,
-
     /// Optional product SKU forwarded to the host-owned apps MCP server.
     pub apps_mcp_product_sku: Option<String>,
 
@@ -1620,7 +1617,7 @@ impl Config {
             OutboundProxyPolicy::ReqwestDefault
         };
         let factory = HttpClientFactory::new(outbound_proxy_policy);
-        if self.psp {
+        if self.features.enabled(Feature::Psp) {
             factory.with_chatgpt_cookies([HeaderValue::from_static("oai-chat-psp=true")])
         } else {
             factory
@@ -1832,7 +1829,6 @@ impl Config {
             ConfigOverrides {
                 cwd: Some(self.cwd.to_path_buf()),
                 default_zsh_path,
-                psp: Some(refreshed_config.psp),
                 ..Default::default()
             },
             refreshed_config.codex_home.clone(),
@@ -2576,7 +2572,6 @@ pub struct ConfigOverrides {
     pub tools_web_search_request: Option<bool>,
     pub ephemeral: Option<bool>,
     pub bypass_hook_trust: Option<bool>,
-    pub psp: Option<bool>,
     /// Additional directories that should be treated as writable roots for this session.
     pub additional_writable_roots: Vec<PathBuf>,
     /// Explicit absolute runtime workspace roots for this session. When set,
@@ -3267,7 +3262,6 @@ impl Config {
             tools_web_search_request: override_tools_web_search_request,
             ephemeral,
             bypass_hook_trust,
-            psp,
             additional_writable_roots,
             workspace_roots: workspace_roots_override,
         } = overrides;
@@ -4189,7 +4183,6 @@ impl Config {
                 .chatgpt_base_url
                 .unwrap_or("https://chatgpt.com/backend-api/".to_string()),
             respect_system_proxy,
-            psp: psp.unwrap_or_default(),
             apps_mcp_product_sku: cfg.apps_mcp_product_sku.clone(),
             responses_api_metadata: cfg.responses_api_metadata.unwrap_or_default(),
             realtime_audio: cfg
