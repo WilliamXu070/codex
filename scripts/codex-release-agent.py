@@ -23,7 +23,7 @@ import time
 import tomllib
 import urllib.request
 from pathlib import Path
-from typing import IO
+from typing import IO, Iterable
 
 
 DEFAULT_SOURCE_ROOT = Path("/Users/williamxu/Desktop/Projects/codex")
@@ -37,8 +37,31 @@ DEFAULT_CI_POLL_INTERVAL_SECONDS = 10
 DEFAULT_INSTALL_ROOT = Path.home() / ".local/lib/codex/releases"
 DEFAULT_ACTIVE_CLI = Path.home() / ".local/bin/codex"
 DEFAULT_ACTIVE_TUI = Path.home() / ".local/bin/codex-tui"
+DEFAULT_ACTIVE_CODE_MODE_HOST = Path.home() / ".local/bin/codex-code-mode-host"
 DEFAULT_CURRENT_LINK = Path.home() / ".local/lib/codex/current"
+DEFAULT_SIGNING_CONFIG = Path.home() / ".local/lib/codex/signing/code-signing.json"
+CODE_MODE_HOST_ENTITLEMENTS = Path(
+    ".github/scripts/macos-signing/codex-code-mode-host.entitlements.plist"
+)
+V8_ENV_RESOLVER = textwrap.dedent(
+    """\
+    import json
+    import sys
+    from pathlib import Path
+
+    workspace = Path(sys.argv[1]).resolve()
+    sys.path.insert(0, str(workspace / "scripts"))
+
+    from codex_package.targets import TARGET_SPECS, default_target
+    from codex_package.v8 import resolve_codex_v8_cargo_env
+
+    spec = TARGET_SPECS[default_target()]
+    print(json.dumps(resolve_codex_v8_cargo_env(spec), sort_keys=True))
+    """
+)
 TAG_RE = re.compile(r"^rust-v(?P<version>\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$")
+CERTIFICATE_SHA1_RE = re.compile(r"^[A-Fa-f0-9]{40}$")
+CODE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9.-]+$")
 
 
 class ReleaseAgentError(RuntimeError):
@@ -62,7 +85,9 @@ class RunResult:
     pr_url: str | None = None
     merge_commit: str | None = None
     installed_cli: str | None = None
+    installed_code_mode_host: str | None = None
     previous_cli: str | None = None
+    previous_code_mode_host: str | None = None
     reason: str | None = None
 
 
@@ -71,9 +96,19 @@ class InstalledRelease:
     release_dir: Path
     cli: Path
     tui: Path
+    code_mode_host: Path
     previous_cli: str | None
     previous_tui: str | None
+    previous_code_mode_host: str | None
     previous_current: str | None
+
+
+@dataclasses.dataclass(frozen=True)
+class CodeSigningConfig:
+    identity_sha1: str
+    anchor_sha1: str
+    identifier: str
+    keychain: Path
 
 
 class ReleaseLedger:
@@ -96,7 +131,9 @@ class ReleaseLedger:
                     pr_url TEXT,
                     merge_commit TEXT,
                     installed_cli TEXT,
+                    installed_code_mode_host TEXT,
                     previous_cli TEXT,
+                    previous_code_mode_host TEXT,
                     error TEXT,
                     PRIMARY KEY (repository, tag)
                 )
@@ -106,7 +143,13 @@ class ReleaseLedger:
                 str(row["name"])
                 for row in conn.execute("PRAGMA table_info(release_runs)")
             }
-            for column in ("merge_commit", "installed_cli", "previous_cli"):
+            for column in (
+                "merge_commit",
+                "installed_cli",
+                "installed_code_mode_host",
+                "previous_cli",
+                "previous_code_mode_host",
+            ):
                 if column not in columns:
                     conn.execute(f"ALTER TABLE release_runs ADD COLUMN {column} TEXT")
 
@@ -175,7 +218,9 @@ class ReleaseLedger:
         pr_url: str | None,
         merge_commit: str | None = None,
         installed_cli: Path | None = None,
+        installed_code_mode_host: Path | None = None,
         previous_cli: str | None = None,
+        previous_code_mode_host: str | None = None,
     ) -> None:
         with contextlib.closing(self.connect()) as conn, conn:
             conn.execute(
@@ -188,7 +233,9 @@ class ReleaseLedger:
                     pr_url = ?,
                     merge_commit = ?,
                     installed_cli = ?,
+                    installed_code_mode_host = ?,
                     previous_cli = ?,
+                    previous_code_mode_host = ?,
                     error = NULL
                 WHERE repository = ? AND tag = ?
                 """,
@@ -199,7 +246,9 @@ class ReleaseLedger:
                     pr_url,
                     merge_commit,
                     str(installed_cli) if installed_cli else None,
+                    str(installed_code_mode_host) if installed_code_mode_host else None,
                     previous_cli,
+                    previous_code_mode_host,
                     repository,
                     tag,
                 ),
@@ -285,6 +334,139 @@ def run_command(
 
 def git_output(root: Path, *args: str) -> str:
     return run_command(["git", *args], cwd=root).stdout.strip()
+
+
+def verify_code_mode_host(binary: Path, *, cwd: Path) -> None:
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        raise ReleaseAgentError(f"validated code-mode host is missing: {binary}")
+    run_command([str(binary), "--help"], cwd=cwd)
+
+
+def codex_v8_build_environment(
+    workspace: Path,
+    base_environment: dict[str, str],
+) -> dict[str, str]:
+    """Resolve the checksum-verified V8 archive and bindings for Cargo."""
+    completed = run_command(
+        [sys.executable, "-c", V8_ENV_RESOLVER, str(workspace)],
+        cwd=workspace,
+        env=base_environment,
+        timeout=900,
+    )
+    try:
+        overrides = json.loads(completed.stdout)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ReleaseAgentError(
+            "Codex V8 environment resolver returned invalid JSON"
+        ) from exc
+    if not isinstance(overrides, dict) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in overrides.items()
+    ):
+        raise ReleaseAgentError("Codex V8 environment resolver returned invalid values")
+    return {**base_environment, **overrides}
+
+
+def load_code_signing_config(path: Path) -> CodeSigningConfig:
+    path = path.expanduser().absolute()
+    if not path.is_file():
+        raise ReleaseAgentError(
+            f"macOS activation requires code-signing config: {path}; "
+            "run scripts/setup-codex-local-signing.sh"
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReleaseAgentError(f"invalid code-signing config {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ReleaseAgentError(f"invalid code-signing config object: {path}")
+
+    values: dict[str, str] = {}
+    for field in ("identity_sha1", "anchor_sha1", "identifier", "keychain"):
+        value = payload.get(field)
+        if not isinstance(value, str) or not value:
+            raise ReleaseAgentError(
+                f"code-signing config {path} needs non-empty {field!r}"
+            )
+        values[field] = value
+
+    identity_sha1 = values["identity_sha1"].upper()
+    anchor_sha1 = values["anchor_sha1"].upper()
+    if CERTIFICATE_SHA1_RE.fullmatch(identity_sha1) is None:
+        raise ReleaseAgentError(f"invalid signing identity SHA-1 in {path}")
+    if CERTIFICATE_SHA1_RE.fullmatch(anchor_sha1) is None:
+        raise ReleaseAgentError(f"invalid signing anchor SHA-1 in {path}")
+    identifier = values["identifier"]
+    if CODE_IDENTIFIER_RE.fullmatch(identifier) is None:
+        raise ReleaseAgentError(f"invalid code identifier in {path}: {identifier!r}")
+    keychain = Path(values["keychain"]).expanduser().absolute()
+    if not keychain.is_file():
+        raise ReleaseAgentError(
+            f"configured signing keychain does not exist: {keychain}"
+        )
+    return CodeSigningConfig(
+        identity_sha1=identity_sha1,
+        anchor_sha1=anchor_sha1,
+        identifier=identifier,
+        keychain=keychain,
+    )
+
+
+def designated_requirement(config: CodeSigningConfig) -> str:
+    return (
+        f'designated => anchor H"{config.anchor_sha1}" '
+        f'and identifier "{config.identifier}"'
+    )
+
+
+def verify_macos_binary_signature(
+    binary: Path,
+    config: CodeSigningConfig,
+) -> None:
+    test_requirement = (
+        f'anchor H"{config.anchor_sha1}" and identifier "{config.identifier}"'
+    )
+    run_command(
+        [
+            "/usr/bin/codesign",
+            "--verify",
+            "--strict",
+            f"-R={test_requirement}",
+            str(binary),
+        ],
+        cwd=binary.parent,
+    )
+
+
+def sign_macos_binary(
+    binary: Path,
+    config: CodeSigningConfig,
+    *,
+    entitlements: Path | None = None,
+) -> None:
+    if sys.platform != "darwin":
+        raise ReleaseAgentError("local code signing is only supported on macOS")
+    command = [
+        "/usr/bin/codesign",
+        "--force",
+        "--keychain",
+        str(config.keychain),
+        "--sign",
+        config.identity_sha1,
+        "--identifier",
+        config.identifier,
+        "--requirements",
+        f"={designated_requirement(config)}",
+    ]
+    if entitlements is not None:
+        if not entitlements.is_file():
+            raise ReleaseAgentError(
+                f"code-signing entitlements are missing: {entitlements}"
+            )
+        command.extend(["--entitlements", str(entitlements)])
+    command.append(str(binary))
+    run_command(command, cwd=binary.parent)
+    verify_macos_binary_signature(binary, config)
 
 
 def validate_release(repository: str, tag: str) -> str:
@@ -788,18 +970,33 @@ def verify_workspace(
         cwd=workspace / "codex-rs",
     )
     if not skip_build:
+        build_env = os.environ.copy()
+        build_env["CARGO_INCREMENTAL"] = "0"
+        build_env = codex_v8_build_environment(workspace, build_env)
         run_command(
-            ["cargo", "build", "-p", "codex-cli", "-p", "codex-tui"],
+            [
+                "cargo",
+                "build",
+                "-p",
+                "codex-cli",
+                "-p",
+                "codex-tui",
+                "-p",
+                "codex-code-mode-host",
+            ],
             cwd=workspace / "codex-rs",
+            env=build_env,
             timeout=7200,
         )
         commit_generated_lockfile(workspace)
         built_codex = workspace / "codex-rs/target/debug/codex"
+        built_code_mode_host = workspace / "codex-rs/target/debug/codex-code-mode-host"
         output = run_command([str(built_codex), "--version"], cwd=workspace).stdout
         if version not in output:
             raise ReleaseAgentError(
                 f"built Codex reports {output.strip()!r}, expected {version!r}"
             )
+        verify_code_mode_host(built_code_mode_host, cwd=workspace)
 
 
 def verify_with_repairs(
@@ -885,7 +1082,7 @@ def publish_branch(
             - Repository Cargo-manifest policy passed.
             - Custom sound-path regression passed.
             - `cargo fmt --all -- --check` passed.
-            - `cargo build -p codex-cli -p codex-tui` passed.
+            - `cargo build -p codex-cli -p codex-tui -p codex-code-mode-host` passed.
 
             This PR was produced by one deduplicated release-agent run. The
             orchestrator merges it, installs the validated binaries into a permanent
@@ -1136,6 +1333,98 @@ def replace_symlink(path: Path, target: Path | str | None) -> None:
     os.replace(temporary, path)
 
 
+def prune_installed_releases(
+    *,
+    install_root: Path,
+    required_releases: Iterable[Path],
+    keep_count: int = 2,
+) -> list[Path]:
+    """Keep the active release plus one rollback and remove older releases."""
+    root = install_root.expanduser().absolute()
+    if root in {Path("/"), Path.home().absolute()}:
+        raise ReleaseAgentError(f"refusing unsafe release root: {root}")
+    if keep_count < 1:
+        raise ReleaseAgentError("keep_count must be positive")
+    if not root.is_dir():
+        return []
+
+    children = [
+        child
+        for child in root.iterdir()
+        if child.is_dir() and not child.is_symlink() and not child.name.startswith(".")
+    ]
+    child_by_path = {child.absolute(): child for child in children}
+    keep: set[Path] = set()
+    for required in required_releases:
+        candidate = required.expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        candidate = candidate.absolute()
+        if candidate in child_by_path:
+            keep.add(candidate)
+
+    newest_first = sorted(
+        children,
+        key=lambda child: (child.stat().st_mtime_ns, child.name),
+        reverse=True,
+    )
+    for child in newest_first:
+        if len(keep) >= keep_count:
+            break
+        keep.add(child.absolute())
+
+    removed: list[Path] = []
+    for child in children:
+        if child.absolute() in keep:
+            continue
+        shutil.rmtree(child)
+        removed.append(child)
+    return removed
+
+
+def remove_release_workspace(*, state_dir: Path, workspace: Path) -> bool:
+    """Remove one direct child of the release-agent workspace root."""
+    workspace_root = state_dir.expanduser().absolute() / "workspaces"
+    candidate = workspace.expanduser().absolute()
+    if workspace_root in {Path("/"), Path.home().absolute()}:
+        raise ReleaseAgentError(f"refusing unsafe workspace root: {workspace_root}")
+    if workspace_root.is_symlink():
+        raise ReleaseAgentError(
+            f"refusing symlinked release workspace root: {workspace_root}"
+        )
+    if candidate.parent != workspace_root:
+        raise ReleaseAgentError(
+            f"release workspace is not a direct child of {workspace_root}: {candidate}"
+        )
+    if candidate.is_symlink():
+        candidate.unlink()
+        return True
+    if candidate.is_dir():
+        shutil.rmtree(candidate)
+        return True
+    if candidate.exists():
+        raise ReleaseAgentError(f"release workspace is not a directory: {candidate}")
+    return False
+
+
+def prune_release_workspaces(*, state_dir: Path) -> list[Path]:
+    """Remove leftovers from completed, failed, or interrupted agent runs."""
+    workspace_root = state_dir.expanduser().absolute() / "workspaces"
+    if not workspace_root.exists():
+        return []
+    if not workspace_root.is_dir() or workspace_root.is_symlink():
+        raise ReleaseAgentError(
+            f"refusing unsafe release workspace root: {workspace_root}"
+        )
+
+    removed: list[Path] = []
+    for candidate in sorted(workspace_root.iterdir(), key=lambda item: item.name):
+        if candidate.is_dir() or candidate.is_symlink():
+            if remove_release_workspace(state_dir=state_dir, workspace=candidate):
+                removed.append(candidate)
+    return removed
+
+
 def install_active_cli(
     *,
     workspace: Path,
@@ -1146,10 +1435,13 @@ def install_active_cli(
     install_root: Path,
     active_cli: Path,
     active_tui: Path,
+    active_code_mode_host: Path,
     current_link: Path,
+    code_signing: CodeSigningConfig | None = None,
 ) -> InstalledRelease:
     built_cli = workspace / "codex-rs/target/debug/codex"
     built_tui = workspace / "codex-rs/target/debug/codex-tui"
+    built_code_mode_host = workspace / "codex-rs/target/debug/codex-code-mode-host"
     for binary in (built_cli, built_tui):
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise ReleaseAgentError(f"validated build artifact is missing: {binary}")
@@ -1158,16 +1450,20 @@ def install_active_cli(
             raise ReleaseAgentError(
                 f"build artifact reports {output.strip()!r}, expected {version!r}"
             )
+    verify_code_mode_host(built_code_mode_host, cwd=workspace)
 
     release_name = f"{tag.removeprefix('rust-v')}-{merge_commit[:12]}"
     release_dir = install_root / release_name
     release_debug = release_dir / "debug"
     cli = release_debug / "codex"
     tui = release_debug / "codex-tui"
+    code_mode_host = release_debug / "codex-code-mode-host"
     install_root.mkdir(parents=True, exist_ok=True)
     previous_cli = symlink_target(active_cli)
     previous_tui = symlink_target(active_tui)
+    previous_code_mode_host = symlink_target(active_code_mode_host)
     previous_current = symlink_target(current_link)
+    host_entitlements = workspace / CODE_MODE_HOST_ENTITLEMENTS
 
     if not release_dir.exists():
         temporary = Path(
@@ -1181,6 +1477,18 @@ def install_active_cli(
             temporary_debug.mkdir()
             shutil.copy2(built_cli, temporary_debug / "codex")
             shutil.copy2(built_tui, temporary_debug / "codex-tui")
+            shutil.copy2(
+                built_code_mode_host,
+                temporary_debug / "codex-code-mode-host",
+            )
+            if code_signing is not None:
+                sign_macos_binary(temporary_debug / "codex", code_signing)
+                sign_macos_binary(temporary_debug / "codex-tui", code_signing)
+                sign_macos_binary(
+                    temporary_debug / "codex-code-mode-host",
+                    code_signing,
+                    entitlements=host_entitlements,
+                )
             metadata = {
                 "repository": DEFAULT_REPOSITORY,
                 "tag": tag,
@@ -1190,8 +1498,17 @@ def install_active_cli(
                 "installed_at": utc_now(),
                 "previous_cli": previous_cli,
                 "previous_tui": previous_tui,
+                "previous_code_mode_host": previous_code_mode_host,
                 "previous_current": previous_current,
+                "code_mode_host_entitlements": str(CODE_MODE_HOST_ENTITLEMENTS),
             }
+            if code_signing is not None:
+                metadata["code_signing"] = {
+                    "identity_sha1": code_signing.identity_sha1,
+                    "anchor_sha1": code_signing.anchor_sha1,
+                    "identifier": code_signing.identifier,
+                    "designated_requirement": designated_requirement(code_signing),
+                }
             (temporary / "release.json").write_text(
                 json.dumps(metadata, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
@@ -1204,21 +1521,31 @@ def install_active_cli(
                 [str(temporary_debug / "codex-tui"), "--version"],
                 cwd=workspace,
             )
+            verify_code_mode_host(
+                temporary_debug / "codex-code-mode-host",
+                cwd=workspace,
+            )
             os.replace(temporary, release_dir)
         finally:
             if temporary.exists():
                 shutil.rmtree(temporary)
 
     for binary in (cli, tui):
+        if code_signing is not None:
+            verify_macos_binary_signature(binary, code_signing)
         output = run_command([str(binary), "--version"], cwd=workspace).stdout
         if version not in output:
             raise ReleaseAgentError(
                 f"installed binary reports {output.strip()!r}, expected {version!r}"
             )
+    if code_signing is not None:
+        verify_macos_binary_signature(code_mode_host, code_signing)
+    verify_code_mode_host(code_mode_host, cwd=workspace)
 
     try:
         replace_symlink(active_cli, cli)
         replace_symlink(active_tui, tui)
+        replace_symlink(active_code_mode_host, code_mode_host)
         replace_symlink(current_link, release_dir)
         for binary in (active_cli, active_tui):
             output = run_command([str(binary), "--version"], cwd=workspace).stdout
@@ -1226,18 +1553,39 @@ def install_active_cli(
                 raise ReleaseAgentError(
                     f"active binary reports {output.strip()!r}, expected {version!r}"
                 )
+        verify_code_mode_host(active_code_mode_host, cwd=workspace)
     except Exception:
         replace_symlink(active_cli, previous_cli)
         replace_symlink(active_tui, previous_tui)
+        replace_symlink(active_code_mode_host, previous_code_mode_host)
         replace_symlink(current_link, previous_current)
         raise
+
+    required_releases = [release_dir]
+    if previous_current is not None:
+        previous_path = Path(previous_current)
+        if not previous_path.is_absolute():
+            previous_path = current_link.parent / previous_path
+        required_releases.append(previous_path)
+    try:
+        removed_releases = prune_installed_releases(
+            install_root=install_root,
+            required_releases=required_releases,
+        )
+    except OSError as exc:
+        print(f"warning: could not prune old Codex releases: {exc}", file=sys.stderr)
+    else:
+        for removed_release in removed_releases:
+            print(f"pruned old Codex release: {removed_release}")
 
     return InstalledRelease(
         release_dir=release_dir,
         cli=cli,
         tui=tui,
+        code_mode_host=code_mode_host,
         previous_cli=previous_cli,
         previous_tui=previous_tui,
+        previous_code_mode_host=previous_code_mode_host,
         previous_current=previous_current,
     )
 
@@ -1259,12 +1607,22 @@ def execute(args: argparse.Namespace) -> RunResult:
     version = validate_release(args.repository, args.release_tag)
     if args.max_repair_attempts < 0:
         raise ReleaseAgentError("--max-repair-attempts cannot be negative")
+    code_signing = None
+    activation_requested = not args.no_publish and not args.no_activate
+    if (
+        sys.platform == "darwin"
+        and activation_requested
+        and not args.allow_unsigned_activation
+    ):
+        code_signing = load_code_signing_config(args.signing_config)
     ledger = ReleaseLedger(state_dir / "state.sqlite3")
     branch: str | None = None
     workspace: Path | None = None
     pr_url: str | None = None
 
     with exclusive_lock(state_dir / "agent.lock"):
+        for stale_workspace in prune_release_workspaces(state_dir=state_dir):
+            print(f"pruned stale release workspace: {stale_workspace}")
         claim = ledger.claim(
             args.repository,
             args.release_tag,
@@ -1280,6 +1638,7 @@ def execute(args: argparse.Namespace) -> RunResult:
             )
 
         try:
+            workspace = state_dir / "workspaces" / safe_tag_name(args.release_tag)
             before = source_fingerprint(source_root)
             workspace, branch, source_head, context_dir = prepare_workspace(
                 source_root=source_root,
@@ -1359,7 +1718,11 @@ def execute(args: argparse.Namespace) -> RunResult:
                         install_root=args.install_root.resolve(),
                         active_cli=args.active_cli.expanduser().absolute(),
                         active_tui=args.active_tui.expanduser().absolute(),
+                        active_code_mode_host=(
+                            args.active_code_mode_host.expanduser().absolute()
+                        ),
                         current_link=args.current_link.expanduser().absolute(),
+                        code_signing=code_signing,
                     )
             ledger.complete(
                 args.repository,
@@ -1369,7 +1732,13 @@ def execute(args: argparse.Namespace) -> RunResult:
                 pr_url=pr_url,
                 merge_commit=merge_commit,
                 installed_cli=installed.cli if installed else None,
+                installed_code_mode_host=(
+                    installed.code_mode_host if installed else None
+                ),
                 previous_cli=installed.previous_cli if installed else None,
+                previous_code_mode_host=(
+                    installed.previous_code_mode_host if installed else None
+                ),
             )
             return RunResult(
                 repository=args.repository,
@@ -1380,7 +1749,13 @@ def execute(args: argparse.Namespace) -> RunResult:
                 pr_url=pr_url,
                 merge_commit=merge_commit,
                 installed_cli=str(installed.cli) if installed else None,
+                installed_code_mode_host=(
+                    str(installed.code_mode_host) if installed else None
+                ),
                 previous_cli=installed.previous_cli if installed else None,
+                previous_code_mode_host=(
+                    installed.previous_code_mode_host if installed else None
+                ),
             )
         except (Exception, KeyboardInterrupt) as exc:
             ledger.fail(
@@ -1391,6 +1766,21 @@ def execute(args: argparse.Namespace) -> RunResult:
                 workspace=workspace,
             )
             raise
+        finally:
+            if workspace is not None:
+                try:
+                    removed_workspace = remove_release_workspace(
+                        state_dir=state_dir,
+                        workspace=workspace,
+                    )
+                except (OSError, ReleaseAgentError) as cleanup_error:
+                    print(
+                        f"warning: could not remove release workspace: {cleanup_error}",
+                        file=sys.stderr,
+                    )
+                else:
+                    if removed_workspace:
+                        print(f"removed release workspace: {workspace}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1513,11 +1903,37 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(os.environ.get("CODEX_ACTIVE_TUI", DEFAULT_ACTIVE_TUI)),
     )
     parser.add_argument(
+        "--active-code-mode-host",
+        type=Path,
+        default=Path(
+            os.environ.get(
+                "CODEX_ACTIVE_CODE_MODE_HOST",
+                DEFAULT_ACTIVE_CODE_MODE_HOST,
+            )
+        ),
+    )
+    parser.add_argument(
         "--current-link",
         type=Path,
         default=Path(
             os.environ.get("CODEX_RELEASE_CURRENT_LINK", DEFAULT_CURRENT_LINK)
         ),
+    )
+    parser.add_argument(
+        "--signing-config",
+        type=Path,
+        default=Path(
+            os.environ.get(
+                "CODEX_RELEASE_SIGNING_CONFIG",
+                DEFAULT_SIGNING_CONFIG,
+            )
+        ),
+        help="Persistent local macOS code-signing configuration.",
+    )
+    parser.add_argument(
+        "--allow-unsigned-activation",
+        action="store_true",
+        help="Explicitly permit macOS activation without a stable code identity.",
     )
     parser.add_argument(
         "--skip-build",
