@@ -276,6 +276,123 @@ class WorkspaceVerificationTests(unittest.TestCase):
                 ],
             )
 
+    def test_build_includes_and_launches_code_mode_host(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            for relative in (
+                "scripts/test-codex-sound-path.sh",
+                "william/audio/random-sound",
+                "william/commands/sound",
+                "william/transcribe/transcribe-command",
+            ):
+                path = workspace / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("fixture\n", encoding="utf-8")
+            built_host = workspace / "codex-rs/target/debug/codex-code-mode-host"
+            built_host.parent.mkdir(parents=True)
+            built_host.write_text("host\n", encoding="utf-8")
+            built_host.chmod(0o755)
+
+            def completed(
+                command: list[str], **_: object
+            ) -> subprocess.CompletedProcess[str]:
+                stdout = ""
+                if command[-1:] == ["--version"]:
+                    stdout = "codex-cli 0.146.0-alpha.14\n"
+                return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+            with (
+                mock.patch.object(agent, "git_output", return_value=""),
+                mock.patch.object(
+                    agent,
+                    "workspace_version",
+                    return_value="0.146.0-alpha.14",
+                ),
+                mock.patch.object(
+                    agent,
+                    "codex_v8_build_environment",
+                    side_effect=lambda _workspace, environment: {
+                        **environment,
+                        "RUSTY_V8_ARCHIVE": "/cache/v8.a.gz",
+                        "RUSTY_V8_SRC_BINDING_PATH": "/cache/bindings.rs",
+                    },
+                ),
+                mock.patch.object(
+                    agent,
+                    "run_command",
+                    side_effect=completed,
+                ) as run_command,
+            ):
+                agent.verify_workspace(
+                    workspace=workspace,
+                    tag="rust-v0.146.0-alpha.14",
+                    version="0.146.0-alpha.14",
+                    skip_build=False,
+                )
+
+            commands = [call.args[0] for call in run_command.call_args_list]
+            self.assertIn(
+                [
+                    "cargo",
+                    "build",
+                    "-p",
+                    "codex-cli",
+                    "-p",
+                    "codex-tui",
+                    "-p",
+                    "codex-code-mode-host",
+                ],
+                commands,
+            )
+            self.assertIn([str(built_host), "--help"], commands)
+            build_call = next(
+                call
+                for call in run_command.call_args_list
+                if call.args[0][:2] == ["cargo", "build"]
+            )
+            self.assertEqual(
+                build_call.kwargs["env"]["RUSTY_V8_ARCHIVE"],
+                "/cache/v8.a.gz",
+            )
+            self.assertEqual(
+                build_call.kwargs["env"]["RUSTY_V8_SRC_BINDING_PATH"],
+                "/cache/bindings.rs",
+            )
+
+    def test_v8_resolver_merges_checksum_verified_artifact_environment(self) -> None:
+        completed = subprocess.CompletedProcess(
+            [sys.executable],
+            0,
+            stdout=(
+                '{"RUSTY_V8_ARCHIVE": "/cache/v8.a.gz", '
+                '"RUSTY_V8_SRC_BINDING_PATH": "/cache/bindings.rs"}\n'
+            ),
+            stderr="",
+        )
+        with mock.patch.object(agent, "run_command", return_value=completed) as run:
+            environment = agent.codex_v8_build_environment(
+                Path("/workspace"),
+                {"CARGO_INCREMENTAL": "0"},
+            )
+
+        self.assertEqual(environment["CARGO_INCREMENTAL"], "0")
+        self.assertEqual(environment["RUSTY_V8_ARCHIVE"], "/cache/v8.a.gz")
+        self.assertEqual(
+            environment["RUSTY_V8_SRC_BINDING_PATH"],
+            "/cache/bindings.rs",
+        )
+        run.assert_called_once_with(
+            [
+                sys.executable,
+                "-c",
+                agent.V8_ENV_RESOLVER,
+                "/workspace",
+            ],
+            cwd=Path("/workspace"),
+            env={"CARGO_INCREMENTAL": "0"},
+            timeout=900,
+        )
+
 
 class ExecuteDeduplicationTests(unittest.TestCase):
     def make_args(self, source: Path, state: Path) -> argparse.Namespace:
@@ -299,7 +416,10 @@ class ExecuteDeduplicationTests(unittest.TestCase):
             install_root=state / "releases",
             active_cli=state / "bin/codex",
             active_tui=state / "bin/codex-tui",
+            active_code_mode_host=state / "bin/codex-code-mode-host",
             current_link=state / "current",
+            signing_config=state / "signing/code-signing.json",
+            allow_unsigned_activation=True,
         )
 
     def test_duplicate_execute_launches_codex_once(self) -> None:
@@ -346,8 +466,10 @@ class ExecuteDeduplicationTests(unittest.TestCase):
                 release_dir=root / "release",
                 cli=root / "release/debug/codex",
                 tui=root / "release/debug/codex-tui",
+                code_mode_host=root / "release/debug/codex-code-mode-host",
                 previous_cli="/previous/codex",
                 previous_tui="/previous/codex-tui",
+                previous_code_mode_host="/previous/codex-code-mode-host",
                 previous_current="/previous",
             )
 
@@ -391,6 +513,10 @@ class ExecuteDeduplicationTests(unittest.TestCase):
             self.assertEqual(first.status, "succeeded")
             self.assertEqual(first.merge_commit, "abc123def456")
             self.assertEqual(first.installed_cli, str(installed.cli))
+            self.assertEqual(
+                first.installed_code_mode_host,
+                str(installed.code_mode_host),
+            )
             self.assertEqual(second.status, "skipped")
             publish.assert_called_once()
             wait_for_ci.assert_called_once_with(
@@ -511,8 +637,10 @@ class ExecuteDeduplicationTests(unittest.TestCase):
                         release_dir=root / "release",
                         cli=root / "release/debug/codex",
                         tui=root / "release/debug/codex-tui",
+                        code_mode_host=(root / "release/debug/codex-code-mode-host"),
                         previous_cli=None,
                         previous_tui=None,
+                        previous_code_mode_host=None,
                         previous_current=None,
                     ),
                 ),
@@ -754,6 +882,102 @@ class RepairLoopTests(unittest.TestCase):
             )
 
 
+class CodeSigningTests(unittest.TestCase):
+    def test_loads_valid_signing_config_and_normalizes_fingerprints(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            keychain = root / "login.keychain-db"
+            keychain.touch()
+            config_path = root / "code-signing.json"
+            config_path.write_text(
+                """
+                {
+                  "identity_sha1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "anchor_sha1": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "identifier": "com.williamxu.codex.local",
+                  "keychain": "%s"
+                }
+                """
+                % keychain,
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                agent.load_code_signing_config(config_path),
+                agent.CodeSigningConfig(
+                    identity_sha1="A" * 40,
+                    anchor_sha1="B" * 40,
+                    identifier="com.williamxu.codex.local",
+                    keychain=keychain,
+                ),
+            )
+
+    def test_signs_host_with_jit_entitlements_and_verifies_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            binary = root / "codex-code-mode-host"
+            entitlements = root / "codex-code-mode-host.entitlements.plist"
+            entitlements.write_text("<plist/>\n", encoding="utf-8")
+            config = agent.CodeSigningConfig(
+                identity_sha1="A" * 40,
+                anchor_sha1="B" * 40,
+                identifier="com.williamxu.codex.local",
+                keychain=Path("/keychains/login.keychain-db"),
+            )
+            requirement = (
+                'designated => anchor H"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" '
+                'and identifier "com.williamxu.codex.local"'
+            )
+            test_requirement = (
+                'anchor H"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" '
+                'and identifier "com.williamxu.codex.local"'
+            )
+
+            with (
+                mock.patch.object(agent.sys, "platform", "darwin"),
+                mock.patch.object(agent, "run_command") as run,
+            ):
+                agent.sign_macos_binary(
+                    binary,
+                    config,
+                    entitlements=entitlements,
+                )
+
+            self.assertEqual(
+                run.call_args_list,
+                [
+                    mock.call(
+                        [
+                            "/usr/bin/codesign",
+                            "--force",
+                            "--keychain",
+                            str(config.keychain),
+                            "--sign",
+                            config.identity_sha1,
+                            "--identifier",
+                            config.identifier,
+                            "--requirements",
+                            f"={requirement}",
+                            "--entitlements",
+                            str(entitlements),
+                            str(binary),
+                        ],
+                        cwd=binary.parent,
+                    ),
+                    mock.call(
+                        [
+                            "/usr/bin/codesign",
+                            "--verify",
+                            "--strict",
+                            f"-R={test_requirement}",
+                            str(binary),
+                        ],
+                        cwd=binary.parent,
+                    ),
+                ],
+            )
+
+
 class ActiveInstallTests(unittest.TestCase):
     def make_binary(self, path: Path, name: str, version: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -774,47 +998,199 @@ class ActiveInstallTests(unittest.TestCase):
                 "codex-tui",
                 "0.146.0-alpha.14",
             )
+            self.make_binary(
+                built / "codex-code-mode-host",
+                "codex-code-mode-host",
+                "0.146.0-alpha.14",
+            )
 
             old_release = root / "releases/old/debug"
             self.make_binary(old_release / "codex", "codex-cli", "0.144.6")
             self.make_binary(old_release / "codex-tui", "codex-tui", "0.144.6")
+            self.make_binary(
+                old_release / "codex-code-mode-host",
+                "codex-code-mode-host",
+                "0.144.6",
+            )
             active_cli = root / "bin/codex"
             active_tui = root / "bin/codex-tui"
+            active_code_mode_host = root / "bin/codex-code-mode-host"
             current = root / "current"
             active_cli.parent.mkdir()
             active_cli.symlink_to(old_release / "codex")
             active_tui.symlink_to(old_release / "codex-tui")
+            active_code_mode_host.symlink_to(old_release / "codex-code-mode-host")
             current.symlink_to(old_release.parent)
 
-            installed = agent.install_active_cli(
-                workspace=workspace,
-                tag="rust-v0.146.0-alpha.14",
-                version="0.146.0-alpha.14",
-                merge_commit="abc123def4567890",
-                pr_url="https://example.test/pr/1",
-                install_root=root / "releases",
-                active_cli=active_cli,
-                active_tui=active_tui,
-                current_link=current,
+            code_signing = agent.CodeSigningConfig(
+                identity_sha1="A" * 40,
+                anchor_sha1="B" * 40,
+                identifier="com.williamxu.codex.local",
+                keychain=root / "login.keychain-db",
             )
+            with (
+                mock.patch.object(agent, "sign_macos_binary") as sign,
+                mock.patch.object(
+                    agent,
+                    "verify_macos_binary_signature",
+                ) as verify_signature,
+            ):
+                installed = agent.install_active_cli(
+                    workspace=workspace,
+                    tag="rust-v0.146.0-alpha.14",
+                    version="0.146.0-alpha.14",
+                    merge_commit="abc123def4567890",
+                    pr_url="https://example.test/pr/1",
+                    install_root=root / "releases",
+                    active_cli=active_cli,
+                    active_tui=active_tui,
+                    active_code_mode_host=active_code_mode_host,
+                    current_link=current,
+                    code_signing=code_signing,
+                )
 
             self.assertEqual(installed.previous_cli, str(old_release / "codex"))
             self.assertEqual(
                 installed.previous_tui,
                 str(old_release / "codex-tui"),
             )
+            self.assertEqual(
+                installed.previous_code_mode_host,
+                str(old_release / "codex-code-mode-host"),
+            )
             self.assertEqual(os.readlink(active_cli), str(installed.cli))
             self.assertEqual(os.readlink(active_tui), str(installed.tui))
+            self.assertEqual(
+                os.readlink(active_code_mode_host),
+                str(installed.code_mode_host),
+            )
             self.assertEqual(os.readlink(current), str(installed.release_dir))
             metadata = (installed.release_dir / "release.json").read_text(
                 encoding="utf-8"
             )
             self.assertIn(str(old_release / "codex"), metadata)
             self.assertIn(str(old_release / "codex-tui"), metadata)
+            self.assertIn(str(old_release / "codex-code-mode-host"), metadata)
+            self.assertIn("codex-code-mode-host.entitlements.plist", metadata)
             self.assertIn(
                 "0.146.0-alpha.14",
                 subprocess.check_output([active_cli, "--version"], text=True),
             )
+            self.assertEqual(
+                [call.args[0].name for call in sign.call_args_list],
+                ["codex", "codex-tui", "codex-code-mode-host"],
+            )
+            self.assertEqual(
+                sign.call_args_list[-1].kwargs["entitlements"],
+                workspace / agent.CODE_MODE_HOST_ENTITLEMENTS,
+            )
+            self.assertEqual(
+                verify_signature.call_args_list,
+                [
+                    mock.call(installed.cli, code_signing),
+                    mock.call(installed.tui, code_signing),
+                    mock.call(installed.code_mode_host, code_signing),
+                ],
+            )
+
+    def test_missing_code_mode_host_fails_before_activation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "workspace"
+            built = workspace / "codex-rs/target/debug"
+            self.make_binary(built / "codex", "codex-cli", "0.146.0-alpha.14")
+            self.make_binary(
+                built / "codex-tui",
+                "codex-tui",
+                "0.146.0-alpha.14",
+            )
+
+            with self.assertRaisesRegex(
+                agent.ReleaseAgentError,
+                "validated code-mode host is missing",
+            ):
+                agent.install_active_cli(
+                    workspace=workspace,
+                    tag="rust-v0.146.0-alpha.14",
+                    version="0.146.0-alpha.14",
+                    merge_commit="abc123def4567890",
+                    pr_url="https://example.test/pr/1",
+                    install_root=root / "releases",
+                    active_cli=root / "bin/codex",
+                    active_tui=root / "bin/codex-tui",
+                    active_code_mode_host=root / "bin/codex-code-mode-host",
+                    current_link=root / "current",
+                )
+
+    def test_host_smoke_failure_rolls_back_every_active_link(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "workspace"
+            built = workspace / "codex-rs/target/debug"
+            for name, label in (
+                ("codex", "codex-cli"),
+                ("codex-tui", "codex-tui"),
+                ("codex-code-mode-host", "codex-code-mode-host"),
+            ):
+                self.make_binary(built / name, label, "0.146.0-alpha.14")
+
+            old_release = root / "releases/old/debug"
+            for name, label in (
+                ("codex", "codex-cli"),
+                ("codex-tui", "codex-tui"),
+                ("codex-code-mode-host", "codex-code-mode-host"),
+            ):
+                self.make_binary(old_release / name, label, "0.144.6")
+
+            active_cli = root / "bin/codex"
+            active_tui = root / "bin/codex-tui"
+            active_host = root / "bin/codex-code-mode-host"
+            current = root / "current"
+            active_cli.parent.mkdir()
+            active_cli.symlink_to(old_release / "codex")
+            active_tui.symlink_to(old_release / "codex-tui")
+            active_host.symlink_to(old_release / "codex-code-mode-host")
+            current.symlink_to(old_release.parent)
+
+            with (
+                mock.patch.object(
+                    agent,
+                    "verify_code_mode_host",
+                    side_effect=[
+                        None,
+                        None,
+                        None,
+                        agent.ReleaseAgentError("active host smoke failed"),
+                    ],
+                ),
+                self.assertRaisesRegex(
+                    agent.ReleaseAgentError,
+                    "active host smoke failed",
+                ),
+            ):
+                agent.install_active_cli(
+                    workspace=workspace,
+                    tag="rust-v0.146.0-alpha.14",
+                    version="0.146.0-alpha.14",
+                    merge_commit="abc123def4567890",
+                    pr_url="https://example.test/pr/1",
+                    install_root=root / "releases",
+                    active_cli=active_cli,
+                    active_tui=active_tui,
+                    active_code_mode_host=active_host,
+                    current_link=current,
+                )
+
+            self.assertEqual(os.readlink(active_cli), str(old_release / "codex"))
+            self.assertEqual(
+                os.readlink(active_tui),
+                str(old_release / "codex-tui"),
+            )
+            self.assertEqual(
+                os.readlink(active_host),
+                str(old_release / "codex-code-mode-host"),
+            )
+            self.assertEqual(os.readlink(current), str(old_release.parent))
 
 
 if __name__ == "__main__":
