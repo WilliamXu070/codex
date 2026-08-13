@@ -159,6 +159,7 @@ fn http_mcp(url: &str) -> McpServerConfig {
             bearer_token_env_var: None,
             http_headers: None,
             env_http_headers: None,
+            http_headers_helper: None,
         },
         environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
         enabled: true,
@@ -6833,6 +6834,7 @@ async fn replace_mcp_servers_streamable_http_serializes_bearer_token() -> anyhow
                 bearer_token_env_var: Some("MCP_TOKEN".to_string()),
                 http_headers: None,
                 env_http_headers: None,
+                http_headers_helper: None,
             },
             environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
             enabled: true,
@@ -6876,6 +6878,7 @@ startup_timeout_sec = 2.0
             bearer_token_env_var,
             http_headers,
             env_http_headers,
+            ..
         } => {
             assert_eq!(url, "https://example.com/mcp");
             assert_eq!(bearer_token_env_var.as_deref(), Some("MCP_TOKEN"));
@@ -6905,6 +6908,7 @@ async fn replace_mcp_servers_streamable_http_serializes_custom_headers() -> anyh
                     "X-Auth".to_string(),
                     "DOCS_AUTH".to_string(),
                 )])),
+                http_headers_helper: None,
             },
             environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
             enabled: true,
@@ -6989,6 +6993,7 @@ async fn replace_mcp_servers_streamable_http_removes_optional_sections() -> anyh
                     "X-Auth".to_string(),
                     "DOCS_AUTH".to_string(),
                 )])),
+                http_headers_helper: None,
             },
             environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
             enabled: true,
@@ -7026,6 +7031,7 @@ async fn replace_mcp_servers_streamable_http_removes_optional_sections() -> anyh
                 bearer_token_env_var: None,
                 http_headers: None,
                 env_http_headers: None,
+                http_headers_helper: None,
             },
             environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
             enabled: true,
@@ -7065,6 +7071,7 @@ url = "https://example.com/mcp"
             bearer_token_env_var,
             http_headers,
             env_http_headers,
+            ..
         } => {
             assert_eq!(url, "https://example.com/mcp");
             assert!(bearer_token_env_var.is_none());
@@ -7098,6 +7105,7 @@ async fn replace_mcp_servers_streamable_http_isolates_headers_between_servers() 
                         "X-Auth".to_string(),
                         "DOCS_AUTH".to_string(),
                     )])),
+                    http_headers_helper: None,
                 },
                 environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
                 enabled: true,
@@ -7376,6 +7384,7 @@ async fn replace_mcp_servers_streamable_http_serializes_oauth_resource() -> anyh
                 bearer_token_env_var: None,
                 http_headers: None,
                 env_http_headers: None,
+                http_headers_helper: None,
             },
             environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
             enabled: true,
