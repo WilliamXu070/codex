@@ -35,6 +35,7 @@ members = [
     "collaboration-mode-templates",
     "connectors",
     "config",
+    "context-files",
     "context-fragments",
     "shell-command",
     "shell-escalation",
@@ -68,6 +69,8 @@ members = [
     "ext/skills",
     "ext/web-search",
     "external-agent-migration",
+    "directory-watcher",
+    "embeddings",
     "keyring-store",
     "file-search",
     "file-watcher",
@@ -90,6 +93,7 @@ members = [
     "rmcp-client",
     "responses-api-proxy",
     "response-debug-context",
+    "retrieval",
     "sandboxing",
     "stdio-to-uds",
     "otel",
@@ -130,6 +134,7 @@ members = [
     "test-binary-support",
     "thread-manager-sample",
     "thread-store",
+    "tool-gen",
     "uds",
     "codex-experimental-api-macros",
     "plugin",
@@ -183,10 +188,13 @@ codex-config = { path = "config" }
 codex-connectors = { path = "connectors" }
 codex-agent-extension = { path = "ext/agent" }
 codex-connectors-extension = { path = "ext/connectors" }
+codex-context-files = { path = "context-files" }
 codex-context-fragments = { path = "context-fragments" }
 codex-core = { path = "core" }
 codex-core-api = { path = "core-api" }
 codex-core-plugins = { path = "core-plugins" }
+codex-directory-watcher = { path = "directory-watcher" }
+codex-embeddings = { path = "embeddings" }
 codex-diagnostics = { path = "diagnostics" }
 codex-exec = { path = "exec" }
 codex-file-system = { path = "file-system" }
