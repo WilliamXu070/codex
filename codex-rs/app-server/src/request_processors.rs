@@ -442,6 +442,7 @@ use codex_protocol::protocol::ConversationSpeechParams;
 use codex_protocol::protocol::ConversationStartParams;
 use codex_protocol::protocol::ConversationStartTransport;
 use codex_protocol::protocol::ConversationTextParams;
+use codex_protocol::protocol::EnvironmentConfigState;
 use codex_protocol::protocol::EventMsg;
 #[cfg(test)]
 use codex_protocol::protocol::GitInfo as CoreGitInfo;
@@ -461,7 +462,6 @@ use codex_protocol::protocol::strip_user_message_prefix;
 use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 use codex_protocol::user_input::UserInput as CoreInputItem;
 use codex_rmcp_client::McpOAuthClientRegistration;
-use codex_rmcp_client::StreamableHttpRedirectMode;
 use codex_rmcp_client::perform_oauth_login_return_url;
 use codex_rollout::InitialHistory;
 use codex_rollout::ResumedHistory;
@@ -639,6 +639,7 @@ fn resolve_turn_environment_selections(
             environment_id,
             cwd,
             workspace_roots,
+            config: EnvironmentConfigState::FromThread,
         });
     }
     thread_manager
