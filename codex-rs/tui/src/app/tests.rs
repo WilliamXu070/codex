@@ -4783,6 +4783,8 @@ async fn make_test_app() -> App {
         pending_primary_events: VecDeque::new(),
         pending_app_server_requests: PendingAppServerRequests::default(),
         pending_startup_thread_start: false,
+        startup_protected_input_boundary: false,
+        startup_pending_protected_request: false,
         rate_limit_hard_stop_generation: 0,
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
@@ -4859,6 +4861,8 @@ async fn make_test_app_with_channels() -> (
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_startup_thread_start: false,
+            startup_protected_input_boundary: false,
+            startup_pending_protected_request: false,
             rate_limit_hard_stop_generation: 0,
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
@@ -5741,6 +5745,7 @@ fn session_start_error_surfaces_archived_guidance_without_rollout_path() {
             "/Users/me/.codex/archived_sessions/rollout.jsonl",
         )),
         thread_id,
+        history_mode: None,
     };
     let expected = format!(
         "session {thread_id} is archived. Run `codex unarchive {thread_id}` to unarchive it first."
@@ -6044,6 +6049,7 @@ async fn remote_resume_current_cwd_rejection_snapshot() -> Result<()> {
             crate::resume_picker::SessionTarget {
                 path: None,
                 thread_id: ThreadId::new(),
+                history_mode: None,
             },
         )
         .await?;
@@ -6086,6 +6092,7 @@ async fn remote_exec_resume_current_cwd_is_rejected() -> Result<()> {
             crate::resume_picker::SessionTarget {
                 path: None,
                 thread_id: ThreadId::new(),
+                history_mode: None,
             },
         )
         .await?;
@@ -6123,6 +6130,7 @@ async fn in_app_resume_session_cwd_without_metadata_is_non_fatal() -> Result<()>
             crate::resume_picker::SessionTarget {
                 path: None,
                 thread_id: ThreadId::new(),
+                history_mode: None,
             },
         )
         .await?;
@@ -6185,6 +6193,7 @@ async fn remote_resume_keeps_server_only_cwd_out_of_local_config() -> Result<()>
             crate::resume_picker::SessionTarget {
                 path: Some(rollout_path),
                 thread_id: ThreadId::from_string(&thread_id)?,
+                history_mode: None,
             },
         )
         .await?;
@@ -6303,6 +6312,7 @@ async fn in_app_resume_uses_configured_or_explicit_cwd() -> Result<()> {
                 crate::resume_picker::SessionTarget {
                     path: Some(rollout_path),
                     thread_id,
+                    history_mode: None,
                 },
             )
             .await?;
@@ -6415,6 +6425,7 @@ async fn remembered_current_cwd_stays_at_launch_across_in_app_resumes() -> Resul
         targets.push(crate::resume_picker::SessionTarget {
             path: Some(rollout_path),
             thread_id: ThreadId::from_string(&thread_id)?,
+            history_mode: None,
         });
     }
     let state_db =
