@@ -522,7 +522,7 @@ async fn load_config_resolves_non_prefixed_mcp_tool_servers() -> std::io::Result
 
         assert_eq!(config.non_prefixed_mcp_tool_servers, expected_servers);
         assert_eq!(config.prefix_mcp_tool_names(), expected_prefix);
-        let plugins_manager = plugins_manager_for_config(&config);
+        let plugins_manager = plugins_manager_for_config(&config, /*auth_mode*/ None);
         let mcp_config = config.to_mcp_config(&plugins_manager).await;
         assert_eq!(mcp_config.prefix_mcp_tool_names, expected_prefix);
         assert_eq!(
@@ -5185,7 +5185,7 @@ async fn rebuild_preserving_session_layers_refreshes_plugin_derived_mcp_config()
     let config = thread_config
         .rebuild_preserving_session_layers(&refreshed_config)
         .await?;
-    let plugins_manager = plugins_manager_for_config(&config);
+    let plugins_manager = plugins_manager_for_config(&config, /*auth_mode*/ None);
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     let configured_servers = mcp_config.mcp_server_catalog.configured_servers();
 
@@ -5247,7 +5247,7 @@ enabled = true
         .codex_home(codex_home.path().to_path_buf())
         .build()
         .await?;
-    let plugins_manager = plugins_manager_for_config(&config);
+    let plugins_manager = plugins_manager_for_config(&config, /*auth_mode*/ None);
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     let configured_servers = mcp_config.mcp_server_catalog.configured_servers();
 
@@ -5315,7 +5315,7 @@ url = "https://sample.example/mcp"
         )
         .build()
         .await?;
-    let plugins_manager = plugins_manager_for_config(&config);
+    let plugins_manager = plugins_manager_for_config(&config, /*auth_mode*/ None);
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     let configured_servers = mcp_config.mcp_server_catalog.configured_servers();
 
@@ -5417,7 +5417,7 @@ enabled = true
         )
         .build()
         .await?;
-    let plugins_manager = plugins_manager_for_config(&config);
+    let plugins_manager = plugins_manager_for_config(&config, /*auth_mode*/ None);
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     let configured_servers = mcp_config.mcp_server_catalog.configured_servers();
 
@@ -6434,7 +6434,7 @@ async fn to_mcp_config_preserves_apps_feature_from_config() -> std::io::Result<(
         codex_home.abs(),
     )
     .await?;
-    let plugins_manager = plugins_manager_for_config(&config);
+    let plugins_manager = plugins_manager_for_config(&config, /*auth_mode*/ None);
 
     config.apps_mcp_product_sku = Some("tpp".to_string());
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
@@ -6461,7 +6461,7 @@ async fn to_mcp_config_flows_mcp_tool_prefix_from_feature() -> std::io::Result<(
         codex_home.abs(),
     )
     .await?;
-    let plugins_manager = plugins_manager_for_config(&config);
+    let plugins_manager = plugins_manager_for_config(&config, /*auth_mode*/ None);
 
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert!(mcp_config.prefix_mcp_tool_names);
@@ -6497,7 +6497,7 @@ async fn to_mcp_config_flows_mcp_2026_feature_from_config() -> std::io::Result<(
         codex_home.abs(),
     )
     .await?;
-    let plugins_manager = plugins_manager_for_config(&config);
+    let plugins_manager = plugins_manager_for_config(&config, /*auth_mode*/ None);
 
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert_eq!(mcp_config.protocol_mode, codex_mcp::McpProtocolMode::Legacy);
@@ -6521,7 +6521,7 @@ async fn to_mcp_config_preserves_auth_elicitation_feature_from_config() -> std::
         codex_home.abs(),
     )
     .await?;
-    let plugins_manager = plugins_manager_for_config(&config);
+    let plugins_manager = plugins_manager_for_config(&config, /*auth_mode*/ None);
 
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert_eq!(
