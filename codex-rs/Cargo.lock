@@ -2452,6 +2452,7 @@ dependencies = [
  "http 1.4.0",
  "rand 0.9.3",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2755,6 +2756,7 @@ dependencies = [
  "codex-app-server-protocol",
  "codex-apply-patch",
  "codex-async-utils",
+ "codex-client",
  "codex-code-mode",
  "codex-config",
  "codex-connectors",
