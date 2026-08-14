@@ -189,6 +189,13 @@ Example with notification opt-out:
 - `thread/goal/clear` — clear the current persisted goal for a materialized thread; returns whether a goal was removed and emits `thread/goal/cleared` when state changes.
 - `thread/goal/updated` — notification emitted whenever a thread goal changes; includes the full current goal.
 - `thread/goal/cleared` — notification emitted whenever a thread goal is removed.
+- `thread/queue/add` — experimental; persist a user turn for automatic FIFO submission when the thread next becomes idle.
+- `thread/queue/list` — experimental; return one page of a thread's queued turns.
+- `thread/queue/update` — experimental; edit a queued turn while preserving its stable submission ID, client message ID, and position.
+- `thread/queue/delete` — experimental; remove a queued turn by submission ID.
+- `thread/queue/reorder` — experimental; replace the order of a thread's queued turns.
+- `thread/queue/start` — experimental; start the queue head or a selected queued submission when the thread is idle.
+- `thread/queue/changed` — experimental notification emitted with the changed `threadId`.
 - `thread/settings/updated` — experimental notification emitted to subscribed clients when a loaded thread’s effective next-turn settings change; includes `threadId` and the full `threadSettings`.
 - `thread/status/changed` — notification emitted when a loaded thread’s status changes (`threadId` + new `status`).
 - `thread/archive` — move a thread’s rollout file into the archived directory and attempt to move any spawned descendant thread rollout files; returns `{}` on success and emits `thread/archived` for each archived thread.
@@ -234,7 +241,7 @@ Example with notification opt-out:
 - `fs/watch` — subscribe this connection to filesystem change notifications for an absolute file or directory path and caller-provided `watchId`; returns the canonicalized `path`.
 - `fs/unwatch` — stop sending notifications for a prior `fs/watch`; returns `{}`.
 - `fs/changed` — notification emitted when watched paths change, including the `watchId` and `changedPaths`.
-- `model/list` — list available models (set `includeHidden: true` to include entries with `hidden: true`), with model-advertised string reasoning effort options in the catalog's intended progression order, optional `modelSpecialty`, nullable `multiAgentVersion` (`disabled`, `v1`, or `v2`), `additionalSpeedTiers`, `serviceTiers`, optional `defaultServiceTier`, optional legacy `upgrade` model ids, optional `upgradeInfo` metadata (`model`, `upgradeCopy`, `modelLink`, `migrationMarkdown`), and optional `availabilityNux` metadata. Clients should preserve the `supportedReasoningEfforts` array order rather than deriving order from the effort names.
+- `model/list` — list available models (set `includeHidden: true` to include entries with `hidden: true`), with model-advertised string reasoning effort options in the catalog's intended progression order, optional `modelSpecialty`, nullable `multiAgentVersion` (`disabled`, `v1`, or `v2`), `additionalSpeedTiers`, `serviceTiers`, optional `defaultServiceTier`, optional legacy `upgrade` model ids, optional `upgradeInfo` metadata (`model`, `upgradeCopy`, `modelLink`, `migrationMarkdown`, nullable informational `retirementAt` Unix timestamp), and optional `availabilityNux` metadata. Clients should preserve the `supportedReasoningEfforts` array order rather than deriving order from the effort names.
 - `modelProvider/capabilities/read` — read provider-level capabilities for the currently configured model provider.
 - `experimentalFeature/list` — list feature flags with stage metadata (`beta`, `underDevelopment`, `stable`, etc.), enabled/default-enabled state, and cursor pagination. Pass `threadId` when showing feature state for an existing loaded thread so `enabled` is computed from that thread's refreshed config, including project-local config for the thread's cwd; if omitted, the server uses its default config resolution context. For non-beta flags, `displayName`/`description`/`announcement` are `null`.
 - `permissionProfile/list` — beta; list available permission profile ids with optional display `description` text and an `allowed` flag reflecting effective requirements, using cursor pagination. Pass `cwd` when the caller needs project-local `[permissions.<id>]` entries to be included in the current catalog view.
@@ -779,6 +786,30 @@ Use `thread/goal/clear` to remove the current goal.
 { "id": 30, "result": { "cleared": true } }
 { "method": "thread/goal/cleared", "params": { "threadId": "thr_123" } }
 ```
+
+### Example: Queue a follow-up user turn (experimental)
+
+Queued turns require `capabilities.experimentalApi = true`. Use `thread/queue/add` to persist a follow-up while a turn is running. Each thread can queue up to 100 messages, and the server starts the next queued turn when the thread becomes idle.
+
+A queued submission contains its user input and a required, client-provided `clientUserMessageId`. The server assigns a separate stable submission ID and preserves both IDs when the submission is edited. Application context and Responses API client metadata remain available on ordinary `turn/start`; queued submissions do not persist or replay those optional turn features.
+
+```json
+{ "method": "thread/queue/add", "id": 40, "params": {
+    "threadId": "thr_123",
+    "input": [{ "type": "text", "text": "Now fix the failing tests." }],
+    "clientUserMessageId": "019faba0-0000-7000-8000-000000000003"
+} }
+{ "id": 40, "result": { "queuedSubmission": {
+    "id": "019faba0-0000-7000-8000-000000000001",
+    "input": [{ "type": "text", "text": "Now fix the failing tests." }],
+    "clientUserMessageId": "019faba0-0000-7000-8000-000000000003"
+} } }
+{ "method": "thread/queue/changed", "params": { "threadId": "thr_123" } }
+```
+
+Use `thread/queue/list` to read the ordered queue. Pass optional `cursor` and `limit` values to request a page, and continue with the returned `nextCursor` until it is `null`. Each `thread/queue/changed` notification contains the changed `threadId`; fetch the current pages to refresh the queue. Update a queued turn by passing its `queuedSubmissionId` and replacement `input` to `thread/queue/update`; the submission keeps its IDs and position. Pass that ID to `thread/queue/delete` to remove it, or pass every queued ID in its new order as `queuedSubmissionIds` to `thread/queue/reorder`.
+
+Completed and failed turns automatically start the next queued submission. Interrupted turns leave the queue paused, including after `thread/resume`. Start the queue head with `thread/queue/start`, or select a queued submission by passing `queuedSubmissionId`. An idle thread starts a new turn and returns it; an active thread returns an invalid-request error and leaves the queue unchanged. The queued submission's client message ID remains stable, and its queue entry is removed when Core accepts the new turn. An ordinary `turn/start` does not consume queued submissions.
 
 ### Example: Archive a thread
 
