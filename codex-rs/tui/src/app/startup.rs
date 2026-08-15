@@ -576,6 +576,10 @@ See the Codex keymap documentation for supported actions and examples."
         let mut listen_for_app_server_events = true;
         let mut waiting_for_initial_session_configured = wait_for_initial_session_configured;
         let mut waiting_for_initial_session_header = true;
+        let mut clipboard_repair = crate::clipboard_repair::ClipboardRepairMonitor::new();
+        let mut clipboard_repair_tick =
+            tokio::time::interval(crate::clipboard_repair::POLL_INTERVAL);
+        clipboard_repair_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         #[cfg(not(debug_assertions))]
         let pre_loop_exit_reason = if let Some(latest_version) = upgrade_version {
@@ -611,6 +615,12 @@ See the Codex keymap documentation for supported actions and examples."
                     || (!waiting_for_initial_session_configured
                         && app.has_queued_startup_protected_request());
                 let control = select! {
+                    _ = clipboard_repair_tick.tick(), if clipboard_repair.is_enabled() => {
+                        clipboard_repair.poll(|| {
+                            crate::clipboard_repair::documents_from_history(&app.transcript_cells)
+                        });
+                        AppRunControl::Continue
+                    }
                     Some(event) = app_event_rx.recv() => {
                         let is_initial_session_header = matches!(
                             &event,
