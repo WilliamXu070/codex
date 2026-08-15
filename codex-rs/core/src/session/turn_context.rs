@@ -1,4 +1,5 @@
 use super::*;
+use crate::environment_selection::EnvironmentConfigOrigin;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::exec_policy::AllowPrefixRules;
 use crate::shell_snapshot::ShellSnapshotFile;
@@ -11,10 +12,11 @@ use codex_file_system::FileSystemSandboxContext;
 use codex_model_provider::SharedModelProvider;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
-use codex_protocol::capabilities::SelectedCapabilityRoot;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::openai_models::MODEL_SPECIALTY_CYBER;
 use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::protocol::EnvironmentConfig;
+use codex_protocol::protocol::EnvironmentConfigState;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::ThreadHistoryMode;
@@ -31,38 +33,45 @@ use tracing::instrument;
 
 pub(crate) type ShellSnapshotTask = Shared<BoxFuture<'static, Option<Arc<ShellSnapshotFile>>>>;
 
-/// Effective per-environment config; fields move here as executor config is migrated.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TurnEnvironmentConfig {
-    pub(crate) allow_login_shell: bool,
-    pub(crate) permission_profile: PermissionProfileSnapshot,
-    /// None preserves legacy executor roots; Some, including empty, is owner-installed.
-    pub(crate) selected_capability_roots: Option<Vec<SelectedCapabilityRoot>>,
-}
-
 #[derive(Clone)]
 pub(crate) struct TurnEnvironment {
     pub(crate) selection: TurnEnvironmentSelection,
+    pub(crate) config_origin: EnvironmentConfigOrigin,
     pub(crate) environment: Arc<Environment>,
     pub(crate) shell: Option<shell::Shell>,
-    pub(crate) config: TurnEnvironmentConfig,
     pub(crate) shell_snapshot: ShellSnapshotTask,
 }
 
 impl TurnEnvironment {
     pub(crate) fn new(
         selection: TurnEnvironmentSelection,
+        config_origin: EnvironmentConfigOrigin,
         environment: Arc<Environment>,
         shell: Option<shell::Shell>,
-        config: TurnEnvironmentConfig,
     ) -> Self {
+        debug_assert!(matches!(selection.config, EnvironmentConfigState::Ready(_)));
         Self {
             selection,
+            config_origin,
             environment,
             shell,
-            config,
             shell_snapshot: futures::future::ready(None).boxed().shared(),
         }
+    }
+
+    pub(crate) fn config(&self) -> &EnvironmentConfig {
+        let EnvironmentConfigState::Ready(config) = &self.selection.config else {
+            unreachable!("ready turn environments always carry resolved configuration")
+        };
+        config
+    }
+
+    #[cfg(test)]
+    pub(crate) fn config_mut(&mut self) -> &mut EnvironmentConfig {
+        let EnvironmentConfigState::Ready(config) = &mut self.selection.config else {
+            unreachable!("ready turn environments always carry resolved configuration")
+        };
+        config
     }
 
     pub(crate) fn shell_snapshot(&self, cwd: &AbsolutePathBuf) -> Option<AbsolutePathBuf> {
@@ -84,11 +93,11 @@ impl TurnEnvironment {
     }
 
     pub(crate) fn permission_profile(&self) -> &PermissionProfile {
-        self.config.permission_profile.permission_profile()
+        self.config().permission_profile.permission_profile()
     }
 
     pub(crate) fn active_permission_profile(&self) -> Option<ActivePermissionProfile> {
-        self.config.permission_profile.active_permission_profile()
+        self.config().permission_profile.active_permission_profile()
     }
 
     pub(crate) fn permission_profile_with_workspace_roots(&self) -> PermissionProfile {
@@ -103,7 +112,8 @@ impl TurnEnvironment {
     }
 
     pub(crate) fn selection(&self) -> TurnEnvironmentSelection {
-        self.selection.clone()
+        self.config_origin
+            .into_input_selection(self.selection.clone())
     }
 }
 
@@ -115,7 +125,8 @@ impl std::fmt::Debug for TurnEnvironment {
             .field("cwd", &self.selection.cwd)
             .field("workspace_roots", &self.selection.workspace_roots)
             .field("shell", &self.shell)
-            .field("config", &self.config)
+            .field("config", self.config())
+            .field("config_origin", &self.config_origin)
             .finish_non_exhaustive()
     }
 }
@@ -699,7 +710,7 @@ impl Session {
                     {
                         self.services
                             .turn_environments
-                            .update_environment_configs(&environment_config);
+                            .update_thread_config(&environment_config);
                     }
                     if mcp_inputs_changed {
                         self.mark_mcp_runtime_dirty();
