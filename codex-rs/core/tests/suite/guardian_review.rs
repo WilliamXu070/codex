@@ -597,6 +597,8 @@ async fn guardian_session_is_reused_for_consecutive_tool_reviews_without_prewarm
         permission_profile: PermissionProfileSnapshot::legacy(
             test.config.permissions.permission_profile().clone(),
         ),
+        shell_environment_policy: Default::default(),
+        exec_policy: None,
         selected_capability_roots: Vec::new(),
     };
     parent_environments

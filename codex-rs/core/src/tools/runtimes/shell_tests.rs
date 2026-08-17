@@ -27,6 +27,8 @@ async fn approval_key_uses_path_uri_and_includes_environment_id() {
                     permission_profile: PermissionProfileSnapshot::legacy(
                         PermissionProfile::read_only(),
                     ),
+                    shell_environment_policy: Default::default(),
+                    exec_policy: None,
                     selected_capability_roots: Vec::new(),
                 }),
             },

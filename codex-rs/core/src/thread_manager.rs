@@ -231,6 +231,8 @@ pub struct StartThreadOptions {
     pub environments: Option<Vec<TurnEnvironmentSelection>>,
     pub thread_extension_init: ExtensionDataInit,
     pub client_mcp_extensions: ClientMcpExtensions,
+    /// Thread ID reserved before startup so the caller can associate host-owned state with it.
+    pub reserved_thread_id: Option<ThreadId>,
 }
 
 impl StartThreadOptions {
@@ -248,6 +250,7 @@ impl StartThreadOptions {
             environments: None,
             thread_extension_init: ExtensionDataInit::default(),
             client_mcp_extensions: ClientMcpExtensions::default(),
+            reserved_thread_id: None,
         }
     }
 }
@@ -891,6 +894,11 @@ impl ThreadManager {
         Box::pin(self.start_thread_inner(options, /*forked_from_thread_id*/ None)).await
     }
 
+    /// Allocates a thread ID before startup so a caller can associate host-owned state with it.
+    pub fn reserve_thread_id(&self) -> ThreadId {
+        self.state.thread_id_generator.as_ref()()
+    }
+
     async fn start_thread_inner(
         &self,
         mut options: StartThreadOptions,
@@ -1151,6 +1159,7 @@ impl ThreadManager {
             thread_source,
             parent_trace,
             ClientMcpExtensions::default(),
+            /*reserved_thread_id*/ None,
         )
         .await
     }
@@ -1174,6 +1183,7 @@ impl ThreadManager {
     }
 
     /// Fork an existing thread from already-loaded store history.
+    #[allow(clippy::too_many_arguments)]
     pub async fn fork_thread_from_history<S>(
         &self,
         snapshot: S,
@@ -1182,6 +1192,7 @@ impl ThreadManager {
         thread_source: Option<ThreadSource>,
         parent_trace: Option<W3cTraceContext>,
         client_mcp_extensions: ClientMcpExtensions,
+        reserved_thread_id: Option<ThreadId>,
     ) -> CodexResult<NewThread>
     where
         S: Into<ForkSnapshot>,
@@ -1196,6 +1207,7 @@ impl ThreadManager {
             thread_source,
             parent_trace,
             client_mcp_extensions,
+            reserved_thread_id,
         )
         .await
     }
@@ -1208,6 +1220,7 @@ impl ThreadManager {
         thread_source: Option<ThreadSource>,
         parent_trace: Option<W3cTraceContext>,
         client_mcp_extensions: ClientMcpExtensions,
+        reserved_thread_id: Option<ThreadId>,
     ) -> CodexResult<NewThread> {
         let history = InitialHistory::Resumed(ResumedHistory {
             conversation_id: prepared.source_thread_id,
@@ -1229,6 +1242,7 @@ impl ThreadManager {
                 thread_source,
                 parent_trace,
                 client_mcp_extensions,
+                reserved_thread_id,
             )
             .await;
         drop(prepared);
@@ -1242,6 +1256,7 @@ impl ThreadManager {
         thread_source: Option<ThreadSource>,
         parent_trace: Option<W3cTraceContext>,
         client_mcp_extensions: ClientMcpExtensions,
+        reserved_thread_id: Option<ThreadId>,
     ) -> CodexResult<NewThread> {
         let ForkHistory {
             snapshot,
@@ -1274,6 +1289,7 @@ impl ThreadManager {
             thread_source,
             parent_trace,
             client_mcp_extensions,
+            reserved_thread_id,
             ..StartThreadOptions::new(config)
         };
         let mut request =
@@ -1755,6 +1771,7 @@ impl ThreadManagerState {
             environments,
             thread_extension_init,
             client_mcp_extensions,
+            reserved_thread_id,
         } = options;
         let session_source = session_source.unwrap_or_else(|| self.session_source.clone());
         let environments = environments.unwrap_or_else(|| {
@@ -1765,6 +1782,11 @@ impl ThreadManagerState {
             )
         });
         let is_resumed_thread = matches!(&initial_history, InitialHistory::Resumed(_));
+        if reserved_thread_id.is_some() && matches!(&initial_history, InitialHistory::Resumed(_)) {
+            return Err(CodexErr::InvalidRequest(
+                "reserved thread ID cannot be used when resuming a thread".to_string(),
+            ));
+        }
         if let InitialHistory::Resumed(resumed) = &initial_history {
             let mut threads = self.threads.write().await;
             if let Some(thread) = threads.get(&resumed.conversation_id).cloned() {
@@ -1851,6 +1873,7 @@ impl ThreadManagerState {
             environment_selections: environments,
             thread_extension_init,
             client_mcp_extensions,
+            reserved_thread_id,
             analytics_events_client: self.analytics_events_client.clone(),
             thread_store: Arc::clone(&self.thread_store),
             attestation_provider: self.attestation_provider.clone(),

@@ -280,6 +280,7 @@ pub(crate) enum AppEvent {
     SyncThreadGitBranch {
         thread_id: ThreadId,
         branch: String,
+        cwd: PathBuf,
     },
 
     /// Fetch a persistent cross-session message history entry by offset.
@@ -299,6 +300,12 @@ pub(crate) enum AppEvent {
     /// Start a new session, optionally assigning it a name.
     NewSession {
         name: Option<String>,
+    },
+
+    /// Change the working directory of the originating idle primary thread.
+    ChangeWorkingDirectory {
+        thread_id: ThreadId,
+        requested_cwd: PathBuf,
     },
 
     /// Result of the fresh startup thread that is attached after the input UI is live.
@@ -516,7 +523,7 @@ pub(crate) enum AppEvent {
     },
 
     /// Result of computing a `/diff` command.
-    DiffResult(String),
+    DiffResult(PathBuf, String),
 
     /// Open the app link view in the bottom pane.
     OpenAppLink {
@@ -760,6 +767,7 @@ pub(crate) enum AppEvent {
 
     /// Result of refreshing plugin mention bindings.
     PluginMentionsLoaded {
+        cwd: PathBuf,
         plugins: Option<Vec<PluginCapabilitySummary>>,
     },
 
@@ -790,6 +798,7 @@ pub(crate) enum AppEvent {
     /// command path because those callers expect the visible skill state to be current when their command
     /// completes.
     SkillsListLoaded {
+        cwd: PathBuf,
         result: Result<SkillsListResponse, String>,
     },
 
