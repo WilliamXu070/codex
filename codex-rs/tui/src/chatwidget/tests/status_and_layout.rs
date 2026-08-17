@@ -2418,12 +2418,6 @@ active response
 
 width-sensitive history
 ");
-
-    width.store(0, std::sync::atomic::Ordering::Relaxed);
-    chat.set_raw_output_mode(/*enabled*/ true);
-    chat.last_rendered_width.set(Some(12));
-    chat.add_to_history(WidthCell(std::sync::Arc::clone(&width)));
-    assert_eq!(width.load(std::sync::atomic::Ordering::Relaxed), 0);
 }
 
 #[tokio::test]

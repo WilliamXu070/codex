@@ -176,7 +176,6 @@ impl SlashCommand {
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
                 | SlashCommand::Export
-                | SlashCommand::Raw
                 | SlashCommand::Cd
                 | SlashCommand::Pwd
                 | SlashCommand::Usage
