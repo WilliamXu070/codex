@@ -48,6 +48,9 @@ pub enum SlashCommand {
     Diff,
     Mention,
     Status,
+    Cd,
+    #[strum(to_string = "pwd", serialize = "cwd")]
+    Pwd,
     Usage,
     Sound,
     #[strum(to_string = "transcribe", serialize = "transcribe-command")]
@@ -106,6 +109,8 @@ impl SlashCommand {
             SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
             SlashCommand::Hooks => "view and manage lifecycle hooks",
             SlashCommand::Status => "show current session configuration and token usage",
+            SlashCommand::Cd => "change the current working directory",
+            SlashCommand::Pwd => "show the current working directory",
             SlashCommand::Usage => "view account usage or use a usage limit reset",
             SlashCommand::Sound => "configure Codex sounds",
             SlashCommand::TranscribeCommand => {
@@ -171,6 +176,8 @@ impl SlashCommand {
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
                 | SlashCommand::Export
+                | SlashCommand::Cd
+                | SlashCommand::Pwd
                 | SlashCommand::Usage
                 | SlashCommand::Pets
                 | SlashCommand::Side
@@ -190,6 +197,7 @@ impl SlashCommand {
                 | SlashCommand::Diff
                 | SlashCommand::Mention
                 | SlashCommand::Status
+                | SlashCommand::Pwd
                 | SlashCommand::Usage
                 | SlashCommand::Ide
         )
@@ -213,6 +221,7 @@ impl SlashCommand {
             | SlashCommand::Import
             | SlashCommand::Review
             | SlashCommand::Plan
+            | SlashCommand::Cd
             | SlashCommand::Clear
             | SlashCommand::Logout
             | SlashCommand::MemoryDrop
@@ -229,6 +238,7 @@ impl SlashCommand {
             | SlashCommand::Skills
             | SlashCommand::Hooks
             | SlashCommand::Status
+            | SlashCommand::Pwd
             | SlashCommand::Usage
             | SlashCommand::Sound
             | SlashCommand::TranscribeCommand
