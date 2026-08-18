@@ -1368,6 +1368,15 @@
         }
       ]
     },
+    "CliAuthCredentialsStoreMode": {
+      "enum": [
+        "file",
+        "keyring",
+        "auto",
+        "ephemeral"
+      ],
+      "type": "string"
+    },
     "ClientInfo": {
       "properties": {
         "name": {
@@ -5040,10 +5049,26 @@
             }
           ]
         },
+        "chatgptBaseUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "checkForUpdateOnStartup": {
           "type": [
             "boolean",
             "null"
+          ]
+        },
+        "cliAuthCredentialsStore": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CliAuthCredentialsStoreMode"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "computerUse": {
@@ -9500,6 +9525,13 @@
     "McpResourceReadParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
+        "originCallId": {
+          "description": "Originating MCP tool call used to select the resource's app.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "server": {
           "type": "string"
         },
@@ -9528,6 +9560,13 @@
             "$ref": "#/definitions/ResourceContent"
           },
           "type": "array"
+        },
+        "originCallId": {
+          "description": "Originating call when the server applied app-specific resource scoping.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -15041,6 +15080,26 @@
           "properties": {
             "method": {
               "enum": [
+                "autoApprovalReview/strictReviewRequired"
+              ],
+              "title": "AutoApprovalReview/strictReviewRequiredNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/StrictReviewRequiredNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "AutoApprovalReview/strictReviewRequiredNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "item/completed"
               ],
               "title": "Item/completedNotificationMethod",
@@ -16490,6 +16549,29 @@
         "resetsAt",
         "used"
       ],
+      "type": "object"
+    },
+    "StrictReviewRequiredNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "startedAtMs": {
+          "description": "Unix timestamp (in milliseconds) when this review started.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "startedAtMs",
+        "threadId",
+        "turnId"
+      ],
+      "title": "StrictReviewRequiredNotification",
       "type": "object"
     },
     "SubAgentActivityKind": {
