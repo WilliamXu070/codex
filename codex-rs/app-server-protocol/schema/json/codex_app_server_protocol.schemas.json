@@ -4901,6 +4901,26 @@
           "properties": {
             "method": {
               "enum": [
+                "autoApprovalReview/strictReviewRequired"
+              ],
+              "title": "AutoApprovalReview/strictReviewRequiredNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/StrictReviewRequiredNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "AutoApprovalReview/strictReviewRequiredNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "item/completed"
               ],
               "title": "Item/completedNotificationMethod",
@@ -7603,6 +7623,15 @@
           }
         ]
       },
+      "CliAuthCredentialsStoreMode": {
+        "enum": [
+          "file",
+          "keyring",
+          "auto",
+          "ephemeral"
+        ],
+        "type": "string"
+      },
       "CodexErrorInfo": {
         "description": "This translation layer make sure that we expose codex error code in camel case.\n\nWhen an upstream HTTP status is available (for example, from the Responses API or a provider), it is forwarded in `httpStatusCode` on the relevant `codexErrorInfo` variant.",
         "oneOf": [
@@ -8962,10 +8991,26 @@
               }
             ]
           },
+          "chatgptBaseUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "checkForUpdateOnStartup": {
             "type": [
               "boolean",
               "null"
+            ]
+          },
+          "cliAuthCredentialsStore": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/v2/CliAuthCredentialsStoreMode"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "computerUse": {
@@ -13250,6 +13295,13 @@
       "McpResourceReadParams": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
+          "originCallId": {
+            "description": "Originating MCP tool call used to select the resource's app.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "server": {
             "type": "string"
           },
@@ -13278,6 +13330,13 @@
               "$ref": "#/definitions/v2/ResourceContent"
             },
             "type": "array"
+          },
+          "originCallId": {
+            "description": "Originating call when the server applied app-specific resource scoping.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -18738,6 +18797,29 @@
           "resetsAt",
           "used"
         ],
+        "type": "object"
+      },
+      "StrictReviewRequiredNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "startedAtMs": {
+            "description": "Unix timestamp (in milliseconds) when this review started.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "startedAtMs",
+          "threadId",
+          "turnId"
+        ],
+        "title": "StrictReviewRequiredNotification",
         "type": "object"
       },
       "SubAgentActivityKind": {
