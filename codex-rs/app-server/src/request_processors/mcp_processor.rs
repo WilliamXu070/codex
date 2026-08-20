@@ -1,7 +1,7 @@
 use super::*;
 use codex_core::McpManager;
-use codex_mcp::ReadResourceRequestParams;
 use codex_mcp::McpServerSource;
+use codex_mcp::ReadResourceRequestParams;
 use codex_rmcp_client::StreamableHttpRedirectMode;
 
 const MCP_TOOL_THREAD_ID_META_KEY: &str = "threadId";
