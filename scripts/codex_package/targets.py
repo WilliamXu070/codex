@@ -1,13 +1,14 @@
 """Supported package targets and default binary discovery."""
 
+import os
 import platform
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-
-SCRIPT_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = SCRIPT_DIR.parent
+REPO_ROOT = Path(
+    os.environ.get("CODEX_REPO_ROOT", Path(__file__).resolve().parents[2])
+)
 
 
 @dataclass(frozen=True)

@@ -393,6 +393,14 @@ class WorkspaceVerificationTests(unittest.TestCase):
             timeout=900,
         )
 
+    def test_v8_resolver_imports_without_repository_root_environment(self) -> None:
+        environment = agent.codex_v8_build_environment(
+            SCRIPT.parents[1],
+            {"V8_FROM_SOURCE": "true"},
+        )
+
+        self.assertEqual(environment, {"V8_FROM_SOURCE": "true"})
+
 
 class ExecuteDeduplicationTests(unittest.TestCase):
     def make_args(self, source: Path, state: Path) -> argparse.Namespace:
