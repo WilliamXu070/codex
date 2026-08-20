@@ -46,10 +46,12 @@ CODE_MODE_HOST_ENTITLEMENTS = Path(
 V8_ENV_RESOLVER = textwrap.dedent(
     """\
     import json
+    import os
     import sys
     from pathlib import Path
 
     workspace = Path(sys.argv[1]).resolve()
+    os.environ["CODEX_REPO_ROOT"] = str(workspace)
     sys.path.insert(0, str(workspace / "scripts"))
 
     from codex_package.targets import TARGET_SPECS, default_target
