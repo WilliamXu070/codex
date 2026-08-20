@@ -393,7 +393,7 @@ class WorkspaceVerificationTests(unittest.TestCase):
             timeout=900,
         )
 
-    def test_v8_resolver_sets_repository_root_for_package_imports(self) -> None:
+    def test_v8_resolver_imports_without_repository_root_environment(self) -> None:
         environment = agent.codex_v8_build_environment(
             SCRIPT.parents[1],
             {"V8_FROM_SOURCE": "true"},
