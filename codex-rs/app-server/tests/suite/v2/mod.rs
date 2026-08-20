@@ -12,6 +12,7 @@ mod collaboration_mode_list;
 #[cfg(unix)]
 mod command_exec;
 mod compaction;
+mod config_requirements_in_app_browser;
 mod config_rpc;
 mod connection_handling_websocket;
 #[cfg(unix)]
@@ -32,6 +33,7 @@ mod experimental_api;
 mod experimental_feature_list;
 mod external_agent_config;
 mod external_agent_import_sync;
+mod feedback;
 mod fs;
 mod git_attribution;
 mod guardian_v2;
@@ -75,6 +77,7 @@ mod remote_thread_store;
 mod request_permissions;
 mod request_user_input;
 mod request_validation;
+mod residency;
 mod review;
 mod rollout_migration;
 mod safety_check_downgrade;

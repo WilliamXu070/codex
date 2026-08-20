@@ -2060,6 +2060,7 @@ fn config_requirements_granular_allowed_approval_policy_is_marked_experimental()
             allow_remote_control: None,
             computer_use: None,
             browser_use: None,
+            in_app_browser: None,
             feature_requirements: None,
             hooks: None,
             enforce_residency: None,
@@ -2942,6 +2943,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
         ],
         phase: None,
         memory_citation: None,
+        delivery: None,
     });
 
     assert_eq!(
@@ -2951,6 +2953,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
             text: "Hello world".to_string(),
             phase: None,
             memory_citation: None,
+            delivery: None,
         }
     );
 
@@ -2969,6 +2972,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
             }],
             rollout_ids: vec!["rollout-1".to_string()],
         }),
+        delivery: None,
     });
 
     assert_eq!(
@@ -2986,6 +2990,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
                 }],
                 thread_ids: vec!["rollout-1".to_string()],
             }),
+            delivery: None,
         }
     );
 

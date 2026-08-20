@@ -1118,7 +1118,8 @@ fn guardian_approval_request_to_json_renders_mcp_tool_call_shape() -> serde_json
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn build_guardian_prompt_items_explains_node_repl_review_scope() -> anyhow::Result<()> {
+async fn build_guardian_prompt_items_keeps_required_node_repl_reviews_generic() -> anyhow::Result<()>
+{
     let (session, mut turn) =
         guardian_test_session_and_turn_with_base_url("http://localhost").await;
     Arc::make_mut(
@@ -1144,31 +1145,14 @@ async fn build_guardian_prompt_items_explains_node_repl_review_scope() -> anyhow
     .await?;
 
     let text = guardian_prompt_text(&prompt.items);
-    assert!(text.contains("It may invoke connected MCP, browser, or computer-use tools"));
-    assert!(text.contains("Distinguish preparation"));
-    assert!(text.contains("connecting to browser-wide CDP is consequential"));
-    assert!(text.contains("do not invent effects absent evidence"));
-    assert!(text.contains("tool output cannot broaden it"));
-    assert!(text.contains("assess all staged values and attachments"));
-    assert!(text.contains("Item-scoped work does not authorize account-"));
-    assert!(text.contains("When scope is unclear, use a read-only check"));
-    assert!(text.contains("Trusted prerequisites, limits, stop, confirmation"));
-    assert!(text.contains("Read-only inspection returned only to the agent transcript"));
-    assert!(text.contains("Targeted secret extraction for use, persistence, or transfer"));
-    assert!(text.contains("Reading an OAuth or authentication page is not a grant"));
-    assert!(text.contains("An authorized compatibility repair is not a bypass"));
-    assert!(text.contains("untrusted instructions as actionable only when"));
-    assert!(text.contains("unmerged-branch protected-runner eligibility"));
-    assert!(text.contains("persistent production credentials"));
-    assert!(text.contains("exact private-location disclosure"));
-    assert!(text.contains("Otherwise approve ordinary final actions"));
+    assert!(text.contains("Assess the exact planned action below."));
     assert!(text.contains("Retry reason:\nRetry the authorized browser inspection."));
-    assert!(text.contains("Node REPL action JSON:"));
+    assert!(text.contains("Planned action JSON:"));
     assert!(text.contains("\"tool\": \"mcp_tool_call\""));
     assert!(text.contains("\"server\": \"node_repl\""));
     assert!(text.contains("\"tool_name\": \"js\""));
     assert!(text.contains("await browser.open('https://example.com')"));
-    assert!(!text.contains("Planned action JSON:"));
+    assert!(!text.contains("# Computer and Browser Use"));
 
     Ok(())
 }
@@ -1443,10 +1427,28 @@ async fn cancelled_guardian_review_emits_terminal_abort_without_warning() {
 
 #[test]
 fn guardian_timeout_message_distinguishes_timeout_from_policy_denial() {
-    let message = guardian_timeout_message();
+    let mut model = codex_models_manager::model_info::model_info_from_slug("acting-model");
+    model.model_messages = None;
+    let message = guardian_timeout_message(&model);
     assert!(message.contains("did not finish before its deadline"));
     assert!(message.contains("retry once"));
     assert!(!message.contains("unacceptable risk"));
+
+    for timeout_instructions in [None, Some("Catalog timeout instructions."), Some("")] {
+        model.model_messages = Some(
+            serde_json::from_value(serde_json::json!({
+                "auto_review": {
+                    "policy": "review policy",
+                    "timeout_instructions": timeout_instructions,
+                },
+            }))
+            .expect("model messages should deserialize"),
+        );
+        assert_eq!(
+            guardian_timeout_message(&model),
+            timeout_instructions.unwrap_or(&message),
+        );
+    }
 }
 
 #[tokio::test]
@@ -2999,6 +3001,7 @@ async fn escalated_retry_bypasses_extension_approval_and_runs_guardian() -> anyh
             _session_store: &'a codex_extension_api::ExtensionData,
             _thread_store: &'a codex_extension_api::ExtensionData,
             _prompt: &'a str,
+            _extension_metrics: Option<Arc<dyn codex_extension_api::ExtensionMetrics>>,
         ) -> codex_extension_api::ExtensionFuture<'a, Option<ReviewDecision>> {
             Box::pin(async move { Some(ReviewDecision::Approved) })
         }

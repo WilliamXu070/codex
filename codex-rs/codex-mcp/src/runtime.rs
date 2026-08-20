@@ -462,9 +462,18 @@ impl McpRuntime {
         tool: &str,
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
+        requested_timeout: Option<Duration>,
+        wait_for_server: bool,
     ) -> anyhow::Result<CallToolResult> {
         self.latest_connections()
-            .call_tool(server, tool, arguments, meta)
+            .call_tool(
+                server,
+                tool,
+                arguments,
+                meta,
+                requested_timeout,
+                wait_for_server,
+            )
             .await
     }
 
@@ -532,6 +541,12 @@ pub fn apply_http_headers_helper(
     config: &codex_config::McpServerConfig,
     local_process_cwd: PathBuf,
 ) -> Result<Arc<dyn HttpClient>, String> {
+    if matches!(
+        config.disabled_reason,
+        Some(McpServerDisabledReason::Requirements { .. })
+    ) {
+        return Err("the MCP server is disabled by managed requirements".to_string());
+    }
     let codex_config::McpServerTransportConfig::StreamableHttp {
         url,
         http_headers_helper: Some(command),
@@ -540,12 +555,6 @@ pub fn apply_http_headers_helper(
     else {
         return Ok(client);
     };
-    if matches!(
-        config.disabled_reason,
-        Some(McpServerDisabledReason::Requirements { .. })
-    ) {
-        return Err("the MCP server is disabled by managed requirements".to_string());
-    }
     if !config.is_local_environment() {
         return Err("HTTP headers helpers can only run in the local environment".to_string());
     }
