@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -392,6 +393,22 @@ class WorkspaceVerificationTests(unittest.TestCase):
             env={"CARGO_INCREMENTAL": "0"},
             timeout=900,
         )
+
+    def test_v8_resolver_sets_repository_root_before_imports(self) -> None:
+        workspace = Path(agent.__file__).resolve().parent.parent
+        environment = {**os.environ, "V8_FROM_SOURCE": "1"}
+        environment.pop("CODEX_REPO_ROOT", None)
+
+        completed = subprocess.run(
+            [sys.executable, "-c", agent.V8_ENV_RESOLVER, str(workspace)],
+            cwd=workspace,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+        self.assertEqual(json.loads(completed.stdout), {})
 
 
 class ExecuteDeduplicationTests(unittest.TestCase):
