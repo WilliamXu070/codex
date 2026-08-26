@@ -231,7 +231,10 @@ pub async fn test_env() -> Result<TestEnv> {
                 .get_filesystem()
                 .create_directory(
                     &cwd_uri,
-                    CreateDirectoryOptions { recursive: true },
+                    CreateDirectoryOptions {
+                        recursive: true,
+                        follow_symlinks: true,
+                    },
                     /*sandbox*/ None,
                 )
                 .await?;
@@ -305,7 +308,7 @@ fn docker_command_capture_stdout<const N: usize>(args: [&str; N]) -> Result<Stri
 /// Non-default apply_patch model output shapes used by compatibility tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ApplyPatchModelOutput {
-    ShellCommandViaHeredoc,
+    ExecCommandViaHeredoc,
 }
 
 /// Returns the permission fields required by test thread-settings overrides.
@@ -491,12 +494,21 @@ impl TestCodexBuilder {
         &mut self,
         server: &wiremock::MockServer,
     ) -> anyhow::Result<TestCodex> {
+        let test_env = test_env().await?;
+        self.build_with_environment(server, test_env).await
+    }
+
+    /// Builds a test runtime using an explicitly selected execution environment.
+    pub async fn build_with_environment(
+        &mut self,
+        server: &wiremock::MockServer,
+        test_env: TestEnv,
+    ) -> anyhow::Result<TestCodex> {
         let home = match self.home.clone() {
             Some(home) => home,
             None => Arc::new(TempDir::new()?),
         };
         let base_url = format!("{}/v1", server.uri());
-        let test_env = test_env().await?;
         Box::pin(self.build_with_home_and_base_url(
             base_url, home, /*resume_from*/ None, test_env,
             /*include_local_environment*/ false,
@@ -1150,14 +1162,22 @@ impl TestCodexHarness {
                 .fs()
                 .create_directory(
                     &parent_uri,
-                    CreateDirectoryOptions { recursive: true },
+                    CreateDirectoryOptions {
+                        recursive: true,
+                        follow_symlinks: true,
+                    },
                     /*sandbox*/ None,
                 )
                 .await?;
         }
         self.test
             .fs()
-            .write_file(&path_uri, contents.as_ref().to_vec(), /*sandbox*/ None)
+            .write_file(
+                &path_uri,
+                contents.as_ref().to_vec(),
+                Default::default(),
+                /*sandbox*/ None,
+            )
             .await?;
         Ok(())
     }
@@ -1167,7 +1187,7 @@ impl TestCodexHarness {
         Ok(self
             .test
             .fs()
-            .read_file_text(&path_uri, /*sandbox*/ None)
+            .read_file_text(&path_uri, Default::default(), /*sandbox*/ None)
             .await?)
     }
 
@@ -1177,7 +1197,10 @@ impl TestCodexHarness {
             .fs()
             .create_directory(
                 &path_uri,
-                CreateDirectoryOptions { recursive: true },
+                CreateDirectoryOptions {
+                    recursive: true,
+                    follow_symlinks: true,
+                },
                 /*sandbox*/ None,
             )
             .await?;
@@ -1198,6 +1221,7 @@ impl TestCodexHarness {
                 RemoveOptions {
                     recursive: false,
                     force: true,
+                    follow_symlinks: true,
                 },
                 /*sandbox*/ None,
             )
@@ -1214,7 +1238,7 @@ impl TestCodexHarness {
         match self
             .test
             .fs()
-            .get_metadata(path_uri, /*sandbox*/ None)
+            .get_metadata(path_uri, Default::default(), /*sandbox*/ None)
             .await
         {
             Ok(_) => Ok(true),
