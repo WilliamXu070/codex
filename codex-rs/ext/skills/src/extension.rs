@@ -18,6 +18,7 @@ use codex_extension_api::ExtensionMetrics;
 use codex_extension_api::ExtensionRegistryBuilder;
 use codex_extension_api::ExtensionWarning;
 use codex_extension_api::PromptFragment;
+use codex_extension_api::SelectedPluginSnapshot;
 use codex_extension_api::SkillInvocationContributor;
 use codex_extension_api::SkillInvocationInput;
 use codex_extension_api::SkillInvocationKind;
@@ -66,6 +67,7 @@ use crate::state::HostSkillsStepState;
 use crate::state::SkillsSessionState;
 use crate::state::SkillsThreadState;
 use crate::state::SkillsTurnState;
+use crate::telemetry::SkillTelemetry;
 use crate::tools::SkillAnalytics;
 use crate::tools::SkillToolAuthority;
 use crate::tools::skill_tools;
@@ -235,7 +237,9 @@ where
             }
             rendered
                 .fragment
-                .map(|fragment| PromptFragment::developer_capability(fragment.render()))
+                .map(|fragment| {
+                    PromptFragment::developer_capability(fragment.render(), fragment.content_kind())
+                })
                 .into_iter()
                 .collect()
         })
@@ -276,6 +280,7 @@ where
             session_store,
             thread_store,
             /*executor_query*/ None,
+            /*selected_plugins*/ None,
             /*sandbox_contexts*/ None,
         )
     }
@@ -310,6 +315,7 @@ where
             session_store,
             thread_store,
             executor_query,
+            step_store.get::<SelectedPluginSnapshot>(),
             step_store.get::<HashMap<String, FileSystemSandboxContext>>(),
         )
     }
@@ -319,6 +325,10 @@ impl<C> SkillInvocationContributor for SkillsExtension<C>
 where
     C: Send + Sync + 'static,
 {
+    fn requires_host_skill_discovery(&self) -> bool {
+        self.providers.has_host_provider()
+    }
+
     fn on_skill_invocation<'a>(
         &'a self,
         input: SkillInvocationInput<'a>,
@@ -550,23 +560,15 @@ impl<C> SkillsExtension<C> {
         session_store: &ExtensionData,
         thread_store: &ExtensionData,
         executor_query: Option<SkillListQuery>,
+        selected_plugins: Option<Arc<SelectedPluginSnapshot>>,
         sandbox_contexts: Option<Arc<HashMap<String, FileSystemSandboxContext>>>,
     ) -> Vec<Arc<dyn ToolExecutor<ToolCall>>> {
-        let Some(thread_state) = thread_store.get::<SkillsThreadState>() else {
-            return Vec::new();
-        };
-        let orchestrator_available = self.providers.has_orchestrator_provider()
-            && thread_state.orchestrator_skills_enabled();
-        if !orchestrator_available && executor_query.is_none() {
-            return Vec::new();
-        }
-
         skill_tools(
             self.providers.clone(),
             session_store,
             thread_store,
-            orchestrator_available,
             executor_query,
+            selected_plugins,
             sandbox_contexts,
             Arc::clone(&self.shadow_selection),
         )
@@ -669,6 +671,7 @@ pub fn install_with_providers_and_metrics<C>(
         shadow_selection: Arc::new(ShadowSelectionExperiment::new(metrics_client)),
     });
     registry.thread_lifecycle_contributor(extension.clone());
+    registry.turn_lifecycle_contributor(Arc::new(SkillTelemetry));
     registry.config_contributor(extension.clone());
     registry.prompt_contributor(extension.clone());
     registry.turn_input_contributor(extension.clone());

@@ -108,6 +108,18 @@ pub struct GuardianV2TranscriptConfigToml {
     pub max_recent_non_user_entries: Option<usize>,
 }
 
+/// Optional tool-call categories available to the Guardian v2 classifier.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GuardianV2ReviewScopeConfigToml {
+    /// Restrict asynchronous classification and fast approvals to browser and computer-use tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computer_use_only: Option<bool>,
+    /// Include sandboxed shell command calls in Guardian v2 classification.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandboxed_exec_commands: Option<bool>,
+}
+
 /// User-configurable prompt, approval, and context settings for Guardian v2.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -130,8 +142,12 @@ pub struct GuardianV2ConfigToml {
     #[schemars(range(min = 100, max = 100000))]
     pub max_classifier_instruction_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub reuse_parent_compaction: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 100, max = 100000))]
     pub max_parent_compaction_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_scope: Option<GuardianV2ReviewScopeConfigToml>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcript: Option<GuardianV2TranscriptConfigToml>,
 }
@@ -276,6 +292,9 @@ impl FeatureConfig for MultiAgentV2ConfigToml {
 pub struct TokenBudgetConfigToml {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// Whether to expose the built-in history and notes extension.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub use_history_notes_extension: Option<bool>,
     /// Number of tokens remaining before auto-compaction when the wrap-up reminder is emitted.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1))]
@@ -407,6 +426,8 @@ pub struct NetworkProxyConfigToml {
     pub unix_sockets: Option<BTreeMap<String, NetworkProxyUnixSocketPermissionToml>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allow_local_binding: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_broker: Option<bool>,
 }
 
 impl FeatureConfig for NetworkProxyConfigToml {

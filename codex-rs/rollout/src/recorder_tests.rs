@@ -6,6 +6,7 @@ use crate::RolloutItem;
 use crate::RolloutLine;
 use crate::config::RolloutConfig;
 use chrono::TimeZone;
+use codex_protocol::SanitizedGitUrl;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ResponseItem;
@@ -65,6 +66,7 @@ fn agent_message_item(message: &str) -> RolloutItem {
         message: message.to_string(),
         phase: None,
         memory_citation: None,
+        delivery: None,
     }))
 }
 
@@ -644,6 +646,7 @@ async fn recorder_materializes_on_flush_with_pending_items() -> std::io::Result<
                 message: "buffered-event".to_string(),
                 phase: None,
                 memory_citation: None,
+                delivery: None,
             },
         ))])
         .await?;
@@ -891,6 +894,7 @@ async fn persist_reports_filesystem_error_and_retries_buffered_items() -> std::i
                 message: "buffered-before-persist".to_string(),
                 phase: None,
                 memory_citation: None,
+                delivery: None,
             },
         ))])
         .await?;
@@ -942,6 +946,7 @@ async fn writer_state_retries_write_error_before_reporting_flush_success() -> st
             message: "queued-after-writer-error".to_string(),
             phase: None,
             memory_citation: None,
+            delivery: None,
         },
     ))]);
 
@@ -1467,7 +1472,9 @@ async fn list_threads_metadata_filter_overlays_state_db_list_metadata() -> std::
     builder.cwd = home.path().to_path_buf();
     builder.git_branch = Some("sqlite-branch".to_string());
     builder.git_sha = Some("sqlite-sha".to_string());
-    builder.git_origin_url = Some("https://example.com/repo.git".to_string());
+    builder.git_origin_url = Some(
+        SanitizedGitUrl::try_from("https://example.com/repo.git").expect("valid git remote URL"),
+    );
     let mut metadata = builder.build(config.model_provider_id.as_str());
     metadata.first_user_message = Some("Hello from user".to_string());
     metadata.preview = metadata.first_user_message.clone();
@@ -1517,7 +1524,10 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         cwd: None,
         git_branch: Some("filesystem-branch".to_string()),
         git_sha: Some("filesystem-sha".to_string()),
-        git_origin_url: Some("https://example.com/filesystem.git".to_string()),
+        git_origin_url: Some(
+            SanitizedGitUrl::try_from("https://example.com/filesystem.git")
+                .expect("valid git remote URL"),
+        ),
         source: None,
         history_mode: Default::default(),
         parent_thread_id: None,
@@ -1543,7 +1553,10 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         cwd: Some(PathBuf::from("/tmp/state-cwd")),
         git_branch: Some("state-branch".to_string()),
         git_sha: Some("state-sha".to_string()),
-        git_origin_url: Some("https://example.com/state.git".to_string()),
+        git_origin_url: Some(
+            SanitizedGitUrl::try_from("https://example.com/state.git")
+                .expect("valid git remote URL"),
+        ),
         source: Some(SessionSource::Exec),
         history_mode: Default::default(),
         parent_thread_id: None,
@@ -1714,6 +1727,7 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
             multi_agent_version: None,
             multi_agent_mode: None,
             realtime_active: None,
+            cyber_access_program: None,
             effort: None,
             summary: codex_protocol::config_types::ReasoningSummary::Auto,
         }),

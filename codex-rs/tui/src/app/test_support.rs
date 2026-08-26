@@ -49,7 +49,7 @@ pub(super) async fn make_test_app() -> App {
         transcribe_arm: None,
         transcribe_next_arm_id: 1,
         transcribe_capture: None,
-        commit_anim_running: Arc::new(AtomicBool::new(false)),
+        commit_animation: None,
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         skill_load_warnings: SkillLoadWarningState::default(),
@@ -63,6 +63,7 @@ pub(super) async fn make_test_app() -> App {
         pending_shutdown_exit_thread_id: None,
         windows_sandbox: WindowsSandboxState::default(),
         thread_event_channels: HashMap::new(),
+        temporary_structured_requests: HashMap::new(),
         thread_event_listener_tasks: HashMap::new(),
         agent_navigation: AgentNavigationState::default(),
         agents_overview: Default::default(),
@@ -75,12 +76,15 @@ pub(super) async fn make_test_app() -> App {
         primary_session_configured: None,
         pending_primary_events: VecDeque::new(),
         pending_app_server_requests: PendingAppServerRequests::default(),
+        dynamic_tool_status_updates: tokio::sync::broadcast::channel(/*capacity*/ 64).0,
+        dynamic_tool_tasks: HashMap::new(),
         pending_startup_thread_start: false,
         startup_protected_input_boundary: false,
         startup_pending_protected_request: false,
         rate_limit_hard_stop_generation: 0,
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
+        recap: recap::RecapState::default(),
     }
 }
 

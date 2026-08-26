@@ -4,11 +4,13 @@ use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use anyhow::Result;
 use codex_config::AppToolApproval;
 use codex_protocol::mcp::CallToolResult;
+use codex_protocol::models::PermissionProfile;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
 use rmcp::model::PaginatedRequestParams;
@@ -195,9 +197,10 @@ impl PreparedMcpCall {
         server_metadata: McpServerMetadata,
         plugin_id: Option<String>,
         selected_plugin_server: bool,
-    ) -> Self {
+    ) -> Option<Self> {
         let server_name = tool_info.server_name.clone();
-        Self {
+        config.permission_profile_for_server(&server_name)?;
+        Some(Self {
             _connections: connections,
             client,
             config,
@@ -208,7 +211,7 @@ impl PreparedMcpCall {
             server_metadata,
             plugin_id,
             selected_plugin_server,
-        }
+        })
     }
 
     pub fn tool_info(&self) -> &ToolInfo {
@@ -218,6 +221,15 @@ impl PreparedMcpCall {
     /// Returns the configuration and approval authority captured with this client.
     pub fn config(&self) -> &McpConfig {
         &self.config
+    }
+
+    /// Returns the owner permissions validated when this immutable call was prepared.
+    pub fn permission_profile(&self) -> &PermissionProfile {
+        let Some(permission_profile) = self.config.permission_profile_for_server(&self.server_name)
+        else {
+            unreachable!("prepared MCP calls retain their immutable permission authority");
+        };
+        permission_profile
     }
 
     pub fn server_name(&self) -> &str {
@@ -260,22 +272,34 @@ impl PreparedMcpCall {
         &self,
         arguments: Option<JsonValue>,
         meta: Option<JsonValue>,
+        timeout: Option<Duration>,
     ) -> Result<CallToolResult> {
-        self.call_with_preparation(|| async move { Ok((arguments, meta)) })
+        self.call_with_preparation(timeout, || async move { Ok((arguments, meta)) })
             .await
     }
 
     /// Runs irreversible call preparation and execution under the authority of
     /// this call's exact catalog revision and the extensions owned by the Codex session.
+    /// A caller-supplied timeout can further restrict the server's configured timeout.
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "catalog replacement must remain serialized with call preparation and execution"
     )]
-    pub async fn call_with_preparation<F, Fut>(&self, prepare: F) -> Result<CallToolResult>
+    pub async fn call_with_preparation<F, Fut>(
+        &self,
+        requested_timeout: Option<Duration>,
+        prepare: F,
+    ) -> Result<CallToolResult>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<(Option<JsonValue>, Option<JsonValue>)>>,
     {
+        let effective_timeout = match (self.client.tool_timeout, requested_timeout) {
+            (Some(server_timeout), Some(requested_timeout)) => {
+                Some(server_timeout.min(requested_timeout))
+            }
+            (server_timeout, requested_timeout) => server_timeout.or(requested_timeout),
+        };
         let tool_name = self.tool_info.tool.name.to_string();
         let current_revision = self.catalog_revision_source.read().await;
         if *current_revision != self.catalog_revision {
@@ -288,7 +312,7 @@ impl PreparedMcpCall {
         let result = self
             .client
             .client
-            .call_tool(tool_name.clone(), arguments, meta, self.client.tool_timeout)
+            .call_tool(tool_name.clone(), arguments, meta, effective_timeout)
             .await
             .with_context(|| format!("tool call failed for `{}/{tool_name}`", self.server_name))?;
         drop(current_revision);
