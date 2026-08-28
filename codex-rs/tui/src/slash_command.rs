@@ -38,6 +38,7 @@ pub enum SlashCommand {
     App,
     Init,
     Compact,
+    Recap,
     Plan,
     Goal,
     Agents,
@@ -45,6 +46,7 @@ pub enum SlashCommand {
     Btw,
     Copy,
     Export,
+    Raw,
     Diff,
     Mention,
     Status,
@@ -92,6 +94,7 @@ impl SlashCommand {
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
+            SlashCommand::Recap => "summarize the current conversation now",
             SlashCommand::Review => "review my current changes and find issues",
             SlashCommand::Rename => "rename the current thread",
             SlashCommand::Resume => "resume a saved chat",
@@ -101,8 +104,9 @@ impl SlashCommand {
             SlashCommand::Fork => "fork the current chat",
             SlashCommand::App => "continue this session in the Desktop app",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
-            SlashCommand::Copy => "copy last response as markdown",
+            SlashCommand::Copy => "copy the last response, code block, or quote",
             SlashCommand::Export => "export the conversation as markdown",
+            SlashCommand::Raw => "toggle raw scrollback mode for copy-friendly terminal selection",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
@@ -177,15 +181,16 @@ impl SlashCommand {
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
                 | SlashCommand::Export
+                | SlashCommand::Raw
                 | SlashCommand::Cd
                 | SlashCommand::Pwd
                 | SlashCommand::Usage
+                | SlashCommand::TranscribeCommand
                 | SlashCommand::Pets
                 | SlashCommand::Side
                 | SlashCommand::Btw
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
-                | SlashCommand::TranscribeCommand
         )
     }
 
@@ -196,6 +201,7 @@ impl SlashCommand {
             SlashCommand::Copy
                 | SlashCommand::Agents
                 | SlashCommand::Export
+                | SlashCommand::Raw
                 | SlashCommand::Diff
                 | SlashCommand::Mention
                 | SlashCommand::Status
@@ -214,6 +220,8 @@ impl SlashCommand {
             | SlashCommand::Fork
             | SlashCommand::Init
             | SlashCommand::Compact
+            | SlashCommand::Recap
+            | SlashCommand::Export
             | SlashCommand::Keymap
             | SlashCommand::Vim
             | SlashCommand::ElevateSandbox
@@ -229,12 +237,12 @@ impl SlashCommand {
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff
-            | SlashCommand::Export
             | SlashCommand::Resume
             | SlashCommand::Model
             | SlashCommand::Personality
             | SlashCommand::Permissions
             | SlashCommand::Copy
+            | SlashCommand::Raw
             | SlashCommand::Rename
             | SlashCommand::Mention
             | SlashCommand::Skills
@@ -242,8 +250,6 @@ impl SlashCommand {
             | SlashCommand::Status
             | SlashCommand::Pwd
             | SlashCommand::Usage
-            | SlashCommand::Sound
-            | SlashCommand::TranscribeCommand
             | SlashCommand::DebugConfig
             | SlashCommand::Ps
             | SlashCommand::Stop
@@ -316,20 +322,10 @@ mod tests {
         assert!(SlashCommand::Ide.available_during_task());
         assert!(SlashCommand::Title.available_during_task());
         assert!(SlashCommand::Statusline.available_during_task());
+        assert!(SlashCommand::Raw.available_during_task());
+        assert!(SlashCommand::Raw.available_in_side_conversation());
+        assert!(SlashCommand::Raw.supports_inline_args());
         assert!(SlashCommand::App.available_during_task());
-    }
-
-    #[test]
-    fn transcribe_command_can_be_parsed() {
-        assert_eq!(SlashCommand::TranscribeCommand.command(), "transcribe");
-        assert_eq!(
-            SlashCommand::from_str("transcribe"),
-            Ok(SlashCommand::TranscribeCommand)
-        );
-        assert_eq!(
-            SlashCommand::from_str("transcribe-command"),
-            Ok(SlashCommand::TranscribeCommand)
-        );
     }
 
     #[test]
