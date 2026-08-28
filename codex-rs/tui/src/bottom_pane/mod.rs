@@ -56,6 +56,7 @@ use std::time::Instant;
 
 mod action_required_title;
 mod app_link_view;
+mod apply_patch_header;
 mod approval_overlay;
 mod mcp_server_elicitation;
 mod multi_select_picker;
@@ -369,6 +370,24 @@ impl BottomPane {
 
     pub fn set_plugin_mentions(&mut self, plugins: Option<Vec<PluginCapabilitySummary>>) {
         self.composer.set_plugin_mentions(plugins);
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_task_mentions_enabled(&mut self, enabled: bool) {
+        self.composer.set_task_mentions_enabled(enabled);
+        self.request_redraw();
+    }
+
+    pub(crate) fn task_mentions_enabled(&self) -> bool {
+        self.composer.task_mentions_enabled()
+    }
+
+    pub(crate) fn on_task_search_result(
+        &mut self,
+        query: &str,
+        matches: Vec<crate::task_mentions::TaskMention>,
+    ) {
+        self.composer.on_task_search_result(query, matches);
         self.request_redraw();
     }
 
@@ -957,18 +976,6 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    /// Applies the externally decided Plan-mode nudge visibility to the footer presentation.
-    pub(crate) fn set_plan_mode_nudge_visible(&mut self, visible: bool) {
-        if self.composer.set_plan_mode_nudge_visible(visible) {
-            self.request_redraw();
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn plan_mode_nudge_visible(&self) -> bool {
-        self.composer.plan_mode_nudge_visible()
-    }
-
     pub(crate) fn set_remote_image_urls(&mut self, urls: Vec<String>) {
         self.composer.set_remote_image_urls(urls);
         self.request_redraw();
@@ -1321,6 +1328,25 @@ impl BottomPane {
             .and_then(|view| view.active_tab_id())
     }
 
+    /// Forward a suggestion to its matching prompt, even beneath another view.
+    pub(crate) fn apply_text_suggestion(
+        &mut self,
+        request_id: uuid::Uuid,
+        suggestion: Option<&str>,
+    ) -> bool {
+        let changed = self
+            .view_stack
+            .iter_mut()
+            .rev()
+            .any(|view| view.apply_text_suggestion(request_id, suggestion));
+
+        if changed {
+            self.request_redraw();
+        }
+
+        changed
+    }
+
     pub(crate) fn dismiss_active_view_if_id(&mut self, view_id: &'static str) -> bool {
         let is_match = self
             .view_stack
@@ -1404,7 +1430,6 @@ impl BottomPane {
         self.composer.is_empty()
     }
 
-    #[cfg(test)]
     pub(crate) fn composer_is_vim_enabled(&self) -> bool {
         self.composer.is_vim_enabled()
     }
@@ -1490,6 +1515,15 @@ impl BottomPane {
             self.disable_paste_burst,
         );
         self.show_view(Box::new(view));
+    }
+
+    /// Show a text prompt with the composer's current editing preferences.
+    pub(crate) fn show_text_prompt(&mut self, mut view: custom_prompt_view::CustomPromptView) {
+        view.set_keymap_bindings(&self.keymap);
+        if self.composer_is_vim_enabled() {
+            view.enable_vim_in_insert_mode();
+        }
+        self.push_view(Box::new(view));
     }
 
     /// Called when the agent requests user approval.
@@ -2015,6 +2049,7 @@ mod tests {
 
     fn exec_request() -> ApprovalRequest {
         ApprovalRequest::Exec(ExecApprovalRequest {
+            kind: Default::default(),
             thread_id: codex_protocol::ThreadId::new(),
             thread_label: None,
             id: "1".to_string(),
@@ -2055,7 +2090,7 @@ mod tests {
         }
 
         fn dismiss_app_server_request(&mut self, request: &ResolvedAppServerRequest) -> bool {
-            let ResolvedAppServerRequest::ExecApproval { id } = request else {
+            let ResolvedAppServerRequest::ExecApproval { id, .. } = request else {
                 return false;
             };
             if self.dismiss_exec_id != Some(id.as_str()) {
@@ -2299,10 +2334,13 @@ mod tests {
         let mut pane = test_pane(tx);
         let now = Instant::now();
         pane.last_composer_activity_at = Some(now);
-        pane.push_approval_request(exec_request(), &features);
+        let request = exec_request();
+        let thread_id = request.thread_id();
+        pane.push_approval_request(request, &features);
 
         assert!(
             pane.dismiss_app_server_request(&ResolvedAppServerRequest::ExecApproval {
+                thread_id: thread_id.to_string(),
                 id: "1".to_string(),
             })
         );
@@ -2331,6 +2369,7 @@ mod tests {
 
         assert!(
             pane.dismiss_app_server_request(&ResolvedAppServerRequest::ExecApproval {
+                thread_id: "thread-1".to_string(),
                 id: "request-1".to_string(),
             })
         );
@@ -2339,6 +2378,41 @@ mod tests {
             pane.view_stack.last().and_then(|view| view.view_id()),
             Some("top")
         );
+    }
+
+    #[test]
+    fn apply_text_suggestion_updates_matching_prompt_beneath_an_overlay() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = test_pane(tx);
+        let request_id = uuid::Uuid::new_v4();
+        let prompt = custom_prompt_view::CustomPromptView::new(
+            "Rename thread".to_string(),
+            "Type a name".to_string(),
+            /*initial_text*/ String::new(),
+            /*context_label*/ None,
+            Box::new(|_| {}),
+        )
+        .with_text_suggestion(request_id, "Loading".to_string(), "Ready".to_string());
+        pane.show_text_prompt(prompt);
+        pane.push_view(Box::new(CompletingView {
+            id: Some("overlay"),
+            complete: false,
+        }));
+
+        assert!(pane.apply_text_suggestion(request_id, Some("Fix login timeout")));
+
+        pane.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let rendered = render_snapshot(
+            &pane,
+            Rect::new(
+                /*x*/ 0, /*y*/ 0, /*width*/ 80, /*height*/ 8,
+            ),
+        );
+
+        assert!(rendered.contains("Fix login timeout"));
+        assert!(rendered.contains("Ready"));
+        assert!(!rendered.contains("Loading"));
     }
 
     #[test]
@@ -2360,6 +2434,7 @@ mod tests {
 
         assert!(
             !pane.dismiss_app_server_request(&ResolvedAppServerRequest::ExecApproval {
+                thread_id: "thread-1".to_string(),
                 id: "request-1".to_string(),
             })
         );
@@ -2746,6 +2821,7 @@ mod tests {
                 path: test_path_buf("/tmp/test-skill/SKILL.md").abs(),
                 scope: crate::test_support::skill_scope_user(),
                 enabled: true,
+                plugin_id: None,
             }]),
         });
 

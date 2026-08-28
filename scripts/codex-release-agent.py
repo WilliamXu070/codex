@@ -46,10 +46,12 @@ CODE_MODE_HOST_ENTITLEMENTS = Path(
 V8_ENV_RESOLVER = textwrap.dedent(
     """\
     import json
+    import os
     import sys
     from pathlib import Path
 
     workspace = Path(sys.argv[1]).resolve()
+    os.environ["CODEX_REPO_ROOT"] = str(workspace)
     sys.path.insert(0, str(workspace / "scripts"))
 
     from codex_package.targets import TARGET_SPECS, default_target
@@ -347,10 +349,14 @@ def codex_v8_build_environment(
     base_environment: dict[str, str],
 ) -> dict[str, str]:
     """Resolve the checksum-verified V8 archive and bindings for Cargo."""
+    resolver_environment = {
+        **base_environment,
+        "CODEX_REPO_ROOT": str(workspace),
+    }
     completed = run_command(
         [sys.executable, "-c", V8_ENV_RESOLVER, str(workspace)],
         cwd=workspace,
-        env=base_environment,
+        env=resolver_environment,
         timeout=900,
     )
     try:

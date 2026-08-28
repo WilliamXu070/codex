@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -389,9 +390,34 @@ class WorkspaceVerificationTests(unittest.TestCase):
                 "/workspace",
             ],
             cwd=Path("/workspace"),
-            env={"CARGO_INCREMENTAL": "0"},
+            env={
+                "CARGO_INCREMENTAL": "0",
+                "CODEX_REPO_ROOT": "/workspace",
+            },
             timeout=900,
         )
+
+    def test_v8_resolver_imports_without_repository_root_environment(self) -> None:
+        workspace = Path(agent.__file__).resolve().parents[1]
+        environment = os.environ.copy()
+        environment.pop("CODEX_REPO_ROOT", None)
+        environment["RUSTY_V8_ARCHIVE"] = "/cache/v8.a.gz"
+        environment["RUSTY_V8_SRC_BINDING_PATH"] = "/cache/bindings.rs"
+        resolver = agent.V8_ENV_RESOLVER.replace("import os\n", "").replace(
+            'os.environ["CODEX_REPO_ROOT"] = str(workspace)\n',
+            "",
+        )
+
+        completed = subprocess.run(
+            [sys.executable, "-c", resolver, str(workspace)],
+            cwd=workspace,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(json.loads(completed.stdout), {})
 
 
 class ExecuteDeduplicationTests(unittest.TestCase):
