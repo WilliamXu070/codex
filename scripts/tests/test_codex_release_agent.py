@@ -393,6 +393,25 @@ class WorkspaceVerificationTests(unittest.TestCase):
             timeout=900,
         )
 
+    def test_v8_resolver_sets_repository_root_before_package_import(self) -> None:
+        workspace = SCRIPT.parents[1]
+        environment = {
+            **os.environ,
+            "V8_FROM_SOURCE": "1",
+        }
+        environment.pop("CODEX_REPO_ROOT", None)
+
+        completed = subprocess.run(
+            [sys.executable, "-c", agent.V8_ENV_RESOLVER, str(workspace)],
+            cwd=workspace,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.stdout, "{}\n")
+
 
 class ExecuteDeduplicationTests(unittest.TestCase):
     def make_args(self, source: Path, state: Path) -> argparse.Namespace:
