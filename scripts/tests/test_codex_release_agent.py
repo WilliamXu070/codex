@@ -397,15 +397,19 @@ class WorkspaceVerificationTests(unittest.TestCase):
             timeout=900,
         )
 
-    def test_v8_resolver_sets_repository_root_before_package_imports(self) -> None:
+    def test_v8_resolver_imports_without_repository_root_environment(self) -> None:
         workspace = Path(agent.__file__).resolve().parents[1]
         environment = os.environ.copy()
         environment.pop("CODEX_REPO_ROOT", None)
         environment["RUSTY_V8_ARCHIVE"] = "/cache/v8.a.gz"
         environment["RUSTY_V8_SRC_BINDING_PATH"] = "/cache/bindings.rs"
+        resolver = agent.V8_ENV_RESOLVER.replace("import os\n", "").replace(
+            'os.environ["CODEX_REPO_ROOT"] = str(workspace)\n',
+            "",
+        )
 
         completed = subprocess.run(
-            [sys.executable, "-c", agent.V8_ENV_RESOLVER, str(workspace)],
+            [sys.executable, "-c", resolver, str(workspace)],
             cwd=workspace,
             env=environment,
             check=True,
