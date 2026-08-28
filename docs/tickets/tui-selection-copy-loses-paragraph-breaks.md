@@ -51,15 +51,16 @@ been removed.
 
 ## Verification
 
-- The original clipboard-repair implementation passed its six focused tests,
-  config coverage, affected TUI snapshots, formatting, schema validation, and
-  strict TUI linting before this release integration.
-- The `0.146.0` integration passes `cargo shear --deny-warnings` and the sound
-  path regression. The sandbox cannot complete the TUI build because the
-  `rusty_v8` archive is not cached and network access is disabled; the release
-  orchestrator reruns the full build and tests with dependency access.
+- `cargo test -p codex-tui clipboard_repair`: 6 passed.
+- `cargo test -p codex-config`: 179 passed.
+- Keymap picker snapshots: 16 passed after removing `/raw`.
+- Side-conversation slash-command filtering: passed.
+- `cargo clippy -p codex-tui --lib -- -D warnings` passed with only the four
+  unrelated, pre-existing sound/transcription lints explicitly allowed.
+- `cargo fmt --all -- --check`, config-schema JSON validation, and
+  `git diff --check`: passed.
 
 ## Status
 
-Implementation complete. Release `0.146.0` activation remains pending the
-orchestrator's full validation.
+Complete and installed at
+`/Users/williamxu/.local/lib/codex/releases/20260728-111145/debug/codex`.
