@@ -389,7 +389,10 @@ class WorkspaceVerificationTests(unittest.TestCase):
                 "/workspace",
             ],
             cwd=Path("/workspace"),
-            env={"CARGO_INCREMENTAL": "0"},
+            env={
+                "CARGO_INCREMENTAL": "0",
+                "CODEX_REPO_ROOT": "/workspace",
+            },
             timeout=900,
         )
 
