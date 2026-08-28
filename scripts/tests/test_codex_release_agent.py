@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -395,6 +396,24 @@ class WorkspaceVerificationTests(unittest.TestCase):
             },
             timeout=900,
         )
+
+    def test_v8_resolver_sets_repository_root_before_package_imports(self) -> None:
+        workspace = Path(agent.__file__).resolve().parents[1]
+        environment = os.environ.copy()
+        environment.pop("CODEX_REPO_ROOT", None)
+        environment["RUSTY_V8_ARCHIVE"] = "/cache/v8.a.gz"
+        environment["RUSTY_V8_SRC_BINDING_PATH"] = "/cache/bindings.rs"
+
+        completed = subprocess.run(
+            [sys.executable, "-c", agent.V8_ENV_RESOLVER, str(workspace)],
+            cwd=workspace,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(json.loads(completed.stdout), {})
 
 
 class ExecuteDeduplicationTests(unittest.TestCase):
