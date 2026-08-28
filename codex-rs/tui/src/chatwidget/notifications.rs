@@ -1,6 +1,7 @@
 //! Desktop notification coalescing for `ChatWidget`.
 
 use super::*;
+use std::process::Command;
 
 impl ChatWidget {
     pub(super) fn notify(&mut self, notification: Notification) {
@@ -18,6 +19,15 @@ impl ChatWidget {
 
     pub(crate) fn maybe_post_pending_notification(&mut self, tui: &mut crate::tui::Tui) {
         if let Some(notif) = self.pending_notification.take() {
+            if let Some(sound_event) = notif.sound_event() {
+                let sound_script = self.config.codex_home.join("codex-random-sound");
+                if let Err(err) = Command::new(sound_script.as_ref())
+                    .args(["--event", sound_event])
+                    .spawn()
+                {
+                    tracing::debug!("failed to play Codex attention sound: {err}");
+                }
+            }
             tui.notify(notif.display());
         }
     }
@@ -29,6 +39,7 @@ pub(super) enum Notification {
     ExecApprovalRequested { command: String },
     EditApprovalRequested { cwd: PathBuf, changes: Vec<PathBuf> },
     ElicitationRequested { server_name: String },
+    UserInputRequested { title: String },
     PlanModePrompt { title: String },
 }
 
@@ -59,6 +70,9 @@ impl Notification {
             Notification::ElicitationRequested { server_name } => {
                 format!("Approval requested by {server_name}")
             }
+            Notification::UserInputRequested { title } => {
+                format!("Question requested: {title}")
+            }
             Notification::PlanModePrompt { title } => {
                 format!("Plan mode prompt: {title}")
             }
@@ -71,7 +85,15 @@ impl Notification {
             Notification::ExecApprovalRequested { .. }
             | Notification::EditApprovalRequested { .. }
             | Notification::ElicitationRequested { .. } => "approval-requested",
+            Notification::UserInputRequested { .. } => "request-user-input",
             Notification::PlanModePrompt { .. } => "plan-mode-prompt",
+        }
+    }
+
+    fn sound_event(&self) -> Option<&'static str> {
+        match self {
+            Notification::UserInputRequested { .. } => Some("request-user-input"),
+            _ => None,
         }
     }
 
@@ -81,6 +103,7 @@ impl Notification {
             Notification::ExecApprovalRequested { .. }
             | Notification::EditApprovalRequested { .. }
             | Notification::ElicitationRequested { .. }
+            | Notification::UserInputRequested { .. }
             | Notification::PlanModePrompt { .. } => 1,
         }
     }

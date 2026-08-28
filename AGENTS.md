@@ -77,6 +77,31 @@ state outside this Desktop-backed checkout. The `justfile` defaults
 state; direct Cargo commands must use the same settings. Never use
 `codex-rs/target` or a release-install directory as a Cargo target directory.
 
+After every code change that affects Rust behavior, compile a fresh local binary and point all sessions to it before testing:
+
+1. Build the binaries:
+
+```sh
+cd /Users/williamxu/Desktop/Projects/codex/codex-rs
+CARGO_TARGET_DIR=/private/tmp/codex-tui-target cargo build -p codex -p codex-tui
+```
+
+2. Re-point local runtime (Ghostty/terminal commands) to that build:
+
+```sh
+ln -sf /private/tmp/codex-tui-target/debug/codex "$HOME/.local/bin/codex"
+ln -sf /private/tmp/codex-tui-target/debug/codex-tui "$HOME/.local/bin/codex-tui"
+```
+
+3. Verify the active binary is the dev one:
+
+```sh
+command -v codex
+codex --version
+```
+
+If any command still resolves to `/Users/williamxu/.codex/packages/standalone/current/bin/codex`, update PATH/alias before opening new Ghostty tabs.
+
 ## The `codex-core` crate
 
 Over time, the `codex-core` crate (defined in `codex-rs/core/`) has become bloated because it is the largest crate, so it is often easier to add something new to `codex-core` rather than refactor out the library code you need so your new code neither takes a dependency on, nor contributes to the size of, `codex-core`.

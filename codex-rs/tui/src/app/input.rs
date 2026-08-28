@@ -558,7 +558,6 @@ impl App {
             "codex-transcribe-{}-{stamp}.level.json",
             std::process::id()
         ));
-
         let child = std::process::Command::new(script.as_ref())
             .arg("record-wav-live")
             .arg(&wav_path)
