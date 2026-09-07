@@ -13,7 +13,7 @@ RUNTIME_DIR="${HOME}/.local/lib/codex"
 AGENT_RUNTIME="${RUNTIME_DIR}/codex-release-agent.py"
 TRIGGER_RUNTIME="${HOME}/.local/bin/codex-release-watch-runner.sh"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-900}"
-CHANNEL="${CODEX_RELEASE_CHANNEL:-all}"
+CHANNEL="${CODEX_RELEASE_CHANNEL:-stable}"
 ACTION="install"
 LAUNCHD_PATH_ENV="/Users/williamxu/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -25,7 +25,7 @@ Usage: install-codex-release-watch.sh [install|uninstall|status] [options]
   uninstall               Unload and remove it.
   status                  Show launchd and release-ledger status.
   --interval SECONDS      Check interval (default: 900).
-  --channel CHANNEL       all, stable, or prerelease (default: all).
+  --channel CHANNEL       all, stable, or prerelease (default: stable).
 
 The scheduled check does not invoke Codex for known tags. The SQLite release
 ledger allows exactly one Codex agent attempt per newly discovered tag.
