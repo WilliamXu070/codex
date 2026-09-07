@@ -347,10 +347,14 @@ def codex_v8_build_environment(
     base_environment: dict[str, str],
 ) -> dict[str, str]:
     """Resolve the checksum-verified V8 archive and bindings for Cargo."""
+    resolver_environment = {
+        **base_environment,
+        "CODEX_REPO_ROOT": str(workspace.resolve()),
+    }
     completed = run_command(
         [sys.executable, "-c", V8_ENV_RESOLVER, str(workspace)],
         cwd=workspace,
-        env=base_environment,
+        env=resolver_environment,
         timeout=900,
     )
     try:
@@ -364,7 +368,7 @@ def codex_v8_build_environment(
         for key, value in overrides.items()
     ):
         raise ReleaseAgentError("Codex V8 environment resolver returned invalid values")
-    return {**base_environment, **overrides}
+    return {**resolver_environment, **overrides}
 
 
 def load_code_signing_config(path: Path) -> CodeSigningConfig:

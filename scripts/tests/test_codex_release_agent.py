@@ -449,6 +449,7 @@ class WorkspaceVerificationTests(unittest.TestCase):
             )
 
         self.assertEqual(environment["CARGO_INCREMENTAL"], "0")
+        self.assertEqual(environment["CODEX_REPO_ROOT"], "/workspace")
         self.assertEqual(environment["RUSTY_V8_ARCHIVE"], "/cache/v8.a.gz")
         self.assertEqual(
             environment["RUSTY_V8_SRC_BINDING_PATH"],
@@ -462,7 +463,7 @@ class WorkspaceVerificationTests(unittest.TestCase):
                 "/workspace",
             ],
             cwd=Path("/workspace"),
-            env={"CARGO_INCREMENTAL": "0"},
+            env={"CARGO_INCREMENTAL": "0", "CODEX_REPO_ROOT": "/workspace"},
             timeout=900,
         )
 
