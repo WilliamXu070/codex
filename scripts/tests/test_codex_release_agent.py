@@ -162,7 +162,9 @@ class WorkspacePreparationTests(unittest.TestCase):
                 cwd=publisher,
                 check=True,
             )
-            subprocess.run(["git", "push", "-q", "origin", "main"], cwd=publisher, check=True)
+            subprocess.run(
+                ["git", "push", "-q", "origin", "main"], cwd=publisher, check=True
+            )
             current_origin_main = agent.git_output(publisher, "rev-parse", "HEAD")
 
             workspace, _, source_head, _ = agent.prepare_workspace(
@@ -174,7 +176,9 @@ class WorkspacePreparationTests(unittest.TestCase):
             )
 
             self.assertEqual(source_head, current_origin_main)
-            self.assertEqual(agent.git_output(workspace, "rev-parse", "HEAD"), current_origin_main)
+            self.assertEqual(
+                agent.git_output(workspace, "rev-parse", "HEAD"), current_origin_main
+            )
 
     def test_retry_restores_existing_published_branch(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
