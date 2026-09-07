@@ -3,7 +3,7 @@ set -euo pipefail
 
 CODEX_ROOT="${CODEX_ROOT:-/Users/williamxu/Desktop/Projects/codex}"
 AGENT_SCRIPT="${CODEX_RELEASE_AGENT_SCRIPT:-${CODEX_ROOT}/scripts/codex-release-agent.py}"
-CHANNEL="${CODEX_RELEASE_CHANNEL:-all}"
+CHANNEL="${CODEX_RELEASE_CHANNEL:-stable}"
 RELEASE_TAG=""
 DELIVERY="manual"
 RETRY_FAILED=0
@@ -16,7 +16,7 @@ Usage: update-codex-local.sh [--watch] [--release-tag TAG] [options]
 
   --watch              Discover the newest official OpenAI Codex release.
   --release-tag TAG    Integrate one exact official release tag.
-  --channel CHANNEL    all, stable, or prerelease (default: all).
+  --channel CHANNEL    all, stable, or prerelease (default: stable).
   --delivery ID        GitHub delivery or manual request identifier.
   --retry-failed       Explicitly retry a previously failed tag.
   --no-publish         Validate without pushing, merging, or activating.
