@@ -63,7 +63,9 @@ def parse_csi_u(data: bytes) -> str | None:
         return None
     codepoint = int(parts[0])
     key = chr(codepoint).lower() if 0 <= codepoint <= 0x10FFFF else f"u+{codepoint:x}"
-    mods = modifier_names(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else []
+    mods = (
+        modifier_names(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else []
+    )
     spec = "-".join([*mods, key]) if mods else key
     return f"CSI-u event: {spec}\nCodex key spec: {spec}"
 
@@ -83,15 +85,21 @@ def explain(data: bytes) -> str:
         spec = CTRL_NAMES[data[0]]
         lines.append(f"legacy control event: {spec}")
         if data[0] == 0x04:
-            lines.append("Terminal did not send Shift; ctrl+d and ctrl+shift+d are indistinguishable here.")
+            lines.append(
+                "Terminal did not send Shift; ctrl+d and ctrl+shift+d are indistinguishable here."
+            )
         lines.append(f"Codex key spec: {spec.replace('+', '-')}")
         return "\n".join(lines)
 
     if not data:
-        lines.append("No bytes arrived. The OS or terminal consumed the shortcut before Codex could see it.")
+        lines.append(
+            "No bytes arrived. The OS or terminal consumed the shortcut before Codex could see it."
+        )
         return "\n".join(lines)
 
-    lines.append("Unrecognized byte sequence. Use this exact text mapping if your terminal supports sending text.")
+    lines.append(
+        "Unrecognized byte sequence. Use this exact text mapping if your terminal supports sending text."
+    )
     lines.append(f"Ghostty text action: text:{escaped(data)}")
     return "\n".join(lines)
 
@@ -106,7 +114,9 @@ def read_key(timeout: float) -> bytes:
         deadline = time.monotonic() + timeout
         data = bytearray()
         while time.monotonic() < deadline:
-            ready, _, _ = select.select([fd], [], [], max(0.0, min(0.1, deadline - time.monotonic())))
+            ready, _, _ = select.select(
+                [fd], [], [], max(0.0, min(0.1, deadline - time.monotonic()))
+            )
             if not ready:
                 if data:
                     break
@@ -125,7 +135,9 @@ def read_key(timeout: float) -> bytes:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Probe raw terminal bytes for one shortcut.")
+    parser = argparse.ArgumentParser(
+        description="Probe raw terminal bytes for one shortcut."
+    )
     parser.add_argument("--count", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=5.0)
     args = parser.parse_args()
