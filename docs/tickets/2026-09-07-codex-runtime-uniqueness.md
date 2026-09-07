@@ -32,4 +32,20 @@ The fork's repository CI also pinned npm staging to an expired June release work
 
 ## Status
 
-In progress.
+Resolved for every new terminal launch on 2026-09-07.
+
+- Required CI passed on pull requests 33, 34, 35, 36, and 37.
+- Release pull request 36 merged at `53443dac02294e7eba9809bd1328dd6dff8f21de`.
+- `codex`, `codex-tui`, and `codex-code-mode-host` resolve to the immutable
+  `0.153.4-53443dac0229` release directory and pass version, signature, and host
+  smoke checks.
+- The redundant global npm CLI was uninstalled, and the legacy standalone
+  release tree was moved outside launcher discovery.
+- A fresh login shell resolves exactly one terminal `codex`, and the interactive
+  banner reports `0.153.4`.
+- Two stable-channel watcher cycles completed as clean no-ops, and rollback plus
+  drift-reconciliation regressions pass.
+
+The TUI session that performed this repair was started from the old mutable
+`0.151.0-alpha.8` executable. Its already-mapped process image remains until
+that session exits; it is no longer a launchable or discoverable installation.
