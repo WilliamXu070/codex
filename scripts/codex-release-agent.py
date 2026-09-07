@@ -628,7 +628,8 @@ def prepare_workspace(
     workspace = state_dir / "workspaces" / safe_tag
     branch = f"agent/upstream-{tag.removeprefix('rust-v')}"
     origin_url = git_output(source_root, "remote", "get-url", "origin")
-    source_head = git_output(source_root, "rev-parse", "HEAD")
+    run_command(["git", "fetch", "--prune", "origin", "main"], cwd=source_root)
+    source_head = git_output(source_root, "rev-parse", "refs/remotes/origin/main")
 
     if workspace.exists() and not retry_failed:
         raise ReleaseAgentError(f"release workspace already exists: {workspace}")
@@ -642,6 +643,7 @@ def prepare_workspace(
             ["git", "remote", "set-url", "origin", origin_url],
             cwd=workspace,
         )
+        run_command(["git", "fetch", "--prune", "origin", "main"], cwd=workspace)
         remote_branch = ""
         if retry_failed:
             remote_branch = git_output(
@@ -687,7 +689,6 @@ def prepare_workspace(
             cwd=workspace,
         )
 
-    run_command(["git", "fetch", "--prune", "origin", "main"], cwd=workspace)
     run_command(
         [
             "git",

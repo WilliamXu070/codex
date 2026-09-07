@@ -107,6 +107,79 @@ class ReleaseValidationTests(unittest.TestCase):
 
 
 class WorkspacePreparationTests(unittest.TestCase):
+    def test_new_workspace_starts_from_current_origin_main(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            publisher = root / "publisher"
+            remote = root / "origin.git"
+            tag = "rust-v0.146.0-alpha.14"
+
+            subprocess.run(["git", "init", "--bare", "-q", remote], check=True)
+            subprocess.run(["git", "init", "-q", "-b", "main", source], check=True)
+            subprocess.run(
+                ["git", "config", "user.name", "Release Agent Test"],
+                cwd=source,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "release-agent@example.test"],
+                cwd=source,
+                check=True,
+            )
+            (source / "base.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=source, check=True)
+            subprocess.run(["git", "tag", tag], cwd=source, check=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin", str(remote)],
+                cwd=source,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "push", "-q", "-u", "origin", "main", f"refs/tags/{tag}"],
+                cwd=source,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "clone", "-q", "-b", "main", str(remote), str(publisher)],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Release Agent Test"],
+                cwd=publisher,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "release-agent@example.test"],
+                cwd=publisher,
+                check=True,
+            )
+            (publisher / "current.txt").write_text("current\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=publisher, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "current origin main"],
+                cwd=publisher,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "push", "-q", "origin", "main"], cwd=publisher, check=True
+            )
+            current_origin_main = agent.git_output(publisher, "rev-parse", "HEAD")
+
+            workspace, _, source_head, _ = agent.prepare_workspace(
+                source_root=source,
+                state_dir=root / "state",
+                tag=tag,
+                retry_failed=False,
+                upstream_url=str(remote),
+            )
+
+            self.assertEqual(source_head, current_origin_main)
+            self.assertEqual(
+                agent.git_output(workspace, "rev-parse", "HEAD"), current_origin_main
+            )
+
     def test_retry_restores_existing_published_branch(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
