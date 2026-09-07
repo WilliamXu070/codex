@@ -453,6 +453,17 @@ class ExecuteDeduplicationTests(unittest.TestCase):
             self.assertEqual(second.status, "skipped")
             run_agent.assert_called_once()
 
+    def test_missing_source_does_not_claim_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            args = self.make_args(root / "missing-source", root / "state")
+
+            with self.assertRaises(agent.ReleaseAgentError):
+                agent.execute(args)
+
+            ledger = agent.ReleaseLedger(args.state_dir / "state.sqlite3")
+            self.assertIsNone(ledger.get(args.repository, args.release_tag))
+
     def test_release_is_published_merged_and_activated_once(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -506,6 +517,11 @@ class ExecuteDeduplicationTests(unittest.TestCase):
                     "install_active_cli",
                     return_value=installed,
                 ) as install,
+                mock.patch.object(
+                    agent,
+                    "reconcile_active_cli",
+                    return_value=False,
+                ) as reconcile,
             ):
                 first = agent.execute(args)
                 second = agent.execute(args)
@@ -528,6 +544,7 @@ class ExecuteDeduplicationTests(unittest.TestCase):
             )
             merge.assert_called_once()
             install.assert_called_once()
+            reconcile.assert_called_once()
 
     def test_failed_ci_prevents_merge_and_activation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1092,6 +1109,55 @@ class ActiveInstallTests(unittest.TestCase):
                     mock.call(installed.code_mode_host, code_signing),
                 ],
             )
+
+    def test_reconcile_restores_every_active_link(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            release_dir = root / "releases/0.146.0-alpha.14-abc123def456"
+            release_debug = release_dir / "debug"
+            for name, label in (
+                ("codex", "codex-cli"),
+                ("codex-tui", "codex-tui"),
+                ("codex-code-mode-host", "codex-code-mode-host"),
+            ):
+                self.make_binary(release_debug / name, label, "0.146.0-alpha.14")
+
+            stale = root / "mutable-debug"
+            for name, label in (
+                ("codex", "codex-cli"),
+                ("codex-tui", "codex-tui"),
+                ("codex-code-mode-host", "codex-code-mode-host"),
+            ):
+                self.make_binary(stale / name, label, "0.145.0")
+
+            active_cli = root / "bin/codex"
+            active_tui = root / "bin/codex-tui"
+            active_host = root / "bin/codex-code-mode-host"
+            current = root / "current"
+            active_cli.parent.mkdir()
+            active_cli.symlink_to(stale / "codex")
+            active_tui.symlink_to(stale / "codex-tui")
+            active_host.symlink_to(stale / "codex-code-mode-host")
+            current.symlink_to(stale.parent)
+
+            reconciled = agent.reconcile_active_cli(
+                installed_cli=str(release_debug / "codex"),
+                version="0.146.0-alpha.14",
+                cwd=root,
+                active_cli=active_cli,
+                active_tui=active_tui,
+                active_code_mode_host=active_host,
+                current_link=current,
+            )
+
+            self.assertTrue(reconciled)
+            self.assertEqual(os.readlink(active_cli), str(release_debug / "codex"))
+            self.assertEqual(os.readlink(active_tui), str(release_debug / "codex-tui"))
+            self.assertEqual(
+                os.readlink(active_host),
+                str(release_debug / "codex-code-mode-host"),
+            )
+            self.assertEqual(os.readlink(current), str(release_dir))
 
     def test_missing_code_mode_host_fails_before_activation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
