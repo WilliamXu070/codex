@@ -20,7 +20,9 @@ def request_stop(_signum: int, _frame: object) -> None:
     stop_requested = True
 
 
-def write_level(path: str | None, rms: float, peak: float, max_rms: float, max_peak: float) -> None:
+def write_level(
+    path: str | None, rms: float, peak: float, max_rms: float, max_peak: float
+) -> None:
     if not path:
         return
     payload = {

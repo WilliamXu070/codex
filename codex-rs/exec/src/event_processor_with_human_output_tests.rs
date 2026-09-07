@@ -250,6 +250,8 @@ fn final_message_from_turn_items_uses_latest_agent_message() {
             text: "first".to_string(),
             phase: None,
             memory_citation: None,
+            delivery: None,
+            questions: None,
         },
         ThreadItem::Plan {
             id: "plan-1".to_string(),
@@ -260,6 +262,8 @@ fn final_message_from_turn_items_uses_latest_agent_message() {
             text: "second".to_string(),
             phase: None,
             memory_citation: None,
+            delivery: None,
+            questions: None,
         },
     ]);
 
@@ -318,6 +322,8 @@ fn turn_completed_recovers_final_message_from_turn_items() {
                     text: "final answer".to_string(),
                     phase: None,
                     memory_citation: None,
+                    delivery: None,
+                    questions: None,
                 }],
                 status: TurnStatus::Completed,
                 error: None,
@@ -366,6 +372,8 @@ fn turn_completed_overwrites_stale_final_message_from_turn_items() {
                     text: "final answer".to_string(),
                     phase: None,
                     memory_citation: None,
+                    delivery: None,
+                    questions: None,
                 }],
                 status: TurnStatus::Completed,
                 error: None,
