@@ -141,7 +141,10 @@ class WorkspacePreparationTests(unittest.TestCase):
                 cwd=source,
                 check=True,
             )
-            subprocess.run(["git", "clone", "-q", str(remote), str(publisher)], check=True)
+            subprocess.run(
+                ["git", "clone", "-q", "-b", "main", str(remote), str(publisher)],
+                check=True,
+            )
             subprocess.run(
                 ["git", "config", "user.name", "Release Agent Test"],
                 cwd=publisher,
