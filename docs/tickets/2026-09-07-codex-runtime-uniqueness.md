@@ -10,6 +10,8 @@ Exactly one terminal-managed `codex` installation is discoverable. `codex`, `cod
 
 Repository instructions redirect the canonical production launchers to a mutable Cargo target after normal development builds. Later builds replaced or removed artifacts in that directory without updating the release manifest or companion host. Separately, the release ledger records transient failures as terminal and skips the same tag forever unless manually retried, so the failed `0.153.4` attempt never self-healed after its source path returned.
 
+The fork's repository CI also pinned npm staging to an expired June release workflow, so otherwise valid updater changes could not reach the required aggregate gate.
+
 ## Plan
 
 1. Separate development launchers from production launchers.
