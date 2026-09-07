@@ -9,22 +9,12 @@
 //! - Turning raw key streams into explicit paste operations on platforms where terminals
 //!   don't provide reliable bracketed paste (notably Windows).
 //!
-//! # Mention Menus
-//!
-//! By default, `@` lists plugins, filesystem entries, and skills. Skills are hidden when their
-//! owning plugin is listed. `$` lists individual skills and apps, but not plugins.
-//! Disabling `mentions_v2` restores file-only `@` search and adds plugins back to `$`.
-//!
 //! # Key Event Routing
 //!
-//! Plain Left opens agents when the local-daemon composer is empty and available for input.
-//! Explicit editor remaps take precedence.
 //! Most key handling goes through [`ChatComposer::handle_key_event`], which dispatches to a
 //! popup-specific handler if a popup is visible and otherwise to
 //! [`ChatComposer::handle_key_event_without_popup`]. After every handled key, we call
 //! [`ChatComposer::sync_popups`] so UI state follows the latest buffer/cursor.
-//! Fresh Vim drafts start in Insert; Normal `/` and `?` search the composer.
-//! Backspace on an empty Vim search query cancels search and any pending operator.
 //!
 //! # Completion and Popup Dismissal
 //!
@@ -63,13 +53,6 @@
 //! `Ctrl+R` opens a reverse incremental search mode. The footer becomes the search input; once the
 //! query is non-empty, the composer body previews the current match. `Enter` accepts the preview as
 //! an editable draft and `Esc` restores the draft that was active when search started.
-//! Vim undo/redo snapshots complete drafts and groups direct edits with active Vim transactions.
-//! An active edit keeps one separately capped snapshot; canceling does not evict committed history.
-//! Canceled history previews restore history and active commands; accepting another prompt resets them.
-//! Normal-mode Ctrl+R redoes an edit, or does nothing when redo is empty. Insert-mode Ctrl+R
-//! keeps prompt-history search; explicitly configured keybindings retain precedence.
-//! Vim queries stay draft-local.
-//!
 //! Slash commands are staged for local history instead of being recorded immediately. Command
 //! recall is a two-phase handoff: stage the submitted slash text here, then record it after
 //! `ChatWidget` dispatches the command.
@@ -115,10 +98,6 @@
 //! shell commands return `ParentOwnedInputBlocked` without clearing the draft. Bare local and
 //! navigation slash commands remain available so users can leave or manage the view. Transcript
 //! exports also remain available, including an explicit destination filename.
-//!
-//! During reconnection, `handle_disconnected_key` edits the draft directly without
-//! popup dispatch or submission. Enter and Tab leave the draft intact until reconnection succeeds.
-//! Collapsed pastes expand into editable text so the full draft can be copied before quitting.
 //!
 //! # Reasoning Effort Animations
 //!
