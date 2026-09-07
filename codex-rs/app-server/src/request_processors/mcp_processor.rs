@@ -2,9 +2,9 @@ use super::thread_input::ensure_direct_input_allowed;
 use super::*;
 use codex_core::McpManager;
 use codex_mcp::McpServerSource;
-use codex_rmcp_client::StreamableHttpRedirectMode;
 use codex_mcp::ReadResourceRequestParams;
 use codex_mcp::resolve_oauth_callback;
+use codex_rmcp_client::StreamableHttpRedirectMode;
 
 use crate::thread_state::ThreadStateManager;
 

@@ -1309,24 +1309,6 @@ fn test_tui_vim_mode_default_true() {
 }
 
 #[tokio::test]
-async fn runtime_config_uses_tui_raw_output_mode() {
-    let toml = r#"
-        [tui]
-        raw_output_mode = true
-    "#;
-    let cfg_toml: ConfigToml = toml::from_str(toml).expect("deserialize raw_output_mode=true");
-    let cfg = Config::load_from_base_config_with_overrides(
-        cfg_toml,
-        ConfigOverrides::default(),
-        tempdir().expect("tempdir").abs(),
-    )
-    .await
-    .expect("load config");
-
-    assert!(cfg.tui_raw_output_mode);
-}
-
-#[tokio::test]
 async fn tui_auto_recap_defaults_and_cli_overrides() -> anyhow::Result<()> {
     for (toml, override_value, expected) in [
         ("", None, true),

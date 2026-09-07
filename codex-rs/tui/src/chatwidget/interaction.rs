@@ -217,7 +217,6 @@ impl ChatWidget {
 
     pub(crate) fn start_transcribe_marker(&mut self) -> u64 {
         let marker_id = self.bottom_pane.start_transcribe_marker();
-        self.refresh_plan_mode_nudge();
         self.request_redraw();
         marker_id
     }
@@ -235,7 +234,6 @@ impl ChatWidget {
     pub(crate) fn replace_transcribe_marker(&mut self, marker_id: u64, text: &str) -> bool {
         let replaced = self.bottom_pane.replace_transcribe_marker(marker_id, text);
         if replaced {
-            self.refresh_plan_mode_nudge();
             self.request_redraw();
         }
         replaced

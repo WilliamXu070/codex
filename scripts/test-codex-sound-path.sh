@@ -50,4 +50,16 @@ if ! grep -q 'kind=immediate' "$LOG_FILE" ||
   exit 1
 fi
 
+# Interactive questions use the same immediate approval sound route.
+: > "$LOG_FILE"
+env CODEX_SOUND_STATE_FILE="$STATE_FILE" CODEX_SOUND_LOG="$LOG_FILE" CODEX_SOUND_DRY_RUN=1 \
+  /bin/zsh "$SOUND_HOOK" --event request-user-input '{"source":"sound-regression-question"}'
+
+if ! grep -q 'kind=immediate' "$LOG_FILE" ||
+   ! grep -q '/audio/wilhelm-scream.mp3' "$LOG_FILE"; then
+  echo "user-input sound selection regression" >&2
+  cat "$LOG_FILE" >&2
+  exit 1
+fi
+
 echo "codex sound path regression passed"

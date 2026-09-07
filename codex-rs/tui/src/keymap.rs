@@ -1771,7 +1771,6 @@ impl RuntimeKeymap {
             ("clear_terminal", self.app.clear_terminal.as_slice()),
             ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
             ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
-            ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
             ("toggle_side_conversation", side_toggle_bindings.as_slice()),
             ("chat.interrupt_turn", self.chat.interrupt_turn.as_slice()),
             (

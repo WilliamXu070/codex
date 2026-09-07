@@ -617,7 +617,7 @@ async fn request_user_input_notification_overrides_pending_agent_turn_complete_n
 
     assert_matches!(
         chat.pending_notification,
-        Some(Notification::PlanModePrompt { ref title }) if title == "Reasoning scope"
+        Some(Notification::UserInputRequested { ref title }) if title == "Reasoning scope"
     );
 }
 
@@ -625,7 +625,7 @@ async fn request_user_input_notification_overrides_pending_agent_turn_complete_n
 async fn handle_request_user_input_sets_pending_notification() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     chat.config.tui_notifications.notifications =
-        Notifications::Custom(vec!["plan-mode-prompt".to_string()]);
+        Notifications::Custom(vec!["request-user-input".to_string()]);
 
     chat.handle_request_user_input_now(ToolRequestUserInputParams {
         thread_id: "thread-1".to_string(),
@@ -648,7 +648,7 @@ async fn handle_request_user_input_sets_pending_notification() {
 
     assert_matches!(
         chat.pending_notification,
-        Some(Notification::PlanModePrompt { ref title }) if title == "Reasoning scope"
+        Some(Notification::UserInputRequested { ref title }) if title == "Reasoning scope"
     );
 }
 

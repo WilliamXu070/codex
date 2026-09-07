@@ -3,6 +3,7 @@ use crate::chatwidget::UserMessage;
 use crate::chatwidget::tests::helpers::normalize_snapshot_paths;
 use codex_app_server_protocol::GetAccountRateLimitsResponse;
 use codex_app_server_protocol::ThreadSettingsUpdateParams;
+use codex_protocol::openai_models::MODEL_SPECIALTY_CYBER;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 

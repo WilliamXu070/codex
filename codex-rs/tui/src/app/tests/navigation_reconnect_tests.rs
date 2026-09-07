@@ -8,6 +8,7 @@ use crate::app::reconnect::reconnect;
 use crate::app_event::AgentsOverviewThreadRefresh;
 use crate::app_server_session::ThreadParamsMode;
 use codex_app_server_client::AppServerEvent;
+use codex_app_server_protocol::ThreadArchivedNotification;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
