@@ -77,6 +77,14 @@ state outside this Desktop-backed checkout. The `justfile` defaults
 state; direct Cargo commands must use the same settings. Never use
 `codex-rs/target` or a release-install directory as a Cargo target directory.
 
+Mutable development artifacts must never replace the production launchers
+`~/.local/bin/codex`, `~/.local/bin/codex-tui`, or
+`~/.local/bin/codex-code-mode-host`. Run a candidate directly from
+`/private/tmp/codex-tui-target`, or expose it only through clearly named
+development launchers such as `codex-dev` and `codex-tui-dev`. Production
+launchers and `~/.local/lib/codex/current` are activated only by the release
+agent from an immutable release directory after required CI passes.
+
 ## The `codex-core` crate
 
 Over time, the `codex-core` crate (defined in `codex-rs/core/`) has become bloated because it is the largest crate, so it is often easier to add something new to `codex-core` rather than refactor out the library code you need so your new code neither takes a dependency on, nor contributes to the size of, `codex-core`.

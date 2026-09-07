@@ -1590,6 +1590,66 @@ def install_active_cli(
     )
 
 
+def reconcile_active_cli(
+    *,
+    installed_cli: str | None,
+    version: str,
+    cwd: Path,
+    active_cli: Path,
+    active_tui: Path,
+    active_code_mode_host: Path,
+    current_link: Path,
+    code_signing: CodeSigningConfig | None = None,
+) -> bool:
+    if installed_cli is None:
+        return False
+
+    cli = Path(installed_cli).expanduser().absolute()
+    release_dir = cli.parent.parent
+    tui = cli.parent / "codex-tui"
+    code_mode_host = cli.parent / "codex-code-mode-host"
+    for binary in (cli, tui):
+        if code_signing is not None:
+            verify_macos_binary_signature(binary, code_signing)
+        output = run_command([str(binary), "--version"], cwd=cwd).stdout
+        if version not in output:
+            raise ReleaseAgentError(
+                f"installed binary reports {output.strip()!r}, expected {version!r}"
+            )
+    if code_signing is not None:
+        verify_macos_binary_signature(code_mode_host, code_signing)
+    verify_code_mode_host(code_mode_host, cwd=cwd)
+
+    desired = (
+        (active_cli, cli),
+        (active_tui, tui),
+        (active_code_mode_host, code_mode_host),
+        (current_link, release_dir),
+    )
+    previous = tuple((link, symlink_target(link)) for link, _ in desired)
+    if all(
+        previous_target == str(target)
+        for (_, previous_target), (_, target) in zip(previous, desired)
+    ):
+        return False
+
+    try:
+        for link, target in desired:
+            replace_symlink(link, target)
+        for binary in (active_cli, active_tui):
+            output = run_command([str(binary), "--version"], cwd=cwd).stdout
+            if version not in output:
+                raise ReleaseAgentError(
+                    f"active binary reports {output.strip()!r}, expected {version!r}"
+                )
+        verify_code_mode_host(active_code_mode_host, cwd=cwd)
+    except Exception:
+        for link, previous_target in previous:
+            replace_symlink(link, previous_target)
+        raise
+    return True
+
+
 @contextlib.contextmanager
 def exclusive_lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1623,6 +1683,9 @@ def execute(args: argparse.Namespace) -> RunResult:
     with exclusive_lock(state_dir / "agent.lock"):
         for stale_workspace in prune_release_workspaces(state_dir=state_dir):
             print(f"pruned stale release workspace: {stale_workspace}")
+        if not source_root.is_dir():
+            raise ReleaseAgentError(f"source checkout is missing: {source_root}")
+        before = source_fingerprint(source_root)
         claim = ledger.claim(
             args.repository,
             args.release_tag,
@@ -1630,16 +1693,37 @@ def execute(args: argparse.Namespace) -> RunResult:
             retry_failed=args.retry_failed,
         )
         if not claim.acquired:
+            reconciled = False
+            if claim.status == "succeeded" and activation_requested:
+                row = ledger.get(args.repository, args.release_tag)
+                reconciled = reconcile_active_cli(
+                    installed_cli=(
+                        str(row["installed_cli"])
+                        if row and row["installed_cli"]
+                        else None
+                    ),
+                    version=version,
+                    cwd=source_root,
+                    active_cli=args.active_cli.expanduser().absolute(),
+                    active_tui=args.active_tui.expanduser().absolute(),
+                    active_code_mode_host=(
+                        args.active_code_mode_host.expanduser().absolute()
+                    ),
+                    current_link=args.current_link.expanduser().absolute(),
+                    code_signing=code_signing,
+                )
+            reason = f"already {claim.status} after {claim.attempts} attempt(s)"
+            if reconciled:
+                reason += "; active runtime reconciled"
             return RunResult(
                 repository=args.repository,
                 tag=args.release_tag,
                 status="skipped",
-                reason=f"already {claim.status} after {claim.attempts} attempt(s)",
+                reason=reason,
             )
 
         try:
             workspace = state_dir / "workspaces" / safe_tag_name(args.release_tag)
-            before = source_fingerprint(source_root)
             workspace, branch, source_head, context_dir = prepare_workspace(
                 source_root=source_root,
                 state_dir=state_dir,
