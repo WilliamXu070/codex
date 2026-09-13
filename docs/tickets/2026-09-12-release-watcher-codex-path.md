@@ -27,6 +27,12 @@ intentionally allowed to be old and dirty, so the installed runner must default
 to the installed agent copy while the repository script must continue using its
 source-tree peer.
 
+The next retry reached the canonical binary but its restricted filesystem
+profile did not permit the binary's immutable release directory. Session
+initialization failed when the sandbox helper attempted to re-execute Codex.
+The agent must resolve an absolute launcher to its immutable target and add only
+that target directory to the read profile.
+
 ## Plan
 
 1. Resolve the release-agent binary to the canonical active launcher when it
@@ -34,11 +40,13 @@ source-tree peer.
 2. Give launchd an explicit canonical binary and include the local bin directory
    in its deterministic `PATH`.
 3. Make the installed runner self-contained without changing source-tree runs.
-4. Add regression coverage for canonical, configured, bootstrap, and installed
-   runner resolution.
-5. Pass focused updater tests and required fork CI, reinstall the watcher, and
+4. Allow the resolved immutable binary directory in the integration agent's
+   restricted read profile.
+5. Add regression coverage for canonical, configured, bootstrap, installed
+   runner, and sandboxed runtime resolution.
+6. Pass focused updater tests and required fork CI, reinstall the watcher, and
    explicitly retry `rust-v0.154.0`.
-6. Verify the signed three-binary bundle, unique shell resolution, live process
+7. Verify the signed three-binary bundle, unique shell resolution, live process
    mapping, and an end-to-end terminal launch.
 
 ## Status
