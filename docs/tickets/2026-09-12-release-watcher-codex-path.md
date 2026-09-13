@@ -51,4 +51,16 @@ that target directory to the read profile.
 
 ## Status
 
-Diagnosed on 2026-09-12; implementation in progress.
+Resolved on 2026-09-12.
+
+- Release-watcher fixes merged through PRs #39, #40, and #41.
+- The `rust-v0.154.0` integration passed the required fork CI in PR #42 and
+  merged as `cb16cabb920219634c418a098ed00e375f16fd60`.
+- The signed runtime activated at
+  `~/.local/lib/codex/releases/0.154.0-cb16cabb9202/debug/`, with the three
+  canonical `~/.local/bin` launchers resolving only to that bundle.
+- A fresh login-shell launch rendered `OpenAI Codex (v0.154.0)`, initialized a
+  model and session, and `lsof` mapped the process executable to the installed
+  immutable bundle.
+- A subsequent launchd watcher cycle exited successfully and skipped the tag as
+  `already succeeded after 4 attempt(s)`.
