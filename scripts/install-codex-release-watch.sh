@@ -15,7 +15,7 @@ TRIGGER_RUNTIME="${HOME}/.local/bin/codex-release-watch-runner.sh"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-900}"
 CHANNEL="${CODEX_RELEASE_CHANNEL:-stable}"
 ACTION="install"
-LAUNCHD_PATH_ENV="/Users/williamxu/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+LAUNCHD_PATH_ENV="${HOME}/.local/bin:/Users/williamxu/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 usage() {
   cat <<'EOF'
@@ -113,6 +113,8 @@ case "$ACTION" in
     <string>${CODEX_ROOT}</string>
     <key>CODEX_RELEASE_AGENT_SCRIPT</key>
     <string>${AGENT_RUNTIME}</string>
+    <key>CODEX_RELEASE_AGENT_BINARY</key>
+    <string>${HOME}/.local/bin/codex</string>
     <key>PATH</key>
     <string>${LAUNCHD_PATH_ENV}</string>
   </dict>
