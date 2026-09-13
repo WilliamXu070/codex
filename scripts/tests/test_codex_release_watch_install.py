@@ -56,6 +56,25 @@ class ReleaseWatchInstallTests(unittest.TestCase):
                 str(home / ".local/bin"),
             )
 
+            runtime_agent = home / ".local/lib/codex/codex-release-agent.py"
+            invocation = home / "release-agent-invocation"
+            runtime_agent.write_text(
+                '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$HOME/release-agent-invocation"\n',
+                encoding="utf-8",
+            )
+            runtime_agent.chmod(0o755)
+            environment.pop("CODEX_RELEASE_AGENT_SCRIPT", None)
+            subprocess.run(
+                [str(home / ".local/bin/codex-release-watch-runner.sh"), "--watch"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertIn(
+                "--latest", invocation.read_text(encoding="utf-8").splitlines()
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
