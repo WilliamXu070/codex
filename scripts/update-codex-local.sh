@@ -2,7 +2,13 @@
 set -euo pipefail
 
 CODEX_ROOT="${CODEX_ROOT:-/Users/williamxu/Desktop/Projects/codex}"
-AGENT_SCRIPT="${CODEX_RELEASE_AGENT_SCRIPT:-${CODEX_ROOT}/scripts/codex-release-agent.py}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$SCRIPT_DIR" == "${HOME}/.local/bin" ]]; then
+  DEFAULT_AGENT_SCRIPT="${HOME}/.local/lib/codex/codex-release-agent.py"
+else
+  DEFAULT_AGENT_SCRIPT="${CODEX_ROOT}/scripts/codex-release-agent.py"
+fi
+AGENT_SCRIPT="${CODEX_RELEASE_AGENT_SCRIPT:-${DEFAULT_AGENT_SCRIPT}}"
 CHANNEL="${CODEX_RELEASE_CHANNEL:-stable}"
 RELEASE_TAG=""
 DELIVERY="manual"
