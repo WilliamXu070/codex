@@ -837,8 +837,15 @@ def run_codex_agent(
     rustup_home = Path(os.environ.get("RUSTUP_HOME", Path.home() / ".rustup"))
     git_config = Path.home() / ".gitconfig"
     git_config_dir = Path.home() / ".config/git"
+    codex_command = codex_binary
+    codex_runtime_permission = ""
+    codex_path = Path(codex_binary).expanduser()
+    if codex_path.is_absolute() and codex_path.exists():
+        resolved_codex = codex_path.resolve()
+        codex_command = str(resolved_codex)
+        codex_runtime_permission = f'{json.dumps(str(resolved_codex.parent))}="read",'
     command = [
-        codex_binary,
+        codex_command,
         "exec",
         # Release integration must not initialize personal MCP servers, plugins,
         # hooks, or other user-configured side effects. Authentication still uses
@@ -859,6 +866,7 @@ def run_codex_agent(
             f'{json.dumps(str(rustup_home))}="read",'
             f'{json.dumps(str(git_config))}="read",'
             f'{json.dumps(str(git_config_dir))}="read",'
+            f"{codex_runtime_permission}"
             '":workspace_roots"={'
             '"."="write",'
             '".git"="write",'

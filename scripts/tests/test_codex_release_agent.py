@@ -939,6 +939,35 @@ class AgentSandboxTests(unittest.TestCase):
             self.assertIn('".codex"="write"', filesystem_config)
             self.assertIn('".agents"="write"', filesystem_config)
 
+    def test_agent_resolves_and_allows_immutable_runtime_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            runtime = root / "releases/0.154.0/debug"
+            runtime.mkdir(parents=True)
+            binary = runtime / "codex"
+            binary.write_text("#!/bin/sh\n", encoding="utf-8")
+            binary.chmod(0o755)
+            launcher = root / "bin/codex"
+            launcher.parent.mkdir()
+            launcher.symlink_to(binary)
+
+            with mock.patch.object(agent, "run_command") as run_command:
+                agent.run_codex_agent(
+                    workspace=workspace,
+                    prompt="integrate",
+                    state_dir=root / "state",
+                    tag="rust-v0.154.0",
+                    codex_binary=str(launcher),
+                    timeout_seconds=10,
+                )
+
+            command = run_command.call_args.args[0]
+            self.assertEqual(command[0], str(binary.resolve()))
+            filesystem_config = command[command.index("-c", 6) + 1]
+            self.assertIn(f'"{runtime.resolve()}"="read"', filesystem_config)
+
 
 class RepairLoopTests(unittest.TestCase):
     def test_validation_failure_gets_one_bounded_repair(self) -> None:
