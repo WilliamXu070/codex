@@ -68,6 +68,15 @@ class ReleaseAgentError(RuntimeError):
     pass
 
 
+def resolve_codex_binary() -> str:
+    configured = os.environ.get("CODEX_RELEASE_AGENT_BINARY")
+    if configured:
+        return configured
+    if DEFAULT_ACTIVE_CLI.is_file() and os.access(DEFAULT_ACTIVE_CLI, os.X_OK):
+        return str(DEFAULT_ACTIVE_CLI)
+    return "codex"
+
+
 @dataclasses.dataclass(frozen=True)
 class Claim:
     acquired: bool
@@ -1908,7 +1917,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--codex-binary",
-        default=os.environ.get("CODEX_RELEASE_AGENT_BINARY", "codex"),
+        default=resolve_codex_binary(),
     )
     parser.add_argument(
         "--timeout-seconds",

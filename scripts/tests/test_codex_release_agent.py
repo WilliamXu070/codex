@@ -106,6 +106,49 @@ class ReleaseValidationTests(unittest.TestCase):
             agent.validate_release("openai/codex", "rusty-v8-v146.4.0")
 
 
+class CodexBinaryResolutionTests(unittest.TestCase):
+    def test_prefers_configured_binary(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"CODEX_RELEASE_AGENT_BINARY": "/opt/codex/bin/codex"},
+        ):
+            self.assertEqual(agent.resolve_codex_binary(), "/opt/codex/bin/codex")
+
+    def test_uses_executable_active_launcher(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "release" / "codex"
+            target.parent.mkdir()
+            target.write_text("#!/bin/sh\n", encoding="utf-8")
+            target.chmod(0o755)
+            launcher = Path(temp) / "bin" / "codex"
+            launcher.parent.mkdir()
+            launcher.symlink_to(target)
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CODEX_RELEASE_AGENT_BINARY": ""},
+                ),
+                mock.patch.object(agent, "DEFAULT_ACTIVE_CLI", launcher),
+            ):
+                self.assertEqual(agent.resolve_codex_binary(), str(launcher))
+
+    def test_retains_bootstrap_path_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CODEX_RELEASE_AGENT_BINARY": ""},
+                ),
+                mock.patch.object(
+                    agent,
+                    "DEFAULT_ACTIVE_CLI",
+                    Path(temp) / "missing-codex",
+                ),
+            ):
+                self.assertEqual(agent.resolve_codex_binary(), "codex")
+
+
 class WorkspacePreparationTests(unittest.TestCase):
     def test_new_workspace_starts_from_current_origin_main(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
