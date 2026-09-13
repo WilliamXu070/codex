@@ -294,10 +294,14 @@ mod draft_state;
 mod footer_state;
 mod history_search;
 mod inline_input;
+#[path = "parent_owned_command.rs"]
+mod parent_owned_command;
 mod popup_state;
 mod reconnect;
 mod slash_input;
 mod sparkle;
+#[path = "transcribe_waveform.rs"]
+mod transcribe_waveform;
 mod vim_history;
 mod vim_search;
 
@@ -306,58 +310,21 @@ use self::draft_state::ComposerMentionBinding;
 use self::draft_state::DraftState;
 use self::footer_state::FooterState;
 use self::history_search::HistorySearchSession;
+use self::parent_owned_command::parent_owned_command_is_allowed;
 use self::popup_state::ActivePopup;
 use self::popup_state::DismissedToken;
 use self::popup_state::PopupState;
 use self::slash_input::SlashInput;
 use self::slash_input::SlashValidation;
 use self::slash_input::SubmissionValidation;
+use self::transcribe_waveform::TRANSCRIBE_WAVEFORM_WIDTH;
+use self::transcribe_waveform::transcribe_marker_text;
 use self::vim_history::VimHistory;
 use crate::app_event::AppEvent;
 use crate::app_event::ConnectorsSnapshot;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::LocalImageAttachment;
 use crate::bottom_pane::MentionBinding;
-
-const TRANSCRIBE_WAVEFORM_WIDTH: usize = 5;
-const TRANSCRIBE_BRAILLE_BLANK: u32 = 0x2800;
-const TRANSCRIBE_BRAILLE_LEFT_DOTS: [u32; 4] = [0x02, 0x04, 0x01, 0x40];
-const TRANSCRIBE_BRAILLE_RIGHT_DOTS: [u32; 4] = [0x10, 0x20, 0x08, 0x80];
-
-fn transcribe_sample_level(sample: f32) -> usize {
-    let sample = sample.clamp(/*min*/ 0.0, /*max*/ 1.0);
-    if sample < 0.02 {
-        0
-    } else {
-        (sample.sqrt() * TRANSCRIBE_BRAILLE_LEFT_DOTS.len() as f32)
-            .ceil()
-            .clamp(
-                /*min*/ 1.0,
-                /*max*/ TRANSCRIBE_BRAILLE_LEFT_DOTS.len() as f32,
-            ) as usize
-    }
-}
-
-fn transcribe_braille_column(sample: f32, dots: &[u32; 4]) -> u32 {
-    dots.iter()
-        .take(transcribe_sample_level(sample))
-        .fold(/*init*/ 0, |cell, dot| cell | dot)
-}
-
-fn transcribe_marker_text(samples: &[f32]) -> String {
-    samples
-        .chunks(/*chunk_size*/ 2)
-        .take(TRANSCRIBE_WAVEFORM_WIDTH)
-        .map(|chunk| {
-            let left = chunk.first().copied().unwrap_or(/*default*/ 0.0);
-            let right = chunk.get(/*index*/ 1).copied().unwrap_or(/*default*/ 0.0);
-            let cell = TRANSCRIBE_BRAILLE_BLANK
-                | transcribe_braille_column(left, &TRANSCRIBE_BRAILLE_LEFT_DOTS)
-                | transcribe_braille_column(right, &TRANSCRIBE_BRAILLE_RIGHT_DOTS);
-            char::from_u32(cell).unwrap_or('\u{2800}')
-        })
-        .collect()
-}
 
 use crate::bottom_pane::textarea::TextArea;
 use crate::clipboard_paste::normalize_pasted_path;
@@ -425,57 +392,6 @@ pub enum InputResult {
     /// Agent-directed input was attempted while viewing a parent-owned spawned child thread.
     ParentOwnedInputBlocked,
     None,
-}
-
-fn parent_owned_command_is_allowed(command: SlashCommand, args: &str) -> bool {
-    if command == SlashCommand::Export {
-        return true;
-    }
-
-    args.is_empty()
-        && matches!(
-            command,
-            SlashCommand::Feedback
-                | SlashCommand::New
-                | SlashCommand::Clear
-                | SlashCommand::Resume
-                | SlashCommand::App
-                | SlashCommand::Side
-                | SlashCommand::Btw
-                | SlashCommand::Agents
-                | SlashCommand::MultiAgents
-                | SlashCommand::Vim
-                | SlashCommand::Keymap
-                | SlashCommand::ElevateSandbox
-                | SlashCommand::SandboxReadRoot
-                | SlashCommand::Experimental
-                | SlashCommand::Memories
-                | SlashCommand::Quit
-                | SlashCommand::Exit
-                | SlashCommand::Logout
-                | SlashCommand::Copy
-                | SlashCommand::Diff
-                | SlashCommand::Mention
-                | SlashCommand::Skills
-                | SlashCommand::Import
-                | SlashCommand::Hooks
-                | SlashCommand::Status
-                | SlashCommand::Usage
-                | SlashCommand::Ide
-                | SlashCommand::DebugConfig
-                | SlashCommand::Title
-                | SlashCommand::Statusline
-                | SlashCommand::Theme
-                | SlashCommand::Pets
-                | SlashCommand::Ps
-                | SlashCommand::Stop
-                | SlashCommand::MemoryDrop
-                | SlashCommand::MemoryUpdate
-                | SlashCommand::Mcp
-                | SlashCommand::Apps
-                | SlashCommand::Plugins
-                | SlashCommand::Rollout
-        )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
