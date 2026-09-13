@@ -201,6 +201,7 @@ impl AppServerSession {
         turn_cursor: Option<String>,
         item_cursor: Option<String>,
         config: Option<&Config>,
+        local_settings: Option<&crate::local_settings::LocalSettings>,
         scope: HistoryHydrationScope,
     ) -> Result<()> {
         let thread_id = ThreadId::from_string(&thread.id)
@@ -226,8 +227,8 @@ impl AppServerSession {
         let width = crossterm::terminal::size()
             .map(|(width, _)| width.max(/*other*/ 1))
             .unwrap_or(/*default*/ 80);
-        let row_budget =
-            config.and_then(|config| resize_reflow_max_rows(config.terminal_resize_reflow));
+        let row_budget = local_settings
+            .and_then(|settings| resize_reflow_max_rows(settings.terminal_resize_reflow()));
         let item_budget = match (scope, config, row_budget) {
             (HistoryHydrationScope::Complete, _, _)
             | (HistoryHydrationScope::Initial, Some(_), None) => None,

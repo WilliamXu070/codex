@@ -141,7 +141,10 @@ pub(crate) enum StatusLineItem {
     /// Whether Fast mode is currently active.
     FastMode,
 
-    /// Current thread title (if set by user).
+    /// Current thread name, omitted when unnamed.
+    ThreadName,
+
+    /// Current thread title, falling back to its identifier when unnamed.
     ThreadTitle,
 
     /// Current workspace notification headline.
@@ -198,6 +201,7 @@ impl StatusLineItem {
             }
             StatusLineItem::SessionId => "Current thread identifier (omitted until thread starts)",
             StatusLineItem::FastMode => "Whether Fast mode is currently active",
+            StatusLineItem::ThreadName => "Current thread name (omitted when unnamed)",
             StatusLineItem::ThreadTitle => {
                 "Current thread title, or thread identifier when unnamed"
             }
@@ -237,6 +241,7 @@ impl StatusLineItem {
             StatusLineItem::EstimatedThreadCost => StatusSurfacePreviewItem::EstimatedThreadCost,
             StatusLineItem::SessionId => StatusSurfacePreviewItem::SessionId,
             StatusLineItem::FastMode => StatusSurfacePreviewItem::FastMode,
+            StatusLineItem::ThreadName => StatusSurfacePreviewItem::ThreadName,
             StatusLineItem::ThreadTitle => StatusSurfacePreviewItem::ThreadTitle,
             StatusLineItem::WorkspaceHeadline => StatusSurfacePreviewItem::WorkspaceHeadline,
             StatusLineItem::TaskProgress => StatusSurfacePreviewItem::TaskProgress,

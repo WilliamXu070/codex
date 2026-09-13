@@ -941,6 +941,7 @@ mod tests {
                 "Editor.insert_newline",
                 "Composer.queue",
                 "Global.open_external_editor",
+                "Global.transcribe",
                 "Global.copy",
                 "Global.toggle_vim_mode",
                 "Editor.delete_backward_word",
@@ -1150,6 +1151,39 @@ mod tests {
             .expect("redo row should render");
 
         assert_snapshot!("keymap_picker_redo", redo_row);
+    }
+
+    #[test]
+    fn picker_question_actions_snapshot() {
+        let runtime = RuntimeKeymap::defaults();
+        let params = build_keymap_picker_params_for_selected_action(
+            &runtime,
+            &TuiKeymap::default(),
+            "chat",
+            "skip_question",
+        );
+        assert_snapshot!(
+            "keymap_question_actions",
+            render_picker(params, /*width*/ 120)
+        );
+        let descriptions = ["edit_queued_message", "prompt_stack_back", "skip_question"]
+            .map(|action| {
+                render_picker(
+                    build_keymap_action_menu_params(
+                        "chat".into(),
+                        action.into(),
+                        &runtime,
+                        &TuiKeymap::default(),
+                    ),
+                    /*width*/ 120,
+                )
+                .split("\n\n")
+                .next()
+                .unwrap()
+                .to_string()
+            })
+            .join("\n\n");
+        assert_snapshot!("keymap_question_action_descriptions", descriptions);
     }
 
     #[test]
