@@ -155,15 +155,23 @@ impl App {
     }
 
     fn active_keymap_contexts(&self) -> crate::keymap::KeymapContextSet {
-        if self.overlay.is_some() {
-            return crate::keymap::KeymapContextSet::new(crate::keymap::KeymapContext::Pager);
-        }
+        use crate::keymap::KeymapContext;
+        use crate::keymap::KeymapContextSet;
 
+        if self.overlay.is_some() {
+            return KeymapContextSet::new(KeymapContext::Pager);
+        }
+        let voice_available = self.chat_widget.realtime_microphone_shortcut_available();
         let contexts = self.chat_widget.keymap_contexts();
         if self.chat_widget.no_modal_or_popup_active() {
-            contexts
-                .with(crate::keymap::KeymapContext::Global)
-                .with(crate::keymap::KeymapContext::Chat)
+            let contexts = contexts
+                .with(KeymapContext::Global)
+                .with(KeymapContext::Chat);
+            if voice_available {
+                contexts.with(KeymapContext::Voice)
+            } else {
+                contexts
+            }
         } else {
             contexts
         }
@@ -238,6 +246,30 @@ impl App {
         self.chat_widget
             .set_external_editor_state(ExternalEditorState::Closed);
         self.chat_widget.set_footer_hint_override(/*items*/ None);
+        tui.frame_requester().schedule_frame();
+    }
+
+    pub(super) fn apply_raw_output_mode(
+        &mut self,
+        tui: &mut tui::Tui,
+        enabled: bool,
+        notify: bool,
+    ) {
+        if notify {
+            self.chat_widget.set_raw_output_mode_and_notify(enabled);
+        } else {
+            self.chat_widget.set_raw_output_mode(enabled);
+        }
+        if self.overlay.is_some() {
+            self.schedule_immediate_resize_reflow(tui);
+            return;
+        }
+        let terminal_width = tui.terminal.last_known_screen_size.into();
+        if let Err(err) = self.reflow_transcript_now(tui, terminal_width) {
+            tracing::warn!(error = %err, "failed to reflow transcript after raw output mode toggle");
+            self.chat_widget
+                .add_error_message(format!("Failed to redraw transcript: {err}"));
+        }
         tui.frame_requester().schedule_frame();
     }
 
