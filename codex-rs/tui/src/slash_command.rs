@@ -186,7 +186,6 @@ impl SlashCommand {
                 | SlashCommand::Side
                 | SlashCommand::Btw
                 | SlashCommand::Resume
-                | SlashCommand::SandboxReadRoot
                 | SlashCommand::TranscribeCommand
         )
     }

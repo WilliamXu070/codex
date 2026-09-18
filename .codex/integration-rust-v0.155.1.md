@@ -178,3 +178,41 @@ not a full test/build or runtime deployment. The orchestrator still needs
 normal tool access for the blocked checks and the existing publication gate.
 The live checkout, production launchers, and immutable release installation
 were not changed. Nothing was pushed and no PR was opened.
+
+## Follow-up: removed sandbox command integration repair
+
+The orchestrator's build found two references to the removed
+`SlashCommand::SandboxReadRoot` variant. Upstream commit `a3ba42b01`
+intentionally removed `/sandbox-add-read-dir`, its variant, and its handlers.
+The merge retained a reference in the fork's extracted parent-owned command
+helper and another beside the custom transcription inline-argument entry.
+Remove only those two stale entries. Retain the extracted helper, transcription
+command, and all other custom command behavior. No replacement command or
+negative test for removed behavior is added.
+
+The initial worktree was clean; this attempt generated no lockfile changes.
+
+Validation for this repair:
+
+- PASS: `cargo check --locked -p codex-tui`, confirming both stale-variant
+  compile errors are resolved.
+- PASS: `cargo shear --deny-warnings` (no issues found).
+- PASS: sound-path regression with `CODEX_ROOT` set to this clone.
+- PASS: `cargo fmt -- --config imports_granularity=Item` (no additional diff).
+  Stable rustfmt warns that import-granularity enforcement requires nightly.
+- PASS: `git diff --check`, absence of removed-command references in TUI
+  source, and ancestry checks for the starting fork and official release.
+- BLOCKED: `just test -p codex-tui` and `just fmt`: execution of the installed
+  `/opt/homebrew/bin/just` is denied by this sandbox. No tools were replaced
+  and no tests were weakened.
+- BLOCKED: `cargo build --locked -p codex-cli -p codex-tui -p
+  codex-code-mode-host` (exit 101): V8 150.4.0 could not download
+  `librusty_v8_ptrcomp_sandbox_release_aarch64-apple-darwin.a.gz` from the
+  denoland/rusty_v8 GitHub release because DNS resolution failed.
+
+Compiler state remains in `/private/tmp/codex-tui-target` with incremental
+compilation disabled. The orchestrator must retry the build and tests with
+normal dependency/tool access. Production installation, runtime identity,
+and launcher verification remain incomplete and belong to the immutable
+release handoff. The live checkout and production launchers were untouched;
+no push or PR was made.
