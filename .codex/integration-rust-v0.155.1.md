@@ -142,3 +142,39 @@ Intentional untracked manifest (8 files):
 - `scripts/install-codex-release-webhook.sh`
 - `scripts/test-codex-sound-path.sh`
 - `william/transcribe/record-wav-live.py`
+
+## Follow-up: cargo-shear validation repair
+
+The orchestrator found `shear/unlinked_files` for
+`codex-rs/login/src/internal_identity.rs`. Commit `0df6366a8` introduced this
+file containing only a module documentation comment, with no implementation
+or module declaration. Repository-wide reference inspection found no callers.
+Remove the inert file instead of adding a suppression or an empty module.
+This repair does not change William's custom runtime behavior.
+
+Retain the build-created Cargo.lock changes: all 157 workspace package
+versions now match their manifests at 0.155.1. Inspection confirmed that
+these are exclusively version changes from 0.154.0 (or 0.0.0); no external
+dependency versions, checksums, sources, or dependency lists changed.
+
+Follow-up validation:
+
+- PASS: `cargo shear --deny-warnings`: no issues found.
+- PASS: `cargo check --locked -p codex-login`.
+- PASS: `cargo metadata --locked --no-deps --format-version 1` and comparison
+  of all 157 workspace package versions against Cargo.lock.
+- PASS: sound-path regression with `CODEX_ROOT` set to this clone.
+- PASS: `cargo fmt -- --config imports_granularity=Item`; stable rustfmt
+  warns that the import-granularity option needs nightly. No formatting diff.
+- PASS: `git diff --check` and ancestry checks for the official release and
+  the starting fork.
+- BLOCKED: `just test -p codex-login`, `just fmt`, and
+  `just bazel-lock-update`: `zsh: operation not permitted: just`.
+  No tools were replaced, no tests weakened, and no lint suppression added.
+
+Cargo compiler state remained in `/private/tmp/codex-tui-target` with
+`CARGO_INCREMENTAL=0`. This is a source repair and focused compile check,
+not a full test/build or runtime deployment. The orchestrator still needs
+normal tool access for the blocked checks and the existing publication gate.
+The live checkout, production launchers, and immutable release installation
+were not changed. Nothing was pushed and no PR was opened.
