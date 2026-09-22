@@ -55,22 +55,25 @@ I learned that building does not end when the first prototype works. The real ch
 }
 
 #[test]
-fn cyan_path_removes_visual_wrap_without_adding_a_space() {
+fn themed_path_removes_visual_wrap_without_adding_a_space() {
     let path = "/Users/williamxu/Desktop/Projects/codex/codex-rs/tui/src/app.rs";
     let markdown = format!("Open `{path}`.");
     let cell = AgentMarkdownCell::new(markdown.clone(), Path::new("/tmp"));
     let lines = cell.clipboard_repair_lines();
-    assert!(lines.iter().flat_map(|line| &line.line.spans).any(|span| {
-        matches!(
-            span.style.patch(ratatui::style::Style::default()).fg,
-            Some(
-                ratatui::style::Color::Blue
-                    | ratatui::style::Color::LightBlue
-                    | ratatui::style::Color::Cyan
-                    | ratatui::style::Color::LightCyan
-            )
-        ) && span.content.contains(path)
-    }));
+    let expected_style = crate::render::highlight::foreground_style_for_scopes_with_theme(
+        &crate::render::highlight::current_syntax_theme(),
+        &[
+            "markup.inline.raw.string.markdown",
+            "markup.raw.inline.markdown",
+        ],
+    )
+    .unwrap_or_else(|| ratatui::style::Style::default().fg(crate::style::accent_color()));
+    let path_span = lines
+        .iter()
+        .flat_map(|line| &line.line.spans)
+        .find(|span| span.content == path)
+        .expect("the complete path should remain a single span");
+    assert_eq!(path_span.style, expected_style);
 
     let copied = "Open /Users/williamxu/Desktop/Projects/codex/\n  codex-rs/tui/src/app.rs.";
     assert_eq!(
