@@ -62,4 +62,25 @@ if ! grep -q 'kind=immediate' "$LOG_FILE" ||
   exit 1
 fi
 
+# Resetting the fixed selection must restore the random completion pool.
+: > "$LOG_FILE"
+env CODEX_SOUND_STATE_FILE="$STATE_FILE" "$SOUND_CMD" track random >/dev/null
+env CODEX_SOUND_STATE_FILE="$STATE_FILE" CODEX_SOUND_LOG="$LOG_FILE" CODEX_SOUND_DRY_RUN=1 \
+  /bin/zsh "$SOUND_HOOK" --event completion '{"source":"sound-regression-random"}'
+if ! grep -q 'kind=completion' "$LOG_FILE" || ! grep -q '/audio/sounds/' "$LOG_FILE"; then
+  echo "random completion sound regression" >&2
+  cat "$LOG_FILE" >&2
+  exit 1
+fi
+
+: > "$LOG_FILE"
+env CODEX_SOUND_STATE_FILE="$STATE_FILE" "$SOUND_CMD" approval default >/dev/null
+env CODEX_SOUND_STATE_FILE="$STATE_FILE" CODEX_SOUND_LOG="$LOG_FILE" CODEX_SOUND_DRY_RUN=1 \
+  /bin/zsh "$SOUND_HOOK" --event approval-requested '{"source":"sound-regression-default-approval"}'
+if ! grep -q 'kind=immediate' "$LOG_FILE" || ! grep -q '/audio/wilhelm-scream.mp3' "$LOG_FILE"; then
+  echo "default approval sound regression" >&2
+  cat "$LOG_FILE" >&2
+  exit 1
+fi
+
 echo "codex sound path regression passed"

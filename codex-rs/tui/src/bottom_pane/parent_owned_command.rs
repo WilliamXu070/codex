@@ -20,12 +20,12 @@ pub(super) fn parent_owned_command_is_allowed(command: SlashCommand, args: &str)
                 | SlashCommand::Vim
                 | SlashCommand::Keymap
                 | SlashCommand::ElevateSandbox
-                | SlashCommand::SandboxReadRoot
                 | SlashCommand::Experimental
                 | SlashCommand::Memories
                 | SlashCommand::Quit
                 | SlashCommand::Exit
                 | SlashCommand::Logout
+                | SlashCommand::Raw
                 | SlashCommand::Copy
                 | SlashCommand::Diff
                 | SlashCommand::Mention
@@ -33,6 +33,8 @@ pub(super) fn parent_owned_command_is_allowed(command: SlashCommand, args: &str)
                 | SlashCommand::Import
                 | SlashCommand::Hooks
                 | SlashCommand::Status
+                | SlashCommand::Warnings
+                | SlashCommand::Daemon
                 | SlashCommand::Usage
                 | SlashCommand::Ide
                 | SlashCommand::DebugConfig
