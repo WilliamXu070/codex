@@ -74,7 +74,6 @@ pub(crate) fn append_markdown_agent(
     crate::render::line_utils::push_owned_lines(&rendered.lines, lines);
 }
 
-#[cfg(test)]
 pub(crate) fn render_markdown_agent_with_links_and_cwd(
     markdown_source: &str,
     width: Option<usize>,
