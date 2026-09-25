@@ -39,6 +39,19 @@ if ! grep -q 'kind=completion' "$LOG_FILE" ||
   exit 1
 fi
 
+# Resetting the completion choice must use the repository's random sound pool.
+env CODEX_SOUND_STATE_FILE="$STATE_FILE" "$SOUND_CMD" track random >/dev/null
+: > "$LOG_FILE"
+env CODEX_SOUND_STATE_FILE="$STATE_FILE" CODEX_SOUND_LOG="$LOG_FILE" CODEX_SOUND_DRY_RUN=1 \
+  /bin/zsh "$SOUND_HOOK" --event completion '{"source":"sound-regression-random"}'
+
+if ! grep -q 'kind=completion' "$LOG_FILE" ||
+   ! grep -q '/sounds/.*\.mp3' "$LOG_FILE"; then
+  echo "random completion sound selection regression" >&2
+  cat "$LOG_FILE" >&2
+  exit 1
+fi
+
 env CODEX_SOUND_STATE_FILE="$STATE_FILE" "$SOUND_CMD" approval set wilhelm-scream.mp3 >/dev/null
 env CODEX_SOUND_STATE_FILE="$STATE_FILE" CODEX_SOUND_LOG="$LOG_FILE" CODEX_SOUND_DRY_RUN=1 \
   /bin/zsh "$SOUND_HOOK" --event approval-requested '{"source":"sound-regression-approval"}'
