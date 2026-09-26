@@ -53,3 +53,13 @@ Every intentional path in `untracked.json` already exists in the fork: clipboard
 - Release-script unittest discovery ran six tests successfully; two modules could not import the release agent because Python 3.9 lacks `tomllib`. Shell syntax checks passed.
 
 The orchestrator must rerun the canonical schema/Bazel regeneration, Python 3.11+ manifest and release-script checks, formatting, full tests, and release build before publication. No runtime delivery is claimed by this integration.
+
+## Shear validation repair
+
+- Started from merge commit `00e13dac9` on `agent/upstream-0.157.1` with a clean worktree; no build-created changes needed preservation. Confirmed the exact release tag remains an ancestor of HEAD.
+- Both reported unlinked Rust files exist verbatim in the official tag and contain only one documentation comment each. Neither defines code or tests nor has a module declaration. Removed these two inert files without adding exclusions, changing dependencies, or weakening tests. Retained the existing MCP snapshot, whose source metadata names the old file.
+- `cargo shear --deny-warnings`: passed with no issues.
+- `cargo check --locked --offline -p codex-login -p codex-core --tests`: passed; reported one existing unused `body_json` import in `core/tests/suite/openai_file_mcp.rs`. No dependency fetch or lockfile modification was needed.
+- `cargo fmt -- --config imports_granularity=Item`: exited successfully and changed no files; stable rustfmt warns that import granularity requires nightly.
+- `just test -p codex-login -p codex-core` and `just fmt`: blocked by sandbox execution permissions on `/opt/homebrew/bin/just`. No tools were replaced.
+- Compiler state stays in `/private/tmp/codex-tui-target` with incremental compilation disabled. The live checkout, production runtime, dependency manifests, and lockfiles remain untouched. Full validation and runtime delivery remain the release orchestrator's responsibility.
