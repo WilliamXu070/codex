@@ -171,7 +171,7 @@ impl ChatWidget {
         args: &[&str],
     ) -> SelectionItem {
         let script = self.config.codex_home.join("commands/transcribe-command");
-        let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        let args = args.iter().map(ToString::to_string).collect::<Vec<_>>();
         SelectionItem {
             name: name.into(),
             description: Some(description.into()),
@@ -248,11 +248,7 @@ impl ChatWidget {
             );
             return;
         }
-        let has_error = output.contains("error:") || output.contains("Usage:");
-        self.add_info_message(output.clone(), /*hint*/ None);
-        if has_error {
-            return;
-        }
+        self.add_info_message(output, /*hint*/ None);
     }
 
     fn transcribe_state(&self) -> TranscribeState {
