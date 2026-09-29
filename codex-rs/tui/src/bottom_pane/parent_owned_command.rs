@@ -26,6 +26,9 @@ pub(super) fn parent_owned_command_is_allowed(command: SlashCommand, args: &str)
                 | SlashCommand::Quit
                 | SlashCommand::Exit
                 | SlashCommand::Logout
+                | SlashCommand::Raw
+                | SlashCommand::Warnings
+                | SlashCommand::Daemon
                 | SlashCommand::Copy
                 | SlashCommand::Diff
                 | SlashCommand::Mention
