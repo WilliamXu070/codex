@@ -119,7 +119,7 @@ impl ChatWidget {
         args: &[&str],
     ) -> SelectionItem {
         let script = self.config.codex_home.join("commands/sound");
-        let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        let args = args.iter().map(ToString::to_string).collect::<Vec<_>>();
         SelectionItem {
             name: name.into(),
             description: Some(description.into()),

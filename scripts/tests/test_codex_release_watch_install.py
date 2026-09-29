@@ -76,5 +76,48 @@ class ReleaseWatchInstallTests(unittest.TestCase):
             )
 
 
+    def test_custom_agent_and_runner_are_used_without_replacing_them(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            launchctl = fake_bin / "launchctl"
+            launchctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            launchctl.chmod(0o755)
+            agent = root / "custom-agent"
+            runner = root / "custom-runner"
+            original = "#!/bin/sh\nexit 0 # custom executable\n"
+            for executable in (agent, runner):
+                executable.write_text(original, encoding="utf-8")
+                executable.chmod(0o755)
+            home = root / "home"
+            environment = dict(
+                os.environ,
+                HOME=str(home),
+                PATH=f"{fake_bin}:/usr/bin:/bin",
+                CODEX_ROOT=str(REPO_ROOT),
+                CODEX_RELEASE_AGENT_SCRIPT=str(agent),
+                CODEX_RELEASE_WATCH_RUNNER=str(runner),
+            )
+            subprocess.run(
+                [str(SCRIPT), "install"], check=True, capture_output=True, env=environment
+            )
+            plist_path = (
+                home / "Library/LaunchAgents/com.williamxu.codex-release-watch.plist"
+            )
+            with plist_path.open("rb") as plist_file:
+                plist = plistlib.load(plist_file)
+            self.assertEqual(plist["ProgramArguments"][0], str(runner))
+            self.assertEqual(
+                plist["EnvironmentVariables"]["CODEX_RELEASE_AGENT_SCRIPT"], str(agent)
+            )
+            subprocess.run(
+                [str(SCRIPT), "uninstall"], check=True, capture_output=True, env=environment
+            )
+            self.assertFalse(plist_path.exists())
+            for executable in (agent, runner):
+                self.assertEqual(executable.read_text(encoding="utf-8"), original)
+
+
 if __name__ == "__main__":
     unittest.main()

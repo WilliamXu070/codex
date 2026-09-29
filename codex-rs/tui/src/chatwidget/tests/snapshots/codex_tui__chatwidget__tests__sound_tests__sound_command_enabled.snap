@@ -1,0 +1,11 @@
+---
+source: tui/src/chatwidget/tests/sound_tests.rs
+expression: "render_bottom_popup(&chat, 80)"
+---
+  Sound Enabled
+
+
+› 1. On (current)  unmute
+  2. Off           mute
+
+  enter select · esc back

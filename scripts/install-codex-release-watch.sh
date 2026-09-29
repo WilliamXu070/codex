@@ -10,8 +10,8 @@ LAUNCH_DIR="${HOME}/Library/LaunchAgents"
 PLIST_PATH="${LAUNCH_DIR}/${LAUNCH_LABEL}.plist"
 LOG_DIR="${HOME}/Library/Logs/codex-release-watch"
 RUNTIME_DIR="${HOME}/.local/lib/codex"
-AGENT_RUNTIME="${RUNTIME_DIR}/codex-release-agent.py"
-TRIGGER_RUNTIME="${HOME}/.local/bin/codex-release-watch-runner.sh"
+AGENT_RUNTIME="${CODEX_RELEASE_AGENT_SCRIPT:-${RUNTIME_DIR}/codex-release-agent.py}"
+TRIGGER_RUNTIME="${CODEX_RELEASE_WATCH_RUNNER:-${HOME}/.local/bin/codex-release-watch-runner.sh}"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-900}"
 CHANNEL="${CODEX_RELEASE_CHANNEL:-stable}"
 ACTION="install"
@@ -77,9 +77,18 @@ case "$ACTION" in
       exit 1
     }
     mkdir -p "$LAUNCH_DIR" "$LOG_DIR" "$RUNTIME_DIR" "$(dirname "$TRIGGER_RUNTIME")"
-    cp "$SOURCE_AGENT" "$AGENT_RUNTIME"
-    cp "$SOURCE_TRIGGER" "$TRIGGER_RUNTIME"
-    chmod +x "$AGENT_RUNTIME" "$TRIGGER_RUNTIME"
+    if [[ -z "${CODEX_RELEASE_AGENT_SCRIPT:-}" ]]; then
+      cp "$SOURCE_AGENT" "$AGENT_RUNTIME"
+      chmod +x "$AGENT_RUNTIME"
+    fi
+    if [[ -z "${CODEX_RELEASE_WATCH_RUNNER:-}" ]]; then
+      cp "$SOURCE_TRIGGER" "$TRIGGER_RUNTIME"
+      chmod +x "$TRIGGER_RUNTIME"
+    fi
+    [[ -x "$AGENT_RUNTIME" && -x "$TRIGGER_RUNTIME" ]] || {
+      echo "release agent and runner must be executable: $AGENT_RUNTIME, $TRIGGER_RUNTIME" >&2
+      exit 1
+    }
 
     cat > "$PLIST_PATH" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -135,7 +144,13 @@ PLIST
     if launchctl list "$LAUNCH_LABEL" >/dev/null 2>&1; then
       launchctl unload -w "$PLIST_PATH" || true
     fi
-    rm -f "$PLIST_PATH" "$TRIGGER_RUNTIME" "$AGENT_RUNTIME"
+    rm -f "$PLIST_PATH"
+    if [[ -z "${CODEX_RELEASE_WATCH_RUNNER:-}" ]]; then
+      rm -f "$TRIGGER_RUNTIME"
+    fi
+    if [[ -z "${CODEX_RELEASE_AGENT_SCRIPT:-}" ]]; then
+      rm -f "$AGENT_RUNTIME"
+    fi
     echo "uninstalled: $LAUNCH_LABEL"
     ;;
   status)
