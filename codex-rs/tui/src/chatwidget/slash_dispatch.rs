@@ -38,6 +38,7 @@ struct PreparedSlashCommandArgs {
 const SIDE_STARTING_CONTEXT_LABEL: &str = "Side starting...";
 const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str =
     "Press Ctrl+C to return to the main thread first.";
+const RAW_USAGE: &str = "Usage: /raw [on|off]";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 const USAGE_CHATGPT_LOGIN_REQUIRED: &str = "Sign in with ChatGPT to use /usage.";
 
@@ -835,6 +836,17 @@ impl ChatWidget {
             SlashCommand::TranscribeCommand => {
                 self.handle_transcribe_command(trimmed);
             }
+            SlashCommand::Raw => match trimmed.to_ascii_lowercase().as_str() {
+                "on" => {
+                    self.set_raw_output_mode_and_notify(/*enabled*/ true);
+                    self.emit_raw_output_mode_changed(/*enabled*/ true);
+                }
+                "off" => {
+                    self.set_raw_output_mode_and_notify(/*enabled*/ false);
+                    self.emit_raw_output_mode_changed(/*enabled*/ false);
+                }
+                _ => self.add_error_message(RAW_USAGE.to_string()),
+            },
             SlashCommand::Rename if !trimmed.is_empty() => {
                 if !self.ensure_thread_rename_allowed() {
                     return;
@@ -1227,6 +1239,7 @@ impl ChatWidget {
             | SlashCommand::Plugins
             | SlashCommand::Rollout
             | SlashCommand::Copy
+            | SlashCommand::Raw
             | SlashCommand::Vim
             | SlashCommand::Diff
             | SlashCommand::App

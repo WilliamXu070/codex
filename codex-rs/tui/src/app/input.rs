@@ -726,6 +726,12 @@ impl App {
             return true;
         }
 
+        if self.keymap.app.toggle_raw_output.is_pressed(key_event) {
+            let enabled = !self.chat_widget.raw_output_mode();
+            self.apply_raw_output_mode(tui, enabled, /*notify*/ false);
+            return true;
+        }
+
         if self.keymap.app.open_agents.is_pressed(key_event) {
             self.open_agents_overview(app_server);
             return true;

@@ -55,22 +55,19 @@ I learned that building does not end when the first prototype works. The real ch
 }
 
 #[test]
-fn cyan_path_removes_visual_wrap_without_adding_a_space() {
+fn inline_code_path_removes_visual_wrap_without_adding_a_space() {
     let path = "/Users/williamxu/Desktop/Projects/codex/codex-rs/tui/src/app.rs";
     let markdown = format!("Open `{path}`.");
     let cell = AgentMarkdownCell::new(markdown.clone(), Path::new("/tmp"));
     let lines = cell.clipboard_repair_lines();
-    assert!(lines.iter().flat_map(|line| &line.line.spans).any(|span| {
-        matches!(
-            span.style.patch(ratatui::style::Style::default()).fg,
-            Some(
-                ratatui::style::Color::Blue
-                    | ratatui::style::Color::LightBlue
-                    | ratatui::style::Color::Cyan
-                    | ratatui::style::Color::LightCyan
-            )
-        ) && span.content.contains(path)
-    }));
+    // Upstream derives inline-code colors from the active syntax theme. The repair
+    // invariant is a contiguous source path, independent of that theme's palette.
+    assert!(
+        lines
+            .iter()
+            .flat_map(|line| &line.line.spans)
+            .any(|span| { span.content.as_ref() == path })
+    );
 
     let copied = "Open /Users/williamxu/Desktop/Projects/codex/\n  codex-rs/tui/src/app.rs.";
     assert_eq!(

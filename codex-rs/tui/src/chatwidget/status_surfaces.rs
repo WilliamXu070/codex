@@ -815,6 +815,7 @@ impl ChatWidget {
                         "Fast off".to_string()
                     }
                 }),
+            StatusLineItem::RawOutput => self.raw_output_mode().then(|| "raw output".to_string()),
             StatusLineItem::ThreadName => {
                 self.thread_name.as_deref().and_then(normalize_thread_name)
             }
@@ -867,6 +868,7 @@ impl ChatWidget {
             StatusSurfacePreviewItem::EstimatedThreadCost => StatusLineItem::EstimatedThreadCost,
             StatusSurfacePreviewItem::SessionId => StatusLineItem::SessionId,
             StatusSurfacePreviewItem::FastMode => StatusLineItem::FastMode,
+            StatusSurfacePreviewItem::RawOutput => StatusLineItem::RawOutput,
             StatusSurfacePreviewItem::WorkspaceHeadline => StatusLineItem::WorkspaceHeadline,
             StatusSurfacePreviewItem::Model => StatusLineItem::ModelName,
             StatusSurfacePreviewItem::ModelWithReasoning => StatusLineItem::ModelWithReasoning,

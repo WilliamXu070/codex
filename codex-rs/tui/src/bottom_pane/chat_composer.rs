@@ -20,12 +20,25 @@
 //! The plain-text preset keeps command prefixes literal, including `!`, so Enter and Tab
 //! submit ordinary text without enabling shell mode.
 //!
+//! # Mention Menus
+//!
+//! By default, `@` lists plugins, filesystem entries, and skills. Skills are hidden when their
+//! owning plugin is listed. `$` lists individual skills and apps, but not plugins.
+//! Disabling `mentions_v2` restores file-only `@` search and adds plugins back to `$`.
+//!
+//! Dictation uses a protected inline element for its live waveform; completion replaces that
+//! element in place with transcribed text without disturbing the surrounding draft.
+//!
 //! # Key Event Routing
 //!
+//! Plain Left opens agents when the local-daemon composer is empty and available for input.
+//! Explicit editor remaps take precedence.
 //! Most key handling goes through [`ChatComposer::handle_key_event`], which dispatches to a
 //! popup-specific handler if a popup is visible and otherwise to
 //! [`ChatComposer::handle_key_event_without_popup`]. After every handled key, we call
 //! [`ChatComposer::sync_popups`] so UI state follows the latest buffer/cursor.
+//! Fresh Vim drafts start in Insert; Normal `/` and `?` search the composer.
+//! Backspace on an empty Vim search query cancels search and any pending operator.
 //!
 //! # Completion and Popup Dismissal
 //!
@@ -371,18 +384,18 @@ mod draft_state;
 mod footer_state;
 mod history_search;
 mod inline_input;
+mod mouse;
 #[path = "parent_owned_command.rs"]
 mod parent_owned_command;
-mod mouse;
 mod paste_input;
 mod popup_state;
 mod reconnect;
 pub(crate) use reconnect::RestrictedInputMode;
 mod slash_input;
 mod sparkle;
+mod status_surface;
 #[path = "transcribe_waveform.rs"]
 mod transcribe_waveform;
-mod status_surface;
 mod vim_history;
 mod vim_search;
 mod warning_notice;

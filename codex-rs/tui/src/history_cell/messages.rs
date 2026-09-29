@@ -547,10 +547,12 @@ impl AgentMarkdownCell {
     /// Clipboard repair uses this as its canonical visible-text source. Inline cyan paths and
     /// links remain single spans, while paragraph, list, and code boundaries remain logical lines.
     pub(crate) fn clipboard_repair_lines(&self) -> Vec<HyperlinkLine> {
-        crate::markdown::render_markdown_agent_with_links_and_cwd(
+        crate::markdown::render_markdown_agent_with_list_spacing(
             &self.markdown_source,
             /*width*/ None,
             Some(self.cwd.as_path()),
+            self.inline_visualization_context.as_ref(),
+            crate::markdown_render::ListSpacing::AfterMultiline,
         )
     }
 

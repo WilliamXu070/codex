@@ -410,6 +410,7 @@ fn rendered_history_rows(
     thread: &Thread,
     items: Vec<ThreadItem>,
     config: &Config,
+    local_settings: &crate::local_settings::LocalSettings,
     width: u16,
     rendered_rows: usize,
 ) -> usize {
@@ -418,7 +419,11 @@ fn rendered_history_rows(
     } else {
         RawReasoningVisibility::Hidden
     };
-    let mode = HistoryRenderMode::Rich;
+    let mode = if local_settings.tui.raw_output_mode {
+        HistoryRenderMode::Raw
+    } else {
+        HistoryRenderMode::Rich
+    };
     thread_items_to_transcript_cells(
         Some(thread_id),
         &thread.cwd,

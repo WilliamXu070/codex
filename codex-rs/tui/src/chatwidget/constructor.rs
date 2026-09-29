@@ -115,6 +115,7 @@ impl ChatWidget {
             }),
             transcript: TranscriptState::new(active_cell),
             config,
+            raw_output_mode: local_settings.tui.raw_output_mode,
             local_settings,
             effective_service_tier,
             skills_all: Vec::new(),
