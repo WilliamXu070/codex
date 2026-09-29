@@ -6,6 +6,7 @@
 //! slash-command recall follows the same submitted-input rule as ordinary text.
 
 use super::*;
+use crate::app::WindowsSandboxHost;
 use crate::app_event::ManagedWorktreeMode;
 use crate::app_event::SoundMenu;
 use crate::app_event::ThreadGoalSetMode;
@@ -37,6 +38,7 @@ struct PreparedSlashCommandArgs {
 const SIDE_STARTING_CONTEXT_LABEL: &str = "Side starting...";
 const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str =
     "Press Ctrl+C to return to the main thread first.";
+const RAW_USAGE: &str = "Usage: /raw [on|off]";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 const USAGE_CHATGPT_LOGIN_REQUIRED: &str = "Sign in with ChatGPT to use /usage.";
 
@@ -129,7 +131,16 @@ impl ChatWidget {
         self.request_side_conversation(parent_thread_id, /*user_message*/ None);
     }
 
-    fn slash_command_blocked_by_active_task(&self, cmd: SlashCommand) -> bool {
+    fn emit_raw_output_mode_changed(&self, enabled: bool) {
+        self.app_event_tx
+            .send(AppEvent::RawOutputModeChanged { enabled });
+    }
+
+    fn slash_command_blocked_by_active_task(
+        &self,
+        cmd: SlashCommand,
+        source: SlashCommandDispatchSource,
+    ) -> bool {
         (!cmd.available_during_task()
             && (self.turn_lifecycle.agent_turn_running
                 || self.review.is_review_mode
@@ -140,9 +151,21 @@ impl ChatWidget {
                 && (self.input_queue.user_turn_pending_start
                     || self.turn_lifecycle.agent_turn_running))
             || (cmd == SlashCommand::Export && self.input_queue.suppress_queue_autosend)
+            || (cmd == SlashCommand::Review
+                && source == SlashCommandDispatchSource::Live
+                && (self.is_user_turn_pending_or_running()
+                    || self.input_queue.has_queued_follow_up_messages()))
     }
 
     pub(super) fn dispatch_command(&mut self, cmd: SlashCommand) {
+        self.dispatch_command_from_source(cmd, SlashCommandDispatchSource::Live);
+    }
+
+    fn dispatch_command_from_source(
+        &mut self,
+        cmd: SlashCommand,
+        source: SlashCommandDispatchSource,
+    ) {
         if cmd != SlashCommand::Copy {
             self.transcript.last_status_copy_targets = None;
         }
@@ -152,13 +175,16 @@ impl ChatWidget {
         if !self.ensure_side_command_allowed_outside_review(cmd) {
             return;
         }
-        if self.slash_command_blocked_by_active_task(cmd) {
+        if self.slash_command_blocked_by_active_task(cmd, source) {
             let message = format!(
                 "'/{}' is disabled while a task is in progress.",
                 cmd.command()
             );
             self.add_to_history(history_cell::new_error_event(message));
-            self.bottom_pane.drain_pending_submission_state();
+            // Retain attachments when the composer has deferred consuming the draft.
+            if self.bottom_pane.composer_text().is_empty() {
+                self.bottom_pane.drain_pending_submission_state();
+            }
             self.request_redraw();
             return;
         }
@@ -184,8 +210,7 @@ impl ChatWidget {
                 self.bottom_pane.show_selection_view(SelectionViewParams {
                     title: Some("Archive this session?".to_string()),
                     subtitle: Some(
-                        "Are you sure? This will archive the current session and exit Codex"
-                            .to_string(),
+                        "Are you sure? This will archive the current session".to_string(),
                     ),
                     footer_hint: Some(standard_popup_hint_line()),
                     items: vec![
@@ -196,7 +221,7 @@ impl ChatWidget {
                             ..Default::default()
                         },
                         SelectionItem {
-                            name: "Yes, archive and exit".to_string(),
+                            name: "Yes, archive".to_string(),
                             description: Some("Archive this session now".to_string()),
                             actions: vec![Box::new(|tx| {
                                 tx.send(AppEvent::ArchiveCurrentThread);
@@ -205,7 +230,7 @@ impl ChatWidget {
                             ..Default::default()
                         },
                     ],
-                    ..Default::default()
+                    ..SelectionViewParams::picker()
                 });
                 self.request_redraw();
             }
@@ -224,7 +249,12 @@ impl ChatWidget {
                             ..Default::default()
                         },
                         SelectionItem {
-                            name: "Yes, delete and exit".to_string(),
+                            name: if self.remote_connection.is_some() {
+                                "Yes, delete and return to command center"
+                            } else {
+                                "Yes, delete and exit"
+                            }
+                            .to_string(),
                             description: Some("Permanently delete this session now".to_string()),
                             actions: vec![Box::new(|tx| {
                                 tx.send(AppEvent::DeleteCurrentThread);
@@ -233,7 +263,7 @@ impl ChatWidget {
                             ..Default::default()
                         },
                     ],
-                    ..Default::default()
+                    ..SelectionViewParams::picker()
                 });
                 self.request_redraw();
             }
@@ -293,6 +323,11 @@ impl ChatWidget {
                     .send(AppEvent::GenerateRecap { thread_id });
             }
             SlashCommand::Review => {
+                if source == SlashCommandDispatchSource::Live {
+                    self.bottom_pane
+                        .set_composer_text(String::new(), Vec::new(), Vec::new());
+                    self.bottom_pane.drain_pending_submission_state();
+                }
                 self.open_review_popup();
                 if self.mcp_startup_status.is_some() {
                     self.defer_input_until_settings_applied();
@@ -305,10 +340,6 @@ impl ChatWidget {
             }
             SlashCommand::Model => {
                 self.open_model_popup();
-                self.defer_input_until_settings_applied();
-            }
-            SlashCommand::Personality => {
-                self.open_personality_popup();
                 self.defer_input_until_settings_applied();
             }
             SlashCommand::Plan => {
@@ -329,6 +360,12 @@ impl ChatWidget {
                     );
                 }
             }
+            SlashCommand::Voice => {
+                self.app_event_tx.send(AppEvent::VoiceControl {
+                    thread_id: self.thread_id(),
+                    control: crate::app_event::VoiceControl::Toggle,
+                });
+            }
             SlashCommand::Side | SlashCommand::Btw => {
                 self.request_empty_side_conversation(cmd);
             }
@@ -339,7 +376,11 @@ impl ChatWidget {
                 self.app_event_tx.send(AppEvent::OpenAgentPicker);
             }
             SlashCommand::Permissions => {
-                if self.remote_connection.is_some() {
+                if self.remote_connection.is_some()
+                    || self.windows_sandbox_local_server
+                        && self.windows_sandbox_host != WindowsSandboxHost::Remote
+                        && self.windows_sandbox_config.requirements.is_none()
+                {
                     self.app_event_tx.send(AppEvent::OpenPermissionsPopup);
                 } else {
                     self.open_permissions_popup();
@@ -355,11 +396,7 @@ impl ChatWidget {
             SlashCommand::ElevateSandbox => {
                 #[cfg(target_os = "windows")]
                 {
-                    let windows_sandbox_level =
-                        crate::windows_sandbox::level_from_config(&self.config);
-                    let windows_degraded_sandbox_enabled =
-                        matches!(windows_sandbox_level, WindowsSandboxLevel::RestrictedToken);
-                    if !windows_degraded_sandbox_enabled {
+                    if !self.builtin_command_flags().allow_elevate_sandbox {
                         // This command should not be visible/recognized outside degraded mode,
                         // but guard anyway in case something dispatches it directly.
                         return;
@@ -404,11 +441,6 @@ impl ChatWidget {
                     // Not supported; on non-Windows this command should never be reachable.
                 }
             }
-            SlashCommand::SandboxReadRoot => {
-                self.add_error_message(
-                    "Usage: /sandbox-add-read-dir <absolute-directory-path>".to_string(),
-                );
-            }
             SlashCommand::Experimental => {
                 self.open_experimental_popup();
             }
@@ -430,6 +462,11 @@ impl ChatWidget {
             SlashCommand::Export => {
                 self.show_transcript_export_popup();
             }
+            SlashCommand::Raw => {
+                let enabled = self.toggle_raw_output_mode_and_notify();
+                self.emit_raw_output_mode_changed(enabled);
+            }
+            SlashCommand::Tui => self.show_tui_mode_picker(),
             SlashCommand::Diff => {
                 self.add_diff_in_progress();
                 let tx = self.app_event_tx.clone();
@@ -469,6 +506,8 @@ impl ChatWidget {
             SlashCommand::Hooks => {
                 self.add_hooks_output();
             }
+            SlashCommand::Daemon => self.app_event_tx.send(AppEvent::OpenDaemonMenu),
+            SlashCommand::Warnings => self.app_event_tx.send(AppEvent::OpenWarnings),
             SlashCommand::Status => {
                 if self.should_prefetch_rate_limits() {
                     let request_id = self.next_status_refresh_request_id;
@@ -614,7 +653,7 @@ impl ChatWidget {
             self.dispatch_command(cmd);
             return;
         }
-        if self.slash_command_blocked_by_active_task(cmd) {
+        if self.slash_command_blocked_by_active_task(cmd, SlashCommandDispatchSource::Live) {
             let message = format!(
                 "'/{}' is disabled while a task is in progress.",
                 cmd.command()
@@ -747,14 +786,28 @@ impl ChatWidget {
             }
             SlashCommand::Usage => {
                 if self.ensure_usage_command_available() {
-                    match tokens::TokenActivityView::parse(trimmed) {
-                        Some(view) => self.add_token_activity_output(view),
+                    match crate::analytics::TokenActivityView::parse(trimmed) {
+                        Some(view) => self
+                            .app_event_tx
+                            .send(AppEvent::OpenAnalytics { view: Some(view) }),
                         None => self.add_error_message(
                             "Usage: /usage [daily|weekly|cumulative]".to_string(),
                         ),
                     }
                 }
             }
+            SlashCommand::Voice => match trimmed.to_ascii_lowercase().as_str() {
+                "settings" => self.app_event_tx.send(AppEvent::OpenRealtimeSettings),
+                "mute" => self.app_event_tx.send(AppEvent::VoiceControl {
+                    thread_id: self.thread_id(),
+                    control: crate::app_event::VoiceControl::Mute,
+                }),
+                "stop" => self.app_event_tx.send(AppEvent::VoiceControl {
+                    thread_id: self.thread_id(),
+                    control: crate::app_event::VoiceControl::Stop,
+                }),
+                _ => self.add_error_message("Usage: /voice [settings|mute|stop]".to_string()),
+            },
             SlashCommand::Ide => {
                 self.handle_ide_command_args(trimmed);
             }
@@ -783,6 +836,17 @@ impl ChatWidget {
             SlashCommand::TranscribeCommand => {
                 self.handle_transcribe_command(trimmed);
             }
+            SlashCommand::Raw => match trimmed.to_ascii_lowercase().as_str() {
+                "on" => {
+                    self.set_raw_output_mode_and_notify(/*enabled*/ true);
+                    self.emit_raw_output_mode_changed(/*enabled*/ true);
+                }
+                "off" => {
+                    self.set_raw_output_mode_and_notify(/*enabled*/ false);
+                    self.emit_raw_output_mode_changed(/*enabled*/ false);
+                }
+                _ => self.add_error_message(RAW_USAGE.to_string()),
+            },
             SlashCommand::Rename if !trimmed.is_empty() => {
                 if !self.ensure_thread_rename_allowed() {
                     return;
@@ -990,10 +1054,6 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::ResumeSessionByIdOrName(args));
             }
-            SlashCommand::SandboxReadRoot if !trimmed.is_empty() => {
-                self.app_event_tx
-                    .send(AppEvent::BeginWindowsSandboxGrantReadRoot { path: args });
-            }
             SlashCommand::Pets
                 if matches!(
                     args.trim().to_ascii_lowercase().as_str(),
@@ -1005,7 +1065,7 @@ impl ChatWidget {
             SlashCommand::Pets if !trimmed.is_empty() => {
                 self.select_pet_by_id(args);
             }
-            _ => self.dispatch_command(cmd),
+            _ => self.dispatch_command_from_source(cmd, source),
         }
         if source == SlashCommandDispatchSource::Live && cmd != SlashCommand::Goal {
             self.bottom_pane.drain_pending_submission_state();
@@ -1066,7 +1126,7 @@ impl ChatWidget {
         if rest.is_empty() {
             return match command {
                 SlashCommandItem::Builtin(cmd) => {
-                    self.dispatch_command(cmd);
+                    self.dispatch_command_from_source(cmd, SlashCommandDispatchSource::Queued);
                     self.queued_command_drain_result(cmd)
                 }
                 SlashCommandItem::ServiceTier(command) => {
@@ -1120,11 +1180,16 @@ impl ChatWidget {
         self.queued_command_drain_result(cmd)
     }
 
-    fn builtin_command_flags(&self) -> BuiltinCommandFlags {
+    pub(super) fn builtin_command_flags(&self) -> BuiltinCommandFlags {
         #[cfg(target_os = "windows")]
         let allow_elevate_sandbox = {
-            let windows_sandbox_level = crate::windows_sandbox::level_from_config(&self.config);
+            let windows_sandbox_level = self.windows_sandbox_config.level();
             matches!(windows_sandbox_level, WindowsSandboxLevel::RestrictedToken)
+                && self.windows_sandbox_local_server
+                && self.windows_sandbox_host == crate::app::WindowsSandboxHost::Local
+                && self
+                    .windows_sandbox_config
+                    .allows(WindowsSandboxSetupMode::Elevated)
         };
         #[cfg(not(target_os = "windows"))]
         let allow_elevate_sandbox = false;
@@ -1136,7 +1201,7 @@ impl ChatWidget {
             token_activity_command_enabled: self.has_codex_backend_auth,
             goal_command_enabled: self.config.features.enabled(Feature::Goals),
             service_tier_commands_enabled: self.fast_mode_enabled(),
-            personality_command_enabled: self.config.features.enabled(Feature::Personality),
+            voice_command_enabled: self.realtime_conversation_available_for_thread,
             worktrees_enabled: self.config.features.enabled(Feature::Worktrees)
                 && self.local_worktree_operations,
             allow_elevate_sandbox,
@@ -1159,6 +1224,7 @@ impl ChatWidget {
         match cmd {
             SlashCommand::Ide
             | SlashCommand::Status
+            | SlashCommand::Daemon
             | SlashCommand::Pwd
             | SlashCommand::Usage
             | SlashCommand::Sound
@@ -1173,10 +1239,12 @@ impl ChatWidget {
             | SlashCommand::Plugins
             | SlashCommand::Rollout
             | SlashCommand::Copy
+            | SlashCommand::Raw
             | SlashCommand::Vim
             | SlashCommand::Diff
             | SlashCommand::App
             | SlashCommand::Rename
+            | SlashCommand::Voice
             | SlashCommand::Recap
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Cd => match self.thread_id {
@@ -1191,6 +1259,7 @@ impl ChatWidget {
                 }
             }
             SlashCommand::Feedback
+            | SlashCommand::Warnings
             | SlashCommand::Export
             | SlashCommand::New
             | SlashCommand::Archive
@@ -1202,7 +1271,6 @@ impl ChatWidget {
             | SlashCommand::Compact
             | SlashCommand::Review
             | SlashCommand::Model
-            | SlashCommand::Personality
             | SlashCommand::Plan
             | SlashCommand::Goal
             | SlashCommand::Side
@@ -1212,7 +1280,6 @@ impl ChatWidget {
             | SlashCommand::MultiAgents
             | SlashCommand::Permissions
             | SlashCommand::ElevateSandbox
-            | SlashCommand::SandboxReadRoot
             | SlashCommand::Experimental
             | SlashCommand::AutoReview
             | SlashCommand::Memories
@@ -1226,6 +1293,7 @@ impl ChatWidget {
             | SlashCommand::Title
             | SlashCommand::Statusline
             | SlashCommand::Theme
+            | SlashCommand::Tui
             | SlashCommand::Pets => QueueDrain::Stop,
         }
     }

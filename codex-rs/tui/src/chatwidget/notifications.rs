@@ -41,6 +41,7 @@ pub(super) enum Notification {
     ElicitationRequested { server_name: String },
     UserInputRequested { title: String },
     PlanModePrompt { title: String },
+    AsyncQuestion { title: String },
 }
 
 impl Notification {
@@ -76,6 +77,9 @@ impl Notification {
             Notification::PlanModePrompt { title } => {
                 format!("Plan mode prompt: {title}")
             }
+            Notification::AsyncQuestion { title } => {
+                format!("Question: {title}")
+            }
         }
     }
 
@@ -87,12 +91,15 @@ impl Notification {
             | Notification::ElicitationRequested { .. } => "approval-requested",
             Notification::UserInputRequested { .. } => "request-user-input",
             Notification::PlanModePrompt { .. } => "plan-mode-prompt",
+            Notification::AsyncQuestion { .. } => "async-question",
         }
     }
 
     fn sound_event(&self) -> Option<&'static str> {
         match self {
-            Notification::UserInputRequested { .. } => Some("request-user-input"),
+            Notification::UserInputRequested { .. } | Notification::AsyncQuestion { .. } => {
+                Some("request-user-input")
+            }
             Notification::AgentTurnComplete { .. }
             | Notification::ExecApprovalRequested { .. }
             | Notification::EditApprovalRequested { .. }
@@ -108,7 +115,8 @@ impl Notification {
             | Notification::EditApprovalRequested { .. }
             | Notification::ElicitationRequested { .. }
             | Notification::UserInputRequested { .. }
-            | Notification::PlanModePrompt { .. } => 1,
+            | Notification::PlanModePrompt { .. }
+            | Notification::AsyncQuestion { .. } => 1,
         }
     }
 
