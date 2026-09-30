@@ -97,7 +97,9 @@ impl Notification {
 
     fn sound_event(&self) -> Option<&'static str> {
         match self {
-            Notification::UserInputRequested { .. } => Some("request-user-input"),
+            Notification::UserInputRequested { .. } | Notification::AsyncQuestion { .. } => {
+                Some("request-user-input")
+            }
             Notification::AgentTurnComplete { .. }
             | Notification::ExecApprovalRequested { .. }
             | Notification::EditApprovalRequested { .. }

@@ -145,7 +145,7 @@ impl ClipboardRepairMonitor {
         #[cfg(target_os = "macos")]
         {
             let last_change_count = macos_change_count();
-            let clipboard = match crate::clipboard_copy::new_macos_clipboard() {
+            let clipboard = match arboard::Clipboard::new() {
                 Ok(clipboard) => Some(clipboard),
                 Err(error) => {
                     tracing::debug!("clipboard repair disabled: {error}");
