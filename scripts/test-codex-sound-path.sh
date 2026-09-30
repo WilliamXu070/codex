@@ -62,4 +62,15 @@ if ! grep -q 'kind=immediate' "$LOG_FILE" ||
   exit 1
 fi
 
+# Clearing the pinned track must restore selection from the completion sound directory.
+env CODEX_SOUND_STATE_FILE="$STATE_FILE" "$SOUND_CMD" track random >/dev/null
+: > "$LOG_FILE"
+env CODEX_SOUND_STATE_FILE="$STATE_FILE" CODEX_SOUND_LOG="$LOG_FILE" CODEX_SOUND_DRY_RUN=1 \
+  /bin/zsh "$SOUND_HOOK" --event completion '{"source":"sound-regression-random"}'
+if ! grep -q 'kind=completion' "$LOG_FILE" || ! grep -q '/sounds/' "$LOG_FILE"; then
+  echo "random completion sound selection regression" >&2
+  cat "$LOG_FILE" >&2
+  exit 1
+fi
+
 echo "codex sound path regression passed"
