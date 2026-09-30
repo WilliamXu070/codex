@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "IndexStatus": {
+      "oneOf": [
+        {
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "starting"
+              ],
+              "title": "StartingIndexStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "type"
+          ],
+          "title": "StartingIndexStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "progress": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "total": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "processing"
+              ],
+              "title": "ProcessingIndexStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "file",
+            "progress",
+            "total",
+            "type"
+          ],
+          "title": "ProcessingIndexStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "stage": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "analyzing"
+              ],
+              "title": "AnalyzingIndexStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "stage",
+            "type"
+          ],
+          "title": "AnalyzingIndexStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "filesProcessed": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "nodesCreated": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "complete"
+              ],
+              "title": "CompleteIndexStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "filesProcessed",
+            "nodesCreated",
+            "type"
+          ],
+          "title": "CompleteIndexStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "error"
+              ],
+              "title": "ErrorIndexStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "message",
+            "type"
+          ],
+          "title": "ErrorIndexStatus",
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "properties": {
+    "status": {
+      "$ref": "#/definitions/IndexStatus"
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "title": "IndexProgressNotification",
+  "type": "object"
+}

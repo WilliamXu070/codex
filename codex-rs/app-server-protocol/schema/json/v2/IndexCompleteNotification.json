@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "domain": {
+      "type": "string"
+    },
+    "entitiesExtracted": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "filesProcessed": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "nodesCreated": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "processingTimeMs": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "domain",
+    "entitiesExtracted",
+    "filesProcessed",
+    "nodesCreated",
+    "processingTimeMs"
+  ],
+  "title": "IndexCompleteNotification",
+  "type": "object"
+}
