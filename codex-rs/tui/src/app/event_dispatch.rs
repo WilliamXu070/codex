@@ -425,6 +425,9 @@ impl App {
                 )
                 .await;
             }
+            AppEvent::RawOutputModeChanged { enabled } => {
+                self.apply_raw_output_mode(tui, enabled, /*notify*/ false);
+            }
             AppEvent::ClearUiAndSubmitUserMessage { text } => {
                 if self.reject_pending_permission_root_switch() {
                     self.chat_widget.restore_user_message_to_composer(text.into());

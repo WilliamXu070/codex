@@ -323,3 +323,6 @@ mod question_notifications_tests;
 
 #[path = "tests/security_setup_tests.rs"]
 mod security_setup_tests;
+
+#[path = "tests/custom_settings_tests.rs"]
+mod custom_settings_tests;

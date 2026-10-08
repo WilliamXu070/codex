@@ -1816,21 +1816,11 @@ impl TextArea {
         true
     }
 
-    pub fn insert_element(&mut self, text: &str) -> u64 {
-        self.insert_element_inner(text, /*protected*/ false)
-    }
-
     pub fn insert_protected_element(&mut self, text: &str) -> u64 {
-        self.insert_element_inner(text, /*protected*/ true)
-    }
-
-    fn insert_element_inner(&mut self, text: &str, protected: bool) -> u64 {
-        let start = self.clamp_pos_for_insertion(self.cursor_pos);
-        self.insert_str_at(start, text);
-        let end = start + text.len();
-        let id = self.add_element(start..end, protected);
-        // Place cursor at end of inserted element
-        self.set_cursor(end);
+        let id = self.insert_element(text);
+        if let Some(element) = self.elements.iter_mut().find(|element| element.id == id) {
+            element.protected = true;
+        }
         id
     }
 

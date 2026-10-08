@@ -74,7 +74,7 @@ impl TextArea {
         }
         self.replace_range(target.range, text);
         let end = start + text.len();
-        let id = self.add_element(start..end);
+        let id = self.add_element(start..end, /*protected*/ false);
         self.set_cursor(end);
         id
     }

@@ -461,7 +461,7 @@ async fn active_cell_layout_preserves_custom_height_and_bottom_scroll() {
 }
 
 #[tokio::test]
-async fn active_cell_layout_invalidates_width_revision_theme_and_identity() {
+async fn active_cell_layout_invalidates_width_revision_mode_theme_and_identity() {
     let (mut widget, desired_height_calls, _display_lines_calls) = widget_with_counting_cell(
         /*desired_height*/ 1, /*line_count*/ 1, /*stable_height*/ true,
     )
@@ -478,6 +478,10 @@ async fn active_cell_layout_invalidates_width_revision_theme_and_identity() {
     render_frame(&widget, /*width*/ 81);
     assert_eq!(desired_height_calls.load(Ordering::Relaxed), 3);
 
+    widget.raw_output_mode = true;
+    render_frame(&widget, /*width*/ 81);
+    assert_eq!(desired_height_calls.load(Ordering::Relaxed), 4);
+
     let mut cached = widget
         .transcript
         .active_cell_layout
@@ -486,7 +490,7 @@ async fn active_cell_layout_invalidates_width_revision_theme_and_identity() {
     cached.key.syntax_theme_revision = cached.key.syntax_theme_revision.wrapping_sub(1);
     widget.transcript.active_cell_layout.set(Some(cached));
     render_frame(&widget, /*width*/ 81);
-    assert_eq!(desired_height_calls.load(Ordering::Relaxed), 4);
+    assert_eq!(desired_height_calls.load(Ordering::Relaxed), 5);
 
     let replacement_height_calls = Arc::new(AtomicUsize::new(0));
     widget.transcript.active_cell = Some(Box::new(CountingHistoryCell {

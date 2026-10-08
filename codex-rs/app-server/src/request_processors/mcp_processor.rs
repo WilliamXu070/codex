@@ -7,9 +7,9 @@ use codex_mcp::McpServerSource;
 use codex_mcp::ReadResourceRequestParams;
 use codex_mcp::ema_auth_scope;
 use codex_mcp::resolve_oauth_callback;
-use codex_rmcp_client::StreamableHttpRedirectMode;
 use codex_otel::auth_storage::AuthStorageOriginator;
 use codex_rmcp_client::EnterpriseOAuthLoginRequest;
+use codex_rmcp_client::StreamableHttpRedirectMode;
 use std::future::Future;
 
 use crate::thread_state::ThreadStateManager;

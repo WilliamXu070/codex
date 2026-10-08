@@ -715,6 +715,10 @@ impl StreamController {
         self.core.set_width(width);
     }
 
+    pub(crate) fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
+        self.core.set_render_mode(render_mode);
+    }
+
     fn emit(&mut self, lines: Vec<HyperlinkLine>) -> Option<Box<dyn HistoryCell>> {
         if lines.is_empty() {
             return None;
@@ -843,6 +847,10 @@ impl PlanStreamController {
 
     pub(crate) fn set_width(&mut self, width: Option<usize>) {
         self.core.set_width(width);
+    }
+
+    pub(crate) fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
+        self.core.set_render_mode(render_mode);
     }
 
     fn emit(

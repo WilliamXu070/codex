@@ -124,7 +124,7 @@ async fn global_chord_keeps_hints_and_completes_before_deadline() -> Result<()> 
 }
 
 #[tokio::test]
-async fn completed_global_chords_request_external_editor() -> Result<()> {
+async fn completed_global_chords_toggle_output_and_request_external_editor() -> Result<()> {
     let (mut app, mut tui, mut app_server) = chord_app().await?;
     let config = toml::from_str(
         "[global]\ntoggle_raw_output = [\"ctrl-x r\", \"pageup\"]\nopen_external_editor = [\"ctrl-x e\"]",
@@ -269,9 +269,6 @@ async fn legacy_terminal_preserves_default_and_configured_editor_alt_bindings() 
 #[tokio::test]
 async fn legacy_terminal_preserves_active_global_alt_shortcuts() -> Result<()> {
     let (mut app, mut tui, mut app_server) = chord_app().await?;
-    let config = toml::from_str("[global]\nopen_external_editor = [\"alt-r\"]")?;
-    app.keymap = RuntimeKeymap::from_config(&config).expect("valid global shortcut");
-    app.chat_widget.apply_keymap_update(config, &app.keymap);
     app.chat_widget.toggle_vim_mode_and_notify();
     app.chat_widget.insert_str("abc");
     press(
@@ -290,10 +287,7 @@ async fn legacy_terminal_preserves_active_global_alt_shortcuts() -> Result<()> {
     )
     .await?;
 
-    assert_eq!(
-        app.chat_widget.external_editor_state(),
-        super::ExternalEditorState::Requested
-    );
+    assert!(app.chat_widget.raw_output_mode());
     assert!(
         app.chat_widget
             .should_handle_vim_insert_escape(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
@@ -410,7 +404,7 @@ async fn legacy_terminal_preserves_active_alt_chords() -> Result<()> {
     ] {
         let (mut app, mut tui, mut app_server) = chord_app().await?;
         let mut config = TuiKeymap::default();
-        config.global.open_external_editor =
+        config.global.toggle_raw_output =
             Some(KeybindingsSpec::One(KeybindingSpec(binding.to_string())));
         let runtime =
             RuntimeKeymap::from_config(&config).map_err(|error| color_eyre::eyre::eyre!(error))?;
@@ -430,10 +424,7 @@ async fn legacy_terminal_preserves_active_alt_chords() -> Result<()> {
         assert!(app.key_chord_matcher.is_pending());
         press(&mut app, &mut tui, &mut app_server, completion).await?;
 
-        assert_eq!(
-            app.chat_widget.external_editor_state(),
-            super::ExternalEditorState::Requested
-        );
+        assert!(app.chat_widget.raw_output_mode());
         assert!(!app.key_chord_matcher.is_pending());
     }
     Ok(())

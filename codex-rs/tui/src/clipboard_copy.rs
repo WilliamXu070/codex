@@ -32,18 +32,9 @@ use tmux::copy as tmux_clipboard_copy;
 /// Large payloads are rejected before encoding to avoid overwhelming the terminal.
 const OSC52_MAX_RAW_BYTES: usize = 100_000;
 #[cfg(target_os = "macos")]
-static STDERR_SUPPRESSION_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> =
-    std::sync::OnceLock::new();
-
+mod macos;
 #[cfg(target_os = "macos")]
-pub(crate) fn new_macos_clipboard() -> Result<arboard::Clipboard, String> {
-    let _stderr_lock = STDERR_SUPPRESSION_MUTEX
-        .get_or_init(|| std::sync::Mutex::new(()))
-        .lock()
-        .map_err(|_| "stderr suppression lock poisoned".to_string())?;
-    let _guard = SuppressStderr::new();
-    arboard::Clipboard::new().map_err(|e| format!("clipboard unavailable: {e}"))
-}
+pub(crate) use macos::new_macos_clipboard;
 
 /// Whether copied text should also have a rendered HTML representation and its source.
 #[derive(Clone, Debug, PartialEq, Eq)]
