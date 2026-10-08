@@ -82,3 +82,35 @@ freshness verification remain the orchestrator's publication gate. This is a
 source integration handoff, not a validated runnable release. No production
 launcher, live binary, live checkout, or installed helper was changed; there was
 no push, PR, deployment or activation.
+
+## Follow-up: cargo-shear orphan repair
+
+The orchestrator's `shear/unlinked_files` failure came from upstream commit
+`b97abdbe3`: `scenarios_read_only_mcp.rs` contained only a module doc comment,
+was never linked into the suite, and had an unused request snapshot. Removed
+both orphaned files. No executable test, assertion, custom behavior, dependency,
+or lockfile was changed. The worktree was clean before this repair; formatting
+and compilation introduced no additional tracked changes.
+
+Follow-up validation:
+
+- `cargo shear --deny-warnings`: passed, no issues found.
+- `cargo fmt -- --config imports_granularity=Item`: passed; stable rustfmt still
+  warns that the requested imports setting requires nightly.
+- `git diff --check`: passed; the official release tag remains an ancestor.
+- `just fmt` and focused `just test`: blocked by sandbox execution permission
+  for `/opt/homebrew/bin/just`; no replacement tools were installed.
+- Ran the existing test recipe's nextest command directly with
+  `CARGO_TARGET_DIR=/private/tmp/codex-tui-target`, `CARGO_INCREMENTAL=0`,
+  `RUST_MIN_STACK=8388608`, and `NEXTEST_PROFILE=local`:
+  `cargo nextest run --no-fail-fast -p codex-mcp -p codex-rmcp-client -E 'test(read_only)'`.
+  Compilation succeeded. Both connection-manager read-only policy tests passed.
+  `read_only_tool_requests_preserve_host_policy_and_caller_metadata` failed
+  during mock-server setup because binding an OS port returned
+  `PermissionDenied: Operation not permitted`. Retry this unchanged test with
+  normal local network permissions; no tests were weakened or skipped manually.
+
+The earlier dependency-fetch blocker did not recur in these focused checks.
+The broader validation and runtime delivery gates above remain pending with the
+orchestrator. This repair removes only non-executable test artifacts and does
+not deploy or activate a runnable release.
