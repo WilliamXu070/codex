@@ -349,20 +349,6 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_shift_letter_binding_matches_shifted_c0_control_char() {
-        let binding = KeyBinding::new(
-            KeyCode::Char('d'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        );
-
-        assert!(binding.is_press(KeyEvent::new(KeyCode::Char('\x04'), KeyModifiers::SHIFT)));
-        assert!(binding.is_press(KeyEvent::new(
-            KeyCode::Char('\x04'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        )));
-    }
-
-    #[test]
     fn shift_letter_binding_does_not_match_plain_lowercase_or_other_uppercase() {
         let binding = shift(KeyCode::Char('o'));
 

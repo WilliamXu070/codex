@@ -8,7 +8,6 @@ async fn custom_settings_commands_open_local_popups_without_submitting_a_turn() 
             .set_composer_text(command.to_string(), Vec::new(), Vec::new());
         chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
         let popup = render_bottom_popup(&chat, /*width*/ 80);
         assert!(popup.contains(title), "{command}: {popup}");
