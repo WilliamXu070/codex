@@ -754,10 +754,15 @@ def integration_prompt(
         5. Inspect {context_dir / "untracked.json"} and port intentional untracked
            source/scripts. Exclude generated `*.snap.new` files and the accidental
            `.bazelversion 2`. Preserve real Rust source, regression tests, updater
-           scripts, sound/transcription helpers, and documentation.
+           scripts, sound helpers, and documentation. Retain archived custom
+           transcription helpers only as inactive source; do not register them.
         6. Preserve and verify the custom `/sound` routing, random completion and
-           approval sounds, transcription capture/RMS/waveform behavior, clipboard
-           repair/copy work, and their helper scripts. Adapt them to upstream APIs
+           approval sounds, clipboard repair/copy work, and their helper scripts.
+           Keep native upstream `/voice` and native voice transcription intact.
+           William's custom voice capture is retired: never restore `/transcribe`,
+           `/transcribe-command`, the global transcribe keymap action, Ctrl+Shift+D
+           or collapsed Ctrl+D capture, or dictation/transcription helper registrations
+           from historical dirty edits. Adapt retained customizations to upstream APIs
            when source structure changed.
         7. Ensure `codex-rs/Cargo.toml` reports workspace version {version}. Run
            `python3 .github/scripts/verify_cargo_workspace_manifests.py`,
@@ -959,7 +964,6 @@ def verify_workspace(
         "scripts/test-codex-sound-path.sh",
         "william/audio/random-sound",
         "william/commands/sound",
-        "william/transcribe/transcribe-command",
     ]
     missing = [path for path in required_paths if not (workspace / path).exists()]
     if missing:
