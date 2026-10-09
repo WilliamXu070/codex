@@ -35,6 +35,8 @@ const REQUESTS_TOTAL_METRIC: &str = "exec_server_requests_total";
 const REQUESTS_TOTAL_DESCRIPTION: &str = "Total number of exec-server requests.";
 const REQUEST_DURATION_METRIC: &str = "exec_server_request_duration_seconds";
 const REQUEST_DURATION_DESCRIPTION: &str = "Duration of exec-server requests in seconds.";
+const REQUEST_TOTAL_DURATION_METRIC: &str = "exec_server_request_total_duration_seconds";
+const REQUEST_TOTAL_DURATION_DESCRIPTION: &str = "Total exec-server request duration in seconds, including queueing, from decoded receipt until response enqueue or disconnection.";
 const REQUEST_QUEUE_DURATION_METRIC: &str = "exec_server_request_queue_duration_seconds";
 const REQUEST_QUEUE_DURATION_DESCRIPTION: &str =
     "Time exec-server requests spend queued before execution in seconds.";
@@ -157,6 +159,7 @@ impl ExecServerTelemetry {
         method: &'static str,
         result: &'static str,
         duration: Duration,
+        total_duration: Duration,
     ) {
         self.with_inner(|inner| {
             let tags = [("method", method), ("result", result)];
@@ -165,6 +168,12 @@ impl ExecServerTelemetry {
                 REQUEST_DURATION_METRIC,
                 REQUEST_DURATION_DESCRIPTION,
                 duration,
+                &tags,
+            );
+            inner.duration(
+                REQUEST_TOTAL_DURATION_METRIC,
+                REQUEST_TOTAL_DURATION_DESCRIPTION,
+                total_duration,
                 &tags,
             );
         });
@@ -206,6 +215,28 @@ impl ExecServerTelemetry {
         }
         let _ = metrics.record_duration("codex.shell_snapshot.duration_ms", duration, &tags);
         let _ = metrics.counter("codex.shell_snapshot", /*inc*/ 1, &tags);
+    }
+
+    /// One observation per eligible execution preparation, excluding prewarm.
+    /// `used` means selected for replay, not that restoration or execution succeeded.
+    #[cfg(unix)]
+    pub(crate) fn shell_snapshot_command(
+        &self,
+        wait: Duration,
+        state: &'static str,
+        outcome: &'static str,
+    ) {
+        let Some(metrics) = self
+            .inner
+            .as_ref()
+            .map(|inner| inner.metrics.clone())
+            .or_else(codex_otel::global)
+        else {
+            return;
+        };
+        let tags = [("version", "v2"), ("state", state), ("outcome", outcome)];
+        let _ = metrics.counter("codex.shell_snapshot.command", /*inc*/ 1, &tags);
+        let _ = metrics.record_duration("codex.shell_snapshot.wait_ms", wait, &tags);
     }
 
     pub(crate) fn remote_registration_completed(&self, result: &'static str, duration: Duration) {
