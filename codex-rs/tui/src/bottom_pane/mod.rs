@@ -211,7 +211,6 @@ pub(crate) use selection_popup_common::menu_surface_padding_height;
 pub(crate) use selection_popup_common::render_menu_surface;
 mod selection_row_layout;
 mod selection_tabs;
-mod settings_text_input_view;
 pub(crate) use selection_tabs::render_filled_tab_bar;
 mod startup;
 mod textarea;
@@ -221,8 +220,6 @@ mod unified_exec_footer;
 pub(crate) use feedback_note_view::FeedbackNoteView;
 pub(crate) use hooks_browser_view::HooksBrowserView;
 pub(crate) use selection_tabs::SelectionTab;
-pub(crate) use settings_text_input_view::SettingsTextInputView;
-pub(crate) use settings_text_input_view::SettingsTextInputViewParams;
 
 /// How long the "press again to quit" hint stays visible.
 ///
@@ -1836,19 +1833,6 @@ impl BottomPane {
 
     pub(crate) fn show_view(&mut self, view: Box<dyn BottomPaneView>) {
         self.push_view(view);
-    }
-
-    pub(crate) fn show_settings_text_input(&mut self, params: SettingsTextInputViewParams) {
-        let view = SettingsTextInputView::new(
-            params,
-            self.app_event_tx.clone(),
-            self.frame_requester.clone(),
-            &self.keymap,
-            self.has_input_focus,
-            self.enhanced_keys_supported,
-            self.disable_paste_burst,
-        );
-        self.show_view(Box::new(view));
     }
 
     /// Show a text prompt with the composer's current editing preferences.
