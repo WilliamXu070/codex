@@ -389,8 +389,6 @@ pub(crate) use reconnect::RestrictedInputMode;
 mod slash_input;
 mod sparkle;
 mod status_surface;
-#[path = "transcribe_waveform.rs"]
-mod transcribe_waveform;
 mod vim_history;
 mod vim_search;
 mod warning_notice;
@@ -411,8 +409,6 @@ use self::popup_state::PopupState;
 use self::slash_input::SlashInput;
 use self::slash_input::SlashValidation;
 use self::slash_input::SubmissionValidation;
-use self::transcribe_waveform::TRANSCRIBE_WAVEFORM_WIDTH;
-use self::transcribe_waveform::transcribe_marker_text;
 use self::vim_history::VimHistory;
 use crate::app_event::AppEvent;
 use crate::app_event::ConnectorsSnapshot;
@@ -1278,24 +1274,6 @@ impl ChatComposer {
             .textarea
             .set_cursor(self.draft.textarea.text().len());
         self.sync_popups();
-    }
-
-    pub(crate) fn start_transcribe_marker(&mut self) -> u64 {
-        let marker = transcribe_marker_text(&[0.0; TRANSCRIBE_WAVEFORM_WIDTH * 2]);
-        self.draft.textarea.insert_protected_element(&marker)
-    }
-
-    pub(crate) fn update_transcribe_marker(&mut self, marker_id: u64, samples: &[f32]) -> bool {
-        let marker = transcribe_marker_text(samples);
-        self.draft
-            .textarea
-            .replace_element_payload_by_id(marker_id, &marker)
-    }
-
-    pub(crate) fn replace_transcribe_marker(&mut self, marker_id: u64, text: &str) -> bool {
-        self.draft
-            .textarea
-            .replace_element_with_text_by_id(marker_id, text)
     }
 
     /// Enable or disable Vim editing for the composer textarea.
@@ -12200,49 +12178,6 @@ mod tests {
         assert_eq!(
             composer.draft.textarea.cursor(),
             composer.current_text().len()
-        );
-    }
-
-    #[test]
-    fn transcribe_marker_replaces_in_place() {
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            /*has_input_focus*/ true,
-            sender,
-            /*enhanced_keys_supported*/ false,
-            "Ask Codex to do anything".to_string(),
-            /*disable_paste_burst*/ false,
-        );
-        composer.set_text_content("before  after".to_string(), Vec::new(), Vec::new());
-        composer.draft.textarea.set_cursor("before ".len());
-
-        let marker_id = composer.start_transcribe_marker();
-
-        assert_eq!(composer.current_text(), "before ⠀⠀⠀⠀⠀ after");
-        assert!(composer.update_transcribe_marker(
-            marker_id,
-            &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-        ));
-        assert_eq!(composer.current_text(), "before ⠀⠀⠀⠀⢸ after");
-        assert!(composer.update_transcribe_marker(
-            marker_id,
-            &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.16],
-        ));
-        assert_eq!(composer.current_text(), "before ⠀⠀⠀⠀⡷ after");
-        assert!(composer.replace_transcribe_marker(marker_id, "hello"));
-        assert_eq!(composer.current_text(), "before hello after");
-    }
-
-    #[test]
-    fn transcribe_marker_text_is_computed_from_amplitude_samples() {
-        assert_eq!(
-            transcribe_marker_text(&[0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            "⠀⠀⠀⠀⠀"
-        );
-        assert_eq!(
-            transcribe_marker_text(&[0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.04, 0.16, 0.36]),
-            "⠀⠀⠀⠐⠾"
         );
     }
 

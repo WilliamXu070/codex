@@ -2,7 +2,7 @@
 
 set -e
 
-root="/Users/williamxu/Desktop/Projects/codex/william"
+root="${0:A:h}"
 codex_home="${CODEX_HOME:-/Users/williamxu/.codex}"
 
 mkdir -p "$codex_home/commands"
@@ -10,10 +10,20 @@ mkdir -p "$codex_home/commands"
 ln -sf "$root/audio/random-sound" "$codex_home/codex-random-sound"
 ln -sf "$root/audio/finished-sound" "$codex_home/codex-finished-sound"
 ln -sf "$root/audio/attention-watch" "$codex_home/codex-attention-sound-watch"
-ln -sf "$root/audio/sound-state" "$codex_home/codex-sound-state"
+if [[ ! -e "$codex_home/codex-sound-state" && ! -L "$codex_home/codex-sound-state" ]]; then
+  cp "$root/audio/sound-state" "$codex_home/codex-sound-state"
+fi
 ln -sf "$root/commands/sound" "$codex_home/commands/sound"
-ln -sf "$root/commands/dictate" "$codex_home/commands/dictate"
-ln -sf "$root/transcribe/transcribe-command" "$codex_home/commands/transcribe-command"
+# Retire only our registered voice helper links; preserve user-owned regular files.
+for name in dictate transcribe-command; do
+  helper="$codex_home/commands/$name"
+  if [[ -L "$helper" ]]; then
+    target="$(readlink "$helper")"
+    if [[ "$target" == */william/commands/dictate || "$target" == */william/transcribe/transcribe-command ]]; then
+      rm "$helper"
+    fi
+  fi
+done
 
 if [[ -r "$root/audio/wilhelm-scream.mp3" ]]; then
   ln -sf "$root/audio/wilhelm-scream.mp3" "$codex_home/wilhelm-scream.mp3"

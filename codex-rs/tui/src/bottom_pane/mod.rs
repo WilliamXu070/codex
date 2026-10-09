@@ -1198,28 +1198,6 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    pub(crate) fn start_transcribe_marker(&mut self) -> u64 {
-        let marker_id = self.composer.start_transcribe_marker();
-        self.request_redraw();
-        marker_id
-    }
-
-    pub(crate) fn update_transcribe_marker(&mut self, marker_id: u64, samples: &[f32]) -> bool {
-        let updated = self.composer.update_transcribe_marker(marker_id, samples);
-        if updated {
-            self.request_redraw();
-        }
-        updated
-    }
-
-    pub(crate) fn replace_transcribe_marker(&mut self, marker_id: u64, text: &str) -> bool {
-        let replaced = self.composer.replace_transcribe_marker(marker_id, text);
-        if replaced {
-            self.request_redraw();
-        }
-        replaced
-    }
-
     pub(crate) fn set_footer_hint_override(&mut self, items: Option<Vec<(String, String)>>) {
         if let Some(view) = &mut self.warnings_view {
             view.pending_hint = items.clone();

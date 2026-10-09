@@ -5,7 +5,7 @@ expression: "render_picker(params, 120)"
 
   Keymap
   All configurable shortcuts.
-  152 actions, 1 customized, 5 unbound.
+  151 actions, 1 customized, 5 unbound.
 
    All   Common   Customized (1)   Unbound (5)   App   Composer   Editor   Vim   Navigation   Agents   Approval      ›
 
@@ -16,7 +16,6 @@ expression: "render_picker(params, 120)"
   Global         Find Transcript            f3
   Global         Focus Activity             f4
   Global         Open External Editor       ctrl-g
-  Global         Transcribe                 ctrl-shift-d
   Global         Copy                       ctrl-o
   Global         Clear Terminal             ctrl-l
   Global       - Toggle Vim Mode            unbound
@@ -35,5 +34,6 @@ expression: "render_picker(params, 120)"
   Composer     * Submit                     ctrl-enter
   Composer       Queue                      tab
   Composer       Toggle Shortcuts           ?, shift-?
+  Composer       History Search Previous    ctrl-r
 ↓
   left/right group · enter edit shortcut · * custom · - unbound · esc close

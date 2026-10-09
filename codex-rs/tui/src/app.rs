@@ -450,7 +450,6 @@ impl AutoReviewMode {
 /// Smooth-mode streaming drains one line per tick, so this interval controls
 /// perceived typing speed for non-backlogged output.
 const COMMIT_ANIMATION_TICK: Duration = tui::TARGET_FRAME_INTERVAL;
-pub(crate) const TRANSCRIBE_WAVEFORM_SAMPLES: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct AppExitInfo {
@@ -574,9 +573,6 @@ pub(crate) struct App {
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) keymap: RuntimeKeymap,
     pub(crate) key_chord_matcher: KeyChordMatcher,
-    transcribe_arm: Option<TranscribeArmState>,
-    transcribe_next_arm_id: u64,
-    transcribe_capture: Option<TranscribeCaptureState>,
 
     /// The foreground loop owns stream pacing; stopped animations have no timer.
     pub(crate) commit_animation: Option<tokio::time::Interval>,
@@ -685,20 +681,6 @@ struct PendingMcpLoginStart {
     name: String,
     thread_id: ThreadId,
     completions: Vec<codex_app_server_protocol::McpServerOauthLoginCompletedNotification>,
-}
-
-struct TranscribeArmState {
-    id: u64,
-}
-
-struct TranscribeCaptureState {
-    child: std::process::Child,
-    wav_path: PathBuf,
-    level_path: PathBuf,
-    started_at: Instant,
-    marker_id: u64,
-    waveform_samples: VecDeque<f32>,
-    spinner_stop_tx: tokio::sync::oneshot::Sender<()>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -106,8 +106,6 @@ pub(crate) struct AppKeymap {
     pub(crate) open_warnings: Vec<KeyBinding>,
     /// Open external editor for the current draft.
     pub(crate) open_external_editor: Vec<KeyBinding>,
-    /// Capture speech and insert the transcription into the composer.
-    pub(crate) transcribe: Vec<KeyBinding>,
     /// Copy the last agent response to the clipboard.
     pub(crate) copy: Vec<KeyBinding>,
     /// Clear the terminal UI.
@@ -710,11 +708,6 @@ impl RuntimeKeymap {
                 keymap.global.open_external_editor.as_ref(),
                 &defaults.app.open_external_editor,
                 "tui.keymap.global.open_external_editor",
-            )?,
-            transcribe: resolve_bindings(
-                keymap.global.transcribe.as_ref(),
-                &defaults.app.transcribe,
-                "tui.keymap.global.transcribe",
             )?,
             copy: resolve_bindings(
                 keymap.global.copy.as_ref(),
@@ -1445,7 +1438,6 @@ impl RuntimeKeymap {
                 keymap.global.open_external_editor.as_ref(),
                 app.open_external_editor.as_slice(),
             ),
-            (keymap.global.transcribe.as_ref(), app.transcribe.as_slice()),
             (keymap.global.copy.as_ref(), app.copy.as_slice()),
             (
                 keymap.global.clear_terminal.as_ref(),
@@ -1660,10 +1652,6 @@ impl RuntimeKeymap {
                 focus_activity: default_bindings![plain(KeyCode::F(4))],
                 open_warnings: default_bindings![plain(KeyCode::F(2))],
                 open_external_editor: default_bindings![ctrl(KeyCode::Char('g'))],
-                transcribe: default_bindings![raw(KeyBinding::new(
-                    KeyCode::Char('d'),
-                    KeyModifiers::CONTROL.union(KeyModifiers::SHIFT),
-                ))],
                 copy: default_bindings![ctrl(KeyCode::Char('o'))],
                 clear_terminal: default_bindings![ctrl(KeyCode::Char('l'))],
                 toggle_vim_mode: default_bindings![],
@@ -2029,7 +2017,6 @@ impl RuntimeKeymap {
                 "open_external_editor",
                 self.app.open_external_editor.as_slice(),
             ),
-            ("transcribe", self.app.transcribe.as_slice()),
             ("copy", self.app.copy.as_slice()),
             ("clear_terminal", self.app.clear_terminal.as_slice()),
             ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
@@ -2136,7 +2123,6 @@ impl RuntimeKeymap {
                     "open_external_editor",
                     self.app.open_external_editor.as_slice(),
                 ),
-                ("transcribe", self.app.transcribe.as_slice()),
                 ("copy", self.app.copy.as_slice()),
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
@@ -2196,7 +2182,6 @@ impl RuntimeKeymap {
                     "open_external_editor",
                     self.app.open_external_editor.as_slice(),
                 ),
-                ("transcribe", self.app.transcribe.as_slice()),
                 ("copy", self.app.copy.as_slice()),
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("chat.toggle_voice", self.chat.toggle_voice.as_slice()),

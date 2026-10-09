@@ -91,7 +91,6 @@ pub(super) const KEYMAP_ACTIONS: &[KeymapActionDescriptor] = &[
     // accept it. Its built-in shortcuts remain available.
     action("global", "Global", "focus_activity", "Focus transcript activity groups to expand or collapse their details."),
     action("global", "Global", "open_external_editor", "Open the current draft in an external editor."),
-    action("global", "Global", "transcribe", "Capture speech and insert the transcription into the composer."),
     action("global", "Global", "copy", "Copy the last agent response to the clipboard."),
     action("global", "Global", "clear_terminal", "Clear the terminal UI."),
     action("global", "Global", "toggle_vim_mode", "Turn Vim composer mode on or off."),
@@ -278,7 +277,6 @@ pub(super) fn binding_slot<'a>(
         ("global", "find_transcript") => Some(&mut keymap.global.find_transcript),
         ("global", "focus_activity") => Some(&mut keymap.global.focus_activity),
         ("global", "open_external_editor") => Some(&mut keymap.global.open_external_editor),
-        ("global", "transcribe") => Some(&mut keymap.global.transcribe),
         ("global", "copy") => Some(&mut keymap.global.copy),
         ("global", "clear_terminal") => Some(&mut keymap.global.clear_terminal),
         ("global", "toggle_vim_mode") => Some(&mut keymap.global.toggle_vim_mode),

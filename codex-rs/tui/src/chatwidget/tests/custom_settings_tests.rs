@@ -2,11 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn custom_settings_commands_open_local_popups_without_submitting_a_turn() {
-    for (command, title) in [
-        ("/sound", "Sound Settings"),
-        ("/transcribe", "Transcribe Settings"),
-        ("/transcribe-command", "Transcribe Settings"),
-    ] {
+    for (command, title) in [("/sound", "Sound Settings")] {
         let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
         chat.bottom_pane
             .set_composer_text(command.to_string(), Vec::new(), Vec::new());

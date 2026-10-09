@@ -59,8 +59,6 @@ pub enum SlashCommand {
     Pwd,
     Usage,
     Sound,
-    #[strum(to_string = "transcribe", serialize = "transcribe-command")]
-    TranscribeCommand,
     DebugConfig,
     Title,
     Statusline,
@@ -124,9 +122,6 @@ impl SlashCommand {
             SlashCommand::Pwd => "show the current working directory",
             SlashCommand::Usage => "view account usage or use a usage limit reset",
             SlashCommand::Sound => "configure Codex sounds",
-            SlashCommand::TranscribeCommand => {
-                "configure Codex transcription provider and API settings"
-            }
             SlashCommand::DebugConfig => "show config layers and requirement sources for debugging",
             SlashCommand::Title => "configure which items appear in the terminal title",
             SlashCommand::Statusline => "configure which items appear in the status line",
@@ -195,7 +190,6 @@ impl SlashCommand {
                 | SlashCommand::Side
                 | SlashCommand::Btw
                 | SlashCommand::Resume
-                | SlashCommand::TranscribeCommand
         )
     }
 
@@ -288,7 +282,6 @@ impl SlashCommand {
             | SlashCommand::Pwd
             | SlashCommand::Usage
             | SlashCommand::Sound
-            | SlashCommand::TranscribeCommand
             | SlashCommand::DebugConfig
             | SlashCommand::Ps
             | SlashCommand::Stop
@@ -366,19 +359,6 @@ mod tests {
         assert!(SlashCommand::Raw.available_in_side_conversation());
         assert!(SlashCommand::Raw.supports_inline_args());
         assert!(SlashCommand::App.available_during_task());
-    }
-
-    #[test]
-    fn transcribe_command_can_be_parsed() {
-        assert_eq!(SlashCommand::TranscribeCommand.command(), "transcribe");
-        assert_eq!(
-            SlashCommand::from_str("transcribe"),
-            Ok(SlashCommand::TranscribeCommand)
-        );
-        assert_eq!(
-            SlashCommand::from_str("transcribe-command"),
-            Ok(SlashCommand::TranscribeCommand)
-        );
     }
 
     #[test]

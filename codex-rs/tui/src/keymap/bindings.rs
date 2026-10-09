@@ -275,7 +275,6 @@ define_runtime_action_bindings! {
         focus_activity,
         open_warnings => runtime_only,
         open_external_editor,
-        transcribe,
         copy,
         clear_terminal,
         toggle_vim_mode,

@@ -1760,70 +1760,6 @@ impl TextArea {
         true
     }
 
-    pub fn replace_element_payload_by_id(&mut self, id: u64, new: &str) -> bool {
-        let Some(idx) = self.elements.iter().position(|e| e.id == id) else {
-            return false;
-        };
-
-        let range = self.elements[idx].range.clone();
-        let start = range.start;
-        let end = range.end;
-        if start > end || end > self.text.len() {
-            return false;
-        }
-
-        let removed_len = end - start;
-        let inserted_len = new.len();
-        let diff = inserted_len as isize - removed_len as isize;
-
-        self.text.replace_range(range, new);
-        self.wrap_cache.replace(None);
-        self.preferred_col = None;
-        self.elements[idx].range = start..(start + inserted_len);
-
-        if diff != 0 {
-            for (j, e) in self.elements.iter_mut().enumerate() {
-                if j == idx || e.range.end <= start {
-                    continue;
-                }
-                if e.range.start >= end {
-                    e.range.start = e.range.start.saturating_add_signed(diff);
-                    e.range.end = e.range.end.saturating_add_signed(diff);
-                }
-            }
-        }
-
-        self.cursor_pos = if self.cursor_pos < start {
-            self.cursor_pos
-        } else if self.cursor_pos <= end {
-            start + inserted_len
-        } else {
-            self.cursor_pos.saturating_add_signed(diff)
-        };
-        self.cursor_pos = self.clamp_pos_to_nearest_boundary(self.cursor_pos);
-        self.elements.sort_by_key(|e| e.range.start);
-
-        true
-    }
-
-    pub fn replace_element_with_text_by_id(&mut self, id: u64, text: &str) -> bool {
-        let Some(idx) = self.elements.iter().position(|e| e.id == id) else {
-            return false;
-        };
-        let range = self.elements[idx].range.clone();
-        self.elements.remove(idx);
-        self.replace_range_raw(range, text);
-        true
-    }
-
-    pub fn insert_protected_element(&mut self, text: &str) -> u64 {
-        let id = self.insert_element(text);
-        if let Some(element) = self.elements.iter_mut().find(|element| element.id == id) {
-            element.protected = true;
-        }
-        id
-    }
-
     fn add_element(&mut self, range: Range<usize>, protected: bool) -> u64 {
         let id = self.next_element_id();
         self.elements.push(TextElement {
@@ -2638,26 +2574,6 @@ mod tests {
 
         assert_eq!(t.text(), "ab");
         assert_eq!(t.cursor(), elem_start);
-    }
-
-    #[test]
-    fn protected_element_resists_delete_and_replaces_by_id() {
-        let mut t = TextArea::new();
-        t.insert_str("before ");
-        let marker_id = t.insert_protected_element("[transcribing -]");
-        t.insert_str(" after");
-
-        let marker_start = "before ".len();
-        t.set_cursor(marker_start + "[transcribing -]".len());
-        t.delete_backward(/*n*/ 1);
-        assert_eq!(t.text(), "before [transcribing -] after");
-
-        t.set_cursor(marker_start);
-        t.delete_forward(/*n*/ 1);
-        assert_eq!(t.text(), "before [transcribing -] after");
-
-        assert!(t.replace_element_with_text_by_id(marker_id, "hello"));
-        assert_eq!(t.text(), "before hello after");
     }
 
     #[test]
