@@ -348,17 +348,15 @@ impl App {
         tui.frame_requester().schedule_frame();
     }
 
+    #[cfg(test)]
     pub(super) fn apply_raw_output_mode(
         &mut self,
         tui: &mut tui::Tui,
         enabled: bool,
         notify: bool,
     ) {
-        if notify {
-            self.chat_widget.set_raw_output_mode_and_notify(enabled);
-        } else {
-            self.chat_widget.set_raw_output_mode(enabled);
-        }
+        let _ = notify;
+        self.chat_widget.set_raw_output_mode(enabled);
         if tui.is_owned_screen() {
             self.transcript_view.set_presentation(
                 self.transcript_view.is_detailed(),
@@ -710,12 +708,6 @@ impl App {
             && self.chat_widget.can_toggle_fast_mode_from_keybinding()
         {
             self.chat_widget.toggle_fast_mode_from_ui();
-            return true;
-        }
-
-        if self.keymap.app.toggle_raw_output.is_pressed(key_event) {
-            let enabled = !self.chat_widget.raw_output_mode();
-            self.apply_raw_output_mode(tui, enabled, /*notify*/ false);
             return true;
         }
 

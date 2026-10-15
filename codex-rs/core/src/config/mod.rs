@@ -819,9 +819,6 @@ pub struct Config {
     pub tui_vim_mode_default: bool,
     pub tui_question_esc_back: bool,
 
-    /// Start the TUI in raw scrollback mode for copy-friendly transcript output.
-    pub tui_raw_output_mode: bool,
-
     /// Own the fullscreen transcript when the alternate screen is enabled.
     pub tui_fullscreen_transcript: bool,
 
@@ -4648,11 +4645,6 @@ impl Config {
                 .tui
                 .as_ref()
                 .map(|t| t.vim_mode_default)
-                .unwrap_or(false),
-            tui_raw_output_mode: cfg
-                .tui
-                .as_ref()
-                .map(|t| t.raw_output_mode)
                 .unwrap_or(false),
             tui_fullscreen_transcript: cfg
                 .tui

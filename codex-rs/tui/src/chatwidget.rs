@@ -527,9 +527,11 @@ pub(crate) struct ChatWidget {
     config: Config,
     pub(crate) local_settings: crate::local_settings::LocalSettings,
     pub(crate) config_panel_tui: codex_config::types::Tui,
-    raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
     effective_service_tier: Option<String>,
+    // Raw presentation remains available only to transcript rendering regression tests.
+    #[cfg(test)]
+    raw_output_mode: bool,
     /// The unmasked collaboration mode settings (always Default mode).
     ///
     /// Masks are applied on top of this base mode to derive the effective mode.
@@ -1654,21 +1656,17 @@ impl ChatWidget {
         })
     }
 
-    pub(crate) fn raw_output_mode(&self) -> bool {
-        self.raw_output_mode
-    }
-
     pub(crate) fn history_render_mode(&self) -> HistoryRenderMode {
+        #[cfg(test)]
         if self.raw_output_mode {
-            HistoryRenderMode::Raw
-        } else {
-            HistoryRenderMode::Rich
+            return HistoryRenderMode::Raw;
         }
+        HistoryRenderMode::Rich
     }
 
+    #[cfg(test)]
     pub(crate) fn set_raw_output_mode(&mut self, enabled: bool) {
         self.raw_output_mode = enabled;
-        self.local_settings.tui.raw_output_mode = enabled;
         let render_mode = self.history_render_mode();
         if let Some(controller) = self.stream_controller.as_mut() {
             controller.set_render_mode(render_mode);
@@ -1677,28 +1675,6 @@ impl ChatWidget {
             controller.set_render_mode(render_mode);
         }
         self.refresh_status_surfaces();
-    }
-
-    pub(crate) fn raw_output_mode_notice(enabled: bool) -> &'static str {
-        if enabled {
-            "Raw output mode on: transcript text is shown for clean terminal selection."
-        } else {
-            "Raw output mode off: rich transcript rendering restored."
-        }
-    }
-
-    pub(crate) fn set_raw_output_mode_and_notify(&mut self, enabled: bool) {
-        self.set_raw_output_mode(enabled);
-        self.add_info_message(
-            Self::raw_output_mode_notice(enabled).to_string(),
-            /*hint*/ None,
-        );
-    }
-
-    pub(crate) fn toggle_raw_output_mode_and_notify(&mut self) -> bool {
-        let enabled = !self.raw_output_mode;
-        self.set_raw_output_mode_and_notify(enabled);
-        enabled
     }
 
     /// Update resize-sensitive chat widget state after the terminal width changes.

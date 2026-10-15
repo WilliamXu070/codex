@@ -631,11 +631,6 @@ pub(crate) enum AppEvent {
     /// Reset queued history while keeping the startup draft visible until the next frame.
     ResetTranscriptForThreadSwitchPreservingScreen,
 
-    /// Re-render the transcript using the selected scrollback rendering mode.
-    RawOutputModeChanged {
-        enabled: bool,
-    },
-
     /// Clear the current context, start a fresh session, and submit an initial user message.
     ///
     /// This is the Plan Mode handoff path: the previous thread remains resumable, but the model

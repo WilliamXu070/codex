@@ -1267,7 +1267,6 @@ fn config_toml_deserializes_model_availability_nux() {
             disable_paste_burst: None,
             vim_mode_default: false,
             question_esc_back: true,
-            raw_output_mode: false,
             fullscreen_transcript: true,
             mouse_scroll_speed: None,
             copy_on_select: Default::default(),
@@ -1357,24 +1356,6 @@ fn test_tui_vim_mode_default_true() {
             .expect("config should include tui section")
             .vim_mode_default
     );
-}
-
-#[tokio::test]
-async fn runtime_config_uses_tui_raw_output_mode() {
-    let toml = r#"
-        [tui]
-        raw_output_mode = true
-    "#;
-    let cfg_toml: ConfigToml = toml::from_str(toml).expect("deserialize raw_output_mode=true");
-    let cfg = Config::load_from_base_config_with_overrides(
-        cfg_toml,
-        ConfigOverrides::default(),
-        tempdir().expect("tempdir").abs(),
-    )
-    .await
-    .expect("load config");
-
-    assert!(cfg.tui_raw_output_mode);
 }
 
 #[tokio::test]
@@ -4479,7 +4460,6 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             disable_paste_burst: None,
             vim_mode_default: false,
             question_esc_back: true,
-            raw_output_mode: false,
             fullscreen_transcript: true,
             mouse_scroll_speed: None,
             copy_on_select: Default::default(),

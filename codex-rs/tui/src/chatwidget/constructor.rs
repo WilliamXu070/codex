@@ -114,7 +114,8 @@ impl ChatWidget {
                 skills: None,
             }),
             transcript: TranscriptState::new(active_cell),
-            raw_output_mode: local_settings.tui.raw_output_mode,
+            #[cfg(test)]
+            raw_output_mode: false,
             config,
             local_settings,
             config_panel_tui,

@@ -4793,7 +4793,6 @@
               "queue": null,
               "submit": null,
               "toggle_fast_mode": null,
-              "toggle_raw_output": null,
               "toggle_shortcuts": null,
               "toggle_side_conversation": null,
               "toggle_vim_mode": null
@@ -4963,11 +4962,6 @@
         "question_esc_back": {
           "default": true,
           "description": "Escape returns from async questions to the composer, preserving the answer draft.",
-          "type": "boolean"
-        },
-        "raw_output_mode": {
-          "default": false,
-          "description": "Start the TUI in raw scrollback mode for copy-friendly transcript output. Defaults to `false`.",
           "type": "boolean"
         },
         "rendering": {
@@ -5646,14 +5640,6 @@
           ],
           "description": "Toggle Fast mode."
         },
-        "toggle_raw_output": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/KeybindingsSpec"
-            }
-          ],
-          "description": "Toggle raw scrollback mode for copy-friendly transcript selection."
-        },
         "toggle_shortcuts": {
           "allOf": [
             {
@@ -5800,7 +5786,6 @@
             "queue": null,
             "submit": null,
             "toggle_fast_mode": null,
-            "toggle_raw_output": null,
             "toggle_shortcuts": null,
             "toggle_side_conversation": null,
             "toggle_vim_mode": null

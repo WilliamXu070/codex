@@ -875,11 +875,6 @@ pub struct Tui {
     #[serde(default = "default_true")]
     pub question_esc_back: bool,
 
-    /// Start the TUI in raw scrollback mode for copy-friendly transcript output.
-    /// Defaults to `false`.
-    #[serde(default)]
-    pub raw_output_mode: bool,
-
     /// Own the fullscreen transcript, including scrolling, selection, and search.
     /// Defaults to `true`; alternate-screen restrictions take precedence.
     #[serde(default = "default_true")]

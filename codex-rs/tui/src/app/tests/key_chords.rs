@@ -126,10 +126,10 @@ async fn global_chord_keeps_hints_and_completes_before_deadline() -> Result<()> 
 }
 
 #[tokio::test]
-async fn completed_global_chords_toggle_output_and_request_external_editor() -> Result<()> {
+async fn completed_global_chords_toggle_vim_and_request_external_editor() -> Result<()> {
     let (mut app, mut tui, mut app_server) = chord_app().await?;
     let config = toml::from_str(
-        "[global]\ntoggle_raw_output = [\"ctrl-x r\", \"pageup\"]\nopen_external_editor = [\"ctrl-x e\"]",
+        "[global]\ntoggle_vim_mode = [\"ctrl-x r\", \"pageup\"]\nopen_external_editor = [\"ctrl-x e\"]",
     )?;
     app.keymap = RuntimeKeymap::from_config(&config).expect("valid global chords");
     app.chat_widget.apply_keymap_update(config, &app.keymap);
@@ -137,10 +137,10 @@ async fn completed_global_chords_toggle_output_and_request_external_editor() -> 
     for key in [ctrl('x'), KeyCode::Char('r').into()] {
         press(&mut app, &mut tui, &mut app_server, key).await?;
     }
-    assert!(app.chat_widget.raw_output_mode());
+    assert!(app.chat_widget.composer_is_vim_enabled());
     tui.set_owned_screen(/*owned*/ true)?;
     press(&mut app, &mut tui, &mut app_server, KeyCode::PageUp.into()).await?;
-    assert!(!app.chat_widget.raw_output_mode());
+    assert!(!app.chat_widget.composer_is_vim_enabled());
     let config = toml::from_str(
         "[composer]\nsubmit = 'pageup'\n[editor]\nmove_line_start = 'pagedown'\n[global]\nopen_external_editor = 'ctrl-x e'",
     )?;
@@ -382,6 +382,10 @@ async fn legacy_terminal_preserves_active_global_alt_shortcuts() -> Result<()> {
     )
     .await?;
 
+    let mut config = TuiKeymap::default();
+    config.global.toggle_vim_mode = Some(KeybindingsSpec::One(KeybindingSpec("alt-r".to_string())));
+    app.keymap = RuntimeKeymap::from_config(&config).expect("valid global shortcut");
+    app.chat_widget.apply_keymap_update(config, &app.keymap);
     press(
         &mut app,
         &mut tui,
@@ -390,9 +394,9 @@ async fn legacy_terminal_preserves_active_global_alt_shortcuts() -> Result<()> {
     )
     .await?;
 
-    assert!(app.chat_widget.raw_output_mode());
+    assert!(!app.chat_widget.composer_is_vim_enabled());
     assert!(
-        app.chat_widget
+        !app.chat_widget
             .should_handle_vim_insert_escape(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
     );
     Ok(())
@@ -507,7 +511,7 @@ async fn legacy_terminal_preserves_active_alt_chords() -> Result<()> {
     ] {
         let (mut app, mut tui, mut app_server) = chord_app().await?;
         let mut config = TuiKeymap::default();
-        config.global.toggle_raw_output =
+        config.global.toggle_vim_mode =
             Some(KeybindingsSpec::One(KeybindingSpec(binding.to_string())));
         let runtime =
             RuntimeKeymap::from_config(&config).map_err(|error| color_eyre::eyre::eyre!(error))?;
@@ -527,7 +531,7 @@ async fn legacy_terminal_preserves_active_alt_chords() -> Result<()> {
         assert!(app.key_chord_matcher.is_pending());
         press(&mut app, &mut tui, &mut app_server, completion).await?;
 
-        assert!(app.chat_widget.raw_output_mode());
+        assert!(!app.chat_widget.composer_is_vim_enabled());
         assert!(!app.key_chord_matcher.is_pending());
     }
     Ok(())
