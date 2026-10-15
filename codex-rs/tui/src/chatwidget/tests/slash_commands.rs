@@ -1387,27 +1387,6 @@ async fn slash_rename_without_existing_thread_name_starts_empty() {
 }
 
 #[tokio::test]
-async fn usage_error_slash_command_is_available_from_local_recall() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2")).await;
-
-    submit_composer_text(&mut chat, "/raw maybe");
-
-    assert_eq!(chat.bottom_pane.composer_text(), "");
-
-    let cells = drain_insert_history(&mut rx);
-    let rendered = cells
-        .iter()
-        .map(|cell| lines_to_single_string(cell))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        rendered.contains("Usage: /raw [on|off]"),
-        "expected usage message, got: {rendered:?}"
-    );
-    assert_eq!(recall_latest_after_clearing(&mut chat), "/raw maybe");
-}
-
-#[tokio::test]
 async fn signed_out_usage_command_reports_chatgpt_login_requirement() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
@@ -2218,7 +2197,6 @@ async fn slash_copy_picker_remains_available_from_parent_owned_threads() {
 #[tokio::test]
 async fn slash_daybreak_offers_an_application_when_unavailable() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
-    chat.set_feature_enabled(Feature::CliDaybreak, /*enabled*/ true);
     chat.has_chatgpt_account = true;
     chat.config.model_provider_id = "openai".into();
     let mut model = crate::test_support::TEST_MODEL_PRESETS[0].clone();
@@ -2272,7 +2250,10 @@ async fn slash_daybreak_offers_an_application_when_unavailable() {
     chat.model_catalog = std::sync::Arc::new(ModelCatalog::new(vec![model]));
     chat.has_chatgpt_account = false;
     chat.status_account_display = Some(StatusAccountDisplay::ApiKey);
+    chat.set_feature_enabled(Feature::ApiKeyCyberAccessPrograms, /*enabled*/ true);
     chat.set_daybreak_enabled(/*enabled*/ false);
+    chat.bottom_pane
+        .set_composer_text(String::new(), Vec::new(), Vec::new());
     chat.bottom_pane
         .set_composer_text("/daybreak".to_string(), Vec::new(), Vec::new());
     assert_chatwidget_snapshot!(
@@ -2281,6 +2262,20 @@ async fn slash_daybreak_offers_an_application_when_unavailable() {
             .lines()
             .next()
             .unwrap()
+    );
+    chat.set_daybreak_enabled(/*enabled*/ true);
+    chat.set_feature_enabled(Feature::ApiKeyCyberAccessPrograms, /*enabled*/ false);
+    chat.bottom_pane
+        .set_composer_text(String::new(), Vec::new(), Vec::new());
+    chat.bottom_pane
+        .set_composer_text("/daybreak".to_string(), Vec::new(), Vec::new());
+    insta::assert_snapshot!(
+        render_bottom_popup(&chat, /*width*/ 80)
+            .lines()
+            .filter(|line| line.contains("broader access"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        @""
     );
     chat.has_chatgpt_account = true;
     chat.status_account_display = None;
@@ -2510,16 +2505,46 @@ async fn slash_keymap_invalid_args_show_usage() {
 #[tokio::test]
 async fn copy_shortcut_can_be_remapped() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
-        let paste = KeyEvent::new(KeyCode::Char('v'), modifiers);
+    for (code, modifiers) in [
+        (KeyCode::Char('v'), KeyModifiers::CONTROL),
+        (KeyCode::Char('V'), KeyModifiers::CONTROL),
+        (
+            KeyCode::Char('V'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (KeyCode::Char('v'), KeyModifiers::ALT),
+    ] {
+        let paste = KeyEvent::new(code, modifiers);
         assert_matches!(
             chat.handle_key_event(paste),
-            crate::chatwidget::KeyEventAction::PasteImage
+            crate::chatwidget::KeyEventAction::PasteImage { text_fallback }
+                if text_fallback == (cfg!(windows) && modifiers == KeyModifiers::CONTROL)
+                    .then_some(code)
         );
         chat.handle_key_event(KeyEvent {
             kind: KeyEventKind::Release,
             ..paste
         });
+    }
+    // Crossterm maps VK_INSERT + SHIFT_PRESSED directly to Insert + Shift on Windows.
+    let shift_insert = KeyEvent::new(KeyCode::Insert, KeyModifiers::SHIFT);
+    if cfg!(windows) {
+        chat.bottom_pane.set_disable_paste_burst(/*disabled*/ false);
+        chat.handle_key_event(KeyEvent::from(KeyCode::Char('q')));
+        assert_matches!(
+            chat.handle_key_event(shift_insert),
+            KeyEventAction::PasteImage {
+                text_fallback: Some(KeyCode::Insert)
+            }
+        );
+        assert_eq!(chat.bottom_pane.composer_text(), "q");
+        assert_matches!(chat.handle_key_event(shift_insert), KeyEventAction::None);
+        chat.handle_key_event(KeyEvent {
+            kind: KeyEventKind::Release,
+            ..shift_insert
+        });
+        chat.bottom_pane
+            .set_composer_text(String::new(), Vec::new(), Vec::new());
     }
     let mut keymap_config = chat.config_ref().tui_keymap.clone();
     keymap_config.global.copy = Some(codex_config::types::KeybindingsSpec::One(
@@ -2553,22 +2578,34 @@ async fn legacy_image_paste_ignores_buffered_press_until_other_input() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let paste = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
 
-    assert_matches!(chat.handle_key_event(paste), KeyEventAction::PasteImage);
+    assert_matches!(
+        chat.handle_key_event(paste),
+        KeyEventAction::PasteImage { .. }
+    );
     assert_matches!(chat.handle_key_event(paste), KeyEventAction::None);
 
     chat.suppress_image_paste_until = Instant::now() - Duration::from_secs(/*secs*/ 1);
-    assert_matches!(chat.handle_key_event(paste), KeyEventAction::PasteImage);
+    assert_matches!(
+        chat.handle_key_event(paste),
+        KeyEventAction::PasteImage { .. }
+    );
 
     chat.suppress_image_paste_until = Instant::now() + Duration::from_secs(/*secs*/ 1);
     chat.handle_key_event(KeyEvent::from(KeyCode::Char('x')));
-    assert_matches!(chat.handle_key_event(paste), KeyEventAction::PasteImage);
+    assert_matches!(
+        chat.handle_key_event(paste),
+        KeyEventAction::PasteImage { .. }
+    );
 
     chat.suppress_image_paste_until = Instant::now() + Duration::from_secs(/*secs*/ 1);
     chat.handle_key_event(KeyEvent {
         kind: KeyEventKind::Release,
         ..paste
     });
-    assert_matches!(chat.handle_key_event(paste), KeyEventAction::PasteImage);
+    assert_matches!(
+        chat.handle_key_event(paste),
+        KeyEventAction::PasteImage { .. }
+    );
 }
 
 #[tokio::test]
@@ -3674,57 +3711,6 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
         } if service_tier == SERVICE_TIER_DEFAULT_REQUEST_VALUE => {}
         other => panic!("expected Op::UserTurn with default service tier override, got {other:?}"),
     }
-}
-
-#[tokio::test]
-async fn raw_slash_command_toggles_and_accepts_on_off_args() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-
-    chat.dispatch_command(SlashCommand::Raw);
-    assert!(chat.raw_output_mode());
-    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, AppEvent::RawOutputModeChanged { enabled: true }))
-    );
-
-    chat.dispatch_command_with_args(SlashCommand::Raw, "off".to_string(), Vec::new());
-    assert!(!chat.raw_output_mode());
-    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, AppEvent::RawOutputModeChanged { enabled: false }))
-    );
-
-    chat.dispatch_command_with_args(SlashCommand::Raw, "on".to_string(), Vec::new());
-    assert!(chat.raw_output_mode());
-    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, AppEvent::RawOutputModeChanged { enabled: true }))
-    );
-}
-
-#[tokio::test]
-async fn raw_slash_command_reports_usage_for_invalid_arg() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-
-    chat.dispatch_command_with_args(SlashCommand::Raw, "status".to_string(), Vec::new());
-
-    assert!(!chat.raw_output_mode());
-    let cells = drain_insert_history(&mut rx);
-    let rendered = cells
-        .iter()
-        .map(|lines| lines_to_single_string(lines))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        rendered.contains("Usage: /raw [on|off]"),
-        "expected raw usage error, got {rendered:?}"
-    );
 }
 
 #[tokio::test]

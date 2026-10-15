@@ -134,6 +134,8 @@ impl KeybindingsSpec {
 #[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiGlobalKeymap {
+    /// Prefix for persistent, context-aware shortcut menus.
+    pub leader: Option<KeybindingsSpec>,
     /// Open the shared agent-session overview.
     pub open_agents: Option<KeybindingsSpec>,
     /// Open the transcript overlay.
@@ -158,8 +160,6 @@ pub struct TuiGlobalKeymap {
     pub toggle_vim_mode: Option<KeybindingsSpec>,
     /// Toggle Fast mode.
     pub toggle_fast_mode: Option<KeybindingsSpec>,
-    /// Toggle raw scrollback mode for copy-friendly transcript selection.
-    pub toggle_raw_output: Option<KeybindingsSpec>,
     /// Switch between a side conversation and its parent without closing either.
     pub toggle_side_conversation: Option<KeybindingsSpec>,
 }
@@ -592,6 +592,17 @@ fn normalize_keybinding_spec(raw: &str) -> Result<String, String> {
             "invalid keybinding `{raw}`: key chords may contain at most \
 {MAX_KEY_CHORD_STROKES} strokes (for example `ctrl-x ctrl-s`)."
         ));
+    }
+
+    if strokes[0].eq_ignore_ascii_case("leader") {
+        let [_, completion] = strokes.as_slice() else {
+            return Err(format!(
+                "invalid keybinding `{raw}`: `leader` must be followed by one key \
+(for example `leader c`)."
+            ));
+        };
+        return normalize_keybinding_stroke(completion)
+            .map(|completion| format!("leader {completion}"));
     }
 
     strokes

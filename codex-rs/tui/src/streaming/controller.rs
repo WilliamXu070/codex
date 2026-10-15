@@ -340,6 +340,7 @@ impl StreamCore {
         self.holdback_scanner.reset();
     }
 
+    #[cfg(test)]
     fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
         if self.render_mode == render_mode {
             return;
@@ -715,6 +716,7 @@ impl StreamController {
         self.core.set_width(width);
     }
 
+    #[cfg(test)]
     pub(crate) fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
         self.core.set_render_mode(render_mode);
     }
@@ -849,6 +851,7 @@ impl PlanStreamController {
         self.core.set_width(width);
     }
 
+    #[cfg(test)]
     pub(crate) fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
         self.core.set_render_mode(render_mode);
     }

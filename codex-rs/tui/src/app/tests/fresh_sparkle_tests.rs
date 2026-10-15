@@ -291,7 +291,7 @@ async fn overlays_shortcuts_and_key_chords_leave_the_main_sparkle_untouched() ->
         /*initial_user_message*/ None,
     )
     .await?;
-    let keymap_config = toml::from_str("[global]\ntoggle_raw_output = [\"ctrl-x r\"]")?;
+    let keymap_config = toml::from_str("[global]\ntoggle_vim_mode = [\"ctrl-x r\"]")?;
     app.keymap = RuntimeKeymap::from_config(&keymap_config).expect("valid app chord");
     app.chat_widget
         .apply_keymap_update(keymap_config, &app.keymap);
@@ -309,7 +309,7 @@ async fn overlays_shortcuts_and_key_chords_leave_the_main_sparkle_untouched() ->
         assert_eq!(
             (
                 app.key_chord_matcher.is_pending(),
-                app.chat_widget.raw_output_mode(),
+                app.chat_widget.composer_is_vim_enabled(),
                 visible(&app.chat_widget)
             ),
             (pending, raw, true)

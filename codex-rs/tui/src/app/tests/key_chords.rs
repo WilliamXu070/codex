@@ -4,6 +4,7 @@ use super::Result;
 use super::RuntimeKeymap;
 use super::TuiEvent;
 use super::make_test_app;
+use super::make_test_app_with_channels;
 use super::start_config_write_test_app_server;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
@@ -22,6 +23,7 @@ use codex_config::types::KeybindingsSpec;
 use codex_config::types::TuiKeymap;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
+use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
 use pretty_assertions::assert_eq;
 
@@ -124,10 +126,10 @@ async fn global_chord_keeps_hints_and_completes_before_deadline() -> Result<()> 
 }
 
 #[tokio::test]
-async fn completed_global_chords_toggle_output_and_request_external_editor() -> Result<()> {
+async fn completed_global_chords_toggle_vim_and_request_external_editor() -> Result<()> {
     let (mut app, mut tui, mut app_server) = chord_app().await?;
     let config = toml::from_str(
-        "[global]\ntoggle_raw_output = [\"ctrl-x r\", \"pageup\"]\nopen_external_editor = [\"ctrl-x e\"]",
+        "[global]\ntoggle_vim_mode = [\"ctrl-x r\", \"pageup\"]\nopen_external_editor = [\"ctrl-x e\"]",
     )?;
     app.keymap = RuntimeKeymap::from_config(&config).expect("valid global chords");
     app.chat_widget.apply_keymap_update(config, &app.keymap);
@@ -135,10 +137,10 @@ async fn completed_global_chords_toggle_output_and_request_external_editor() -> 
     for key in [ctrl('x'), KeyCode::Char('r').into()] {
         press(&mut app, &mut tui, &mut app_server, key).await?;
     }
-    assert!(app.chat_widget.raw_output_mode());
+    assert!(app.chat_widget.composer_is_vim_enabled());
     tui.set_owned_screen(/*owned*/ true)?;
     press(&mut app, &mut tui, &mut app_server, KeyCode::PageUp.into()).await?;
-    assert!(!app.chat_widget.raw_output_mode());
+    assert!(!app.chat_widget.composer_is_vim_enabled());
     let config = toml::from_str(
         "[composer]\nsubmit = 'pageup'\n[editor]\nmove_line_start = 'pagedown'\n[global]\nopen_external_editor = 'ctrl-x e'",
     )?;
@@ -187,6 +189,107 @@ async fn wrong_second_stroke_passes_through_but_escape_is_consumed() -> Result<(
     assert_eq!(app.route_key_chord_event(&mut tui, escape), None);
     assert!(!app.key_chord_matcher.is_pending());
     assert!(!app.backtrack.primed);
+    Ok(())
+}
+
+#[tokio::test]
+async fn config_editor_chord_preserves_physical_completion_key_until_release() -> Result<()> {
+    let (mut app, mut events, _op_rx) = make_test_app_with_channels().await;
+    let mut config = TuiKeymap::default();
+    config.list.accept = Some(KeybindingsSpec::One(KeybindingSpec(
+        "enter enter".to_string(),
+    )));
+    let runtime =
+        RuntimeKeymap::from_config(&config).map_err(|error| color_eyre::eyre::eyre!(error))?;
+    app.chat_widget.apply_keymap_update(config, &runtime);
+    app.keymap = runtime;
+    app.reconnect.offline = true;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    app.chat_widget.open_config_panel();
+    press(
+        &mut app,
+        &mut tui,
+        &mut app_server,
+        KeyCode::Char('/').into(),
+    )
+    .await?;
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Paste("terminal title".to_string()),
+    )
+    .await?;
+
+    for _ in 0..2 {
+        press(&mut app, &mut tui, &mut app_server, KeyCode::Enter.into()).await?;
+    }
+    let handoff = std::iter::from_fn(|| events.try_recv().ok())
+        .find_map(|event| match event {
+            crate::app_event::AppEvent::OpenConfigEditor(handoff) => Some(handoff),
+            _ => None,
+        })
+        .expect("config editor handoff");
+    assert_eq!(
+        handoff.activation_key,
+        crate::key_hint::plain(KeyCode::Enter)
+    );
+    assert!(handoff.active_at().is_some());
+
+    app.chat_widget.open_config_editor(
+        handoff,
+        crate::config_panel::ResumeCurrentAvailability::Available,
+    );
+    assert!(
+        render_bottom_popup(&app.chat_widget, /*width*/ 80).contains("Configure Terminal Title")
+    );
+    let repeat = KeyEvent::new_with_kind(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Repeat);
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Key(repeat))
+        .await?;
+    let release =
+        KeyEvent::new_with_kind(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Release);
+    app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Key(release))
+        .await?;
+    for _ in 0..2 {
+        press(&mut app, &mut tui, &mut app_server, KeyCode::Enter.into()).await?;
+    }
+    assert!(
+        std::iter::from_fn(|| events.try_recv().ok())
+            .any(|event| matches!(event, crate::app_event::AppEvent::TerminalTitleSetup { .. }))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn queued_config_handoff_observes_a_consumed_chord_prefix() -> Result<()> {
+    let (mut app, mut events, _op_rx) = make_test_app_with_channels().await;
+    let mut config = TuiKeymap::default();
+    config.list.move_down = Some(KeybindingsSpec::One(KeybindingSpec("ctrl-x j".to_string())));
+    let runtime =
+        RuntimeKeymap::from_config(&config).map_err(|error| color_eyre::eyre::eyre!(error))?;
+    app.chat_widget.apply_keymap_update(config, &runtime);
+    app.keymap = runtime;
+    let mut app_server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    app.chat_widget.open_config_panel();
+    app.handle_tui_event(
+        &mut tui,
+        &mut app_server,
+        TuiEvent::Paste("terminal title".to_string()),
+    )
+    .await?;
+
+    press(&mut app, &mut tui, &mut app_server, KeyCode::Enter.into()).await?;
+    let handoff = std::iter::from_fn(|| events.try_recv().ok())
+        .find_map(|event| match event {
+            crate::app_event::AppEvent::OpenConfigEditor(handoff) => Some(handoff),
+            _ => None,
+        })
+        .expect("config editor handoff");
+    assert!(handoff.active_at().is_some());
+
+    press(&mut app, &mut tui, &mut app_server, ctrl('x')).await?;
+    assert_eq!(handoff.active_at(), None);
     Ok(())
 }
 
@@ -279,6 +382,10 @@ async fn legacy_terminal_preserves_active_global_alt_shortcuts() -> Result<()> {
     )
     .await?;
 
+    let mut config = TuiKeymap::default();
+    config.global.toggle_vim_mode = Some(KeybindingsSpec::One(KeybindingSpec("alt-r".to_string())));
+    app.keymap = RuntimeKeymap::from_config(&config).expect("valid global shortcut");
+    app.chat_widget.apply_keymap_update(config, &app.keymap);
     press(
         &mut app,
         &mut tui,
@@ -287,9 +394,9 @@ async fn legacy_terminal_preserves_active_global_alt_shortcuts() -> Result<()> {
     )
     .await?;
 
-    assert!(app.chat_widget.raw_output_mode());
+    assert!(!app.chat_widget.composer_is_vim_enabled());
     assert!(
-        app.chat_widget
+        !app.chat_widget
             .should_handle_vim_insert_escape(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
     );
     Ok(())
@@ -404,7 +511,7 @@ async fn legacy_terminal_preserves_active_alt_chords() -> Result<()> {
     ] {
         let (mut app, mut tui, mut app_server) = chord_app().await?;
         let mut config = TuiKeymap::default();
-        config.global.toggle_raw_output =
+        config.global.toggle_vim_mode =
             Some(KeybindingsSpec::One(KeybindingSpec(binding.to_string())));
         let runtime =
             RuntimeKeymap::from_config(&config).map_err(|error| color_eyre::eyre::eyre!(error))?;
@@ -424,7 +531,7 @@ async fn legacy_terminal_preserves_active_alt_chords() -> Result<()> {
         assert!(app.key_chord_matcher.is_pending());
         press(&mut app, &mut tui, &mut app_server, completion).await?;
 
-        assert!(app.chat_widget.raw_output_mode());
+        assert!(!app.chat_widget.composer_is_vim_enabled());
         assert!(!app.key_chord_matcher.is_pending());
     }
     Ok(())

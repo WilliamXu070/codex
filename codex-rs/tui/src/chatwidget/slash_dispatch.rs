@@ -38,7 +38,6 @@ const SIDE_STARTING_CONTEXT_LABEL: &str = "Side starting...";
 const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str =
     "Press Ctrl+C to return to the main thread first.";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
-const RAW_USAGE: &str = "Usage: /raw [on|off]";
 const USAGE_CHATGPT_LOGIN_REQUIRED: &str = "Sign in with ChatGPT to use /usage.";
 
 impl ChatWidget {
@@ -128,11 +127,6 @@ impl ChatWidget {
         };
 
         self.request_side_conversation(parent_thread_id, /*user_message*/ None);
-    }
-
-    fn emit_raw_output_mode_changed(&self, enabled: bool) {
-        self.app_event_tx
-            .send(AppEvent::RawOutputModeChanged { enabled });
     }
 
     fn slash_command_blocked_by_active_task(
@@ -499,10 +493,6 @@ impl ChatWidget {
             SlashCommand::Export => {
                 self.show_transcript_export_popup();
             }
-            SlashCommand::Raw => {
-                let enabled = self.toggle_raw_output_mode_and_notify();
-                self.emit_raw_output_mode_changed(enabled);
-            }
             SlashCommand::Tui => self.show_tui_mode_picker(),
             SlashCommand::Diff => {
                 self.add_diff_in_progress();
@@ -588,6 +578,9 @@ impl ChatWidget {
             }
             SlashCommand::Statusline => {
                 self.open_status_line_setup();
+            }
+            SlashCommand::Config => {
+                self.open_config_panel();
             }
             SlashCommand::Theme => {
                 self.open_theme_picker();
@@ -880,17 +873,6 @@ impl ChatWidget {
                     }
                 }
                 _ => self.add_error_message("Usage: /keymap [debug]".to_string()),
-            },
-            SlashCommand::Raw => match trimmed.to_ascii_lowercase().as_str() {
-                "on" => {
-                    self.set_raw_output_mode_and_notify(/*enabled*/ true);
-                    self.emit_raw_output_mode_changed(/*enabled*/ true);
-                }
-                "off" => {
-                    self.set_raw_output_mode_and_notify(/*enabled*/ false);
-                    self.emit_raw_output_mode_changed(/*enabled*/ false);
-                }
-                _ => self.add_error_message(RAW_USAGE.to_string()),
             },
             SlashCommand::Rename if !trimmed.is_empty() => {
                 if !self.ensure_thread_rename_allowed() {
@@ -1284,7 +1266,6 @@ impl ChatWidget {
             | SlashCommand::Plugins
             | SlashCommand::Rollout
             | SlashCommand::Copy
-            | SlashCommand::Raw
             | SlashCommand::Vim
             | SlashCommand::Daybreak
             | SlashCommand::Diff
@@ -1338,6 +1319,7 @@ impl ChatWidget {
             | SlashCommand::Hooks
             | SlashCommand::Title
             | SlashCommand::Statusline
+            | SlashCommand::Config
             | SlashCommand::Theme
             | SlashCommand::Tui
             | SlashCommand::Pets => QueueDrain::Stop,
