@@ -943,6 +943,7 @@ interrupt_message = false
         };
 
         let requirements_toml = ConfigRequirementsToml {
+            config_server: None,
             application: None,
             allowed_login_methods: None,
             allowed_chatgpt_workspaces: None,
@@ -975,6 +976,7 @@ interrupt_message = false
             windows: Some(WindowsRequirementsToml {
                 allowed_sandbox_implementations: None,
                 allow_mxc: None,
+                require_mxc: None,
             }),
             additional_developer_instructions: None,
             guardian_policy_config: Some("Use the managed guardian policy.".to_string()),
@@ -1385,7 +1387,7 @@ approval_policy = "never"
                         std::path::PathBuf::from("/enterprise/hooks")
                     }),
                     windows_managed_dir: Some(std::path::PathBuf::from(r"C:\enterprise\hooks")),
-                    hooks: HookEventsToml {
+                    hooks: Box::new(HookEventsToml {
                         pre_tool_use: vec![MatcherGroup {
                             matcher: Some("^Bash$".to_string()),
                             hooks: vec![HookHandlerConfig::Command {
@@ -1398,7 +1400,7 @@ approval_policy = "never"
                             }],
                         }],
                         ..Default::default()
-                    },
+                    }),
                 }),
                 Some(RequirementSource::LegacyManagedConfigTomlFromMdm),
             )),
