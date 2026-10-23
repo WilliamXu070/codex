@@ -33,9 +33,6 @@
 //! Disabling `mentions_v2` restores file-only `@` search and adds plugins back to `$`.
 //! Confirmed `$` picker selections inform future ordering within each match tier.
 //!
-//! Dictation inserts a protected braille waveform at the edit target. RMS updates replace its
-//! payload in place, and completed transcription replaces that same marker with editable text.
-//!
 //! # Key Event Routing
 //!
 //! Plain Left opens agents when the local-daemon composer is empty and available for input.

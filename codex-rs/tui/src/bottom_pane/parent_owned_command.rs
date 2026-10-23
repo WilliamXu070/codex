@@ -54,4 +54,3 @@ pub(super) fn parent_owned_command_is_allowed(command: SlashCommand, args: &str)
                 | SlashCommand::Rollout
         )
 }
-
