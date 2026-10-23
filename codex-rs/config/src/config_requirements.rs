@@ -872,6 +872,8 @@ pub struct WindowsRequirementsToml {
     pub allowed_sandbox_implementations: Option<Vec<WindowsSandboxImplementationToml>>,
     /// False blocks both explicit MXC configuration and automatic selection.
     pub allow_mxc: Option<bool>,
+    /// Require MXC as the selected local Windows backend.
+    pub require_mxc: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -883,7 +885,9 @@ pub enum WindowsSandboxImplementationToml {
 
 impl WindowsRequirementsToml {
     pub fn is_empty(&self) -> bool {
-        self.allowed_sandbox_implementations.is_none() && self.allow_mxc.is_none()
+        self.allowed_sandbox_implementations.is_none()
+            && self.allow_mxc.is_none()
+            && self.require_mxc.is_none()
     }
 }
 
@@ -1029,6 +1033,8 @@ pub(crate) fn merge_app_requirements_descending(
 /// Base config deserialized from system `requirements.toml` or MDM.
 #[derive(Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct ConfigRequirementsToml {
+    /// Required customer-hosted configuration server. Only local managed requirements may configure it.
+    pub config_server: Option<crate::ConfigServer>,
     pub allowed_login_methods: Option<Vec<ForcedLoginMethod>>,
     pub allowed_chatgpt_workspaces: Option<Vec<String>>,
     pub cli_auth_credentials_store: Option<AuthCredentialsStoreMode>,
@@ -1140,6 +1146,7 @@ impl<T> std::ops::Deref for Sourced<T> {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ConfigRequirementsWithSources {
+    pub config_server: Option<Sourced<crate::ConfigServer>>,
     pub allowed_login_methods: Option<Sourced<Vec<ForcedLoginMethod>>>,
     pub allowed_chatgpt_workspaces: Option<Sourced<Vec<String>>>,
     pub cli_auth_credentials_store: Option<Sourced<AuthCredentialsStoreMode>>,
@@ -1203,6 +1210,7 @@ impl ConfigRequirementsWithSources {
         // Destructure without `..` so adding fields to `ConfigRequirementsToml`
         // forces this merge logic to be updated.
         let ConfigRequirementsToml {
+            config_server: _,
             allowed_login_methods: _,
             allowed_chatgpt_workspaces: _,
             cli_auth_credentials_store: _,
@@ -1268,6 +1276,7 @@ impl ConfigRequirementsWithSources {
             other,
             source,
             {
+                config_server,
                 allowed_login_methods,
                 allowed_chatgpt_workspaces,
                 cli_auth_credentials_store,
@@ -1354,6 +1363,7 @@ impl ConfigRequirementsWithSources {
 
     pub fn into_toml(self) -> ConfigRequirementsToml {
         let ConfigRequirementsWithSources {
+            config_server,
             allowed_login_methods,
             allowed_chatgpt_workspaces,
             cli_auth_credentials_store,
@@ -1398,6 +1408,7 @@ impl ConfigRequirementsWithSources {
             guardian_extra_policy,
         } = self;
         ConfigRequirementsToml {
+            config_server: config_server.map(|sourced| sourced.value),
             allowed_login_methods: allowed_login_methods.map(|sourced| sourced.value),
             allowed_chatgpt_workspaces: allowed_chatgpt_workspaces.map(|sourced| sourced.value),
             cli_auth_credentials_store: cli_auth_credentials_store.map(|sourced| sourced.value),
@@ -1488,6 +1499,11 @@ impl From<SandboxMode> for SandboxModeRequirement {
 }
 
 impl ConfigRequirementsToml {
+    /// Whether local administration requires a remotely delivered managed bundle.
+    pub fn requires_remote_config(&self) -> bool {
+        self.config_server.is_some()
+    }
+
     pub fn apply_remote_sandbox_config(&mut self, hostname: Option<&str>) {
         let Some(remote_sandbox_config) = self.remote_sandbox_config.as_ref() else {
             return;
@@ -1505,7 +1521,8 @@ impl ConfigRequirementsToml {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.allowed_login_methods.is_none()
+        self.config_server.is_none()
+            && self.allowed_login_methods.is_none()
             && self.allowed_chatgpt_workspaces.is_none()
             && self.cli_auth_credentials_store.is_none()
             && self.chatgpt_base_url.is_none()
@@ -1571,10 +1588,13 @@ impl ConfigRequirementsToml {
             && self.rules.is_none()
             && self.enforce_residency.is_none()
             && self.network.is_none()
-            && self
-                .application
-                .as_ref()
-                .is_none_or(|application| application.network.is_none())
+            && self.application.as_ref().is_none_or(|application| {
+                application.network.is_none()
+                    && application
+                        .storage
+                        .as_deref()
+                        .is_none_or(crate::ApplicationStorageRequirementsToml::is_empty)
+            })
             && self.permissions.is_none()
             && self.auto_review.as_ref().is_none_or(|auto_review| {
                 auto_review.ignore_rules.as_ref().is_none_or(Vec::is_empty)
@@ -1614,6 +1634,13 @@ impl ConfigRequirementsToml {
         apply_exact!(chatgpt_base_url);
         apply_exact!(sqlite_home);
         apply_exact!(log_dir);
+        if let Some(storage) = self
+            .application
+            .as_ref()
+            .and_then(|application| application.storage.as_ref())
+        {
+            storage.apply_to_config(config);
+        }
         apply_exact!(model_catalog_json);
         apply_exact!(model_provider);
         if let Some(providers) = &self.model_providers {
@@ -1637,6 +1664,14 @@ impl ConfigRequirementsToml {
 
     /// Returns the exact managed field affected by editing `segments`.
     pub fn exact_requirement_for_config_path(&self, segments: &[String]) -> Option<&'static str> {
+        if let Some(field) = self
+            .application
+            .as_ref()
+            .and_then(|application| application.storage.as_ref())
+            .and_then(|storage| storage.exact_requirement_for_config_path(segments))
+        {
+            return Some(field);
+        }
         if self.model_providers.as_ref().is_some_and(|providers| {
             providers
                 .keys()
@@ -1730,6 +1765,7 @@ impl TryFrom<ConfigRequirementsWithSources> for ConfigRequirements {
         // defaults also remain there because they are initialization values;
         // model-specific auto-review requirements are runtime constraints.
         let ConfigRequirementsWithSources {
+            config_server: _,
             allowed_login_methods,
             allowed_chatgpt_workspaces,
             cli_auth_credentials_store,
@@ -1927,6 +1963,7 @@ impl TryFrom<ConfigRequirementsWithSources> for ConfigRequirements {
                     WindowsRequirementsToml {
                         allowed_sandbox_implementations: Some(implementations),
                         allow_mxc: _,
+                        require_mxc: _,
                     },
                 source: requirement_source,
             }) => {
@@ -1973,6 +2010,7 @@ impl TryFrom<ConfigRequirementsWithSources> for ConfigRequirements {
                     WindowsRequirementsToml {
                         allowed_sandbox_implementations: None,
                         allow_mxc: _,
+                        require_mxc: _,
                     },
                 ..
             })
@@ -2189,7 +2227,6 @@ mod tests {
     use crate::ComputerUseMacosRequirementsToml;
     use crate::ComputerUseWindowsExeRequirementToml;
     use crate::ComputerUseWindowsRequirementsToml;
-    use crate::HookEventsToml;
     use crate::McpServerCommandMatcher;
     use crate::McpServerIdentity;
     use crate::McpServerValueMatcher;
@@ -2282,6 +2319,7 @@ mod tests {
 
     fn with_unknown_source(toml: ConfigRequirementsToml) -> ConfigRequirementsWithSources {
         let ConfigRequirementsToml {
+            config_server,
             allowed_login_methods,
             allowed_chatgpt_workspaces,
             cli_auth_credentials_store,
@@ -2327,6 +2365,8 @@ mod tests {
             guardian_extra_policy,
         } = toml;
         ConfigRequirementsWithSources {
+            config_server: config_server
+                .map(|value| Sourced::new(value, RequirementSource::Unknown)),
             allowed_login_methods: allowed_login_methods
                 .map(|value| Sourced::new(value, RequirementSource::Unknown)),
             allowed_chatgpt_workspaces: allowed_chatgpt_workspaces
@@ -2850,6 +2890,7 @@ mod tests {
         let windows = WindowsRequirementsToml {
             allowed_sandbox_implementations: Some(vec![WindowsSandboxImplementationToml::Elevated]),
             allow_mxc: None,
+            require_mxc: Some(true),
         };
         let enforce_residency = ResidencyRequirement::Us;
         let enforce_source = source.clone();
@@ -2860,6 +2901,7 @@ mod tests {
         // Intentionally constructed without `..Default::default()` so adding a new field to
         // `ConfigRequirementsToml` forces this test to be updated.
         let other = ConfigRequirementsToml {
+            config_server: None,
             allowed_login_methods: Some(vec![ForcedLoginMethod::Chatgpt]),
             allowed_chatgpt_workspaces: Some(vec!["managed-workspace".to_string()]),
             cli_auth_credentials_store: Some(AuthCredentialsStoreMode::Keyring),
@@ -2910,6 +2952,7 @@ mod tests {
         assert_eq!(
             target,
             ConfigRequirementsWithSources {
+                config_server: None,
                 allowed_login_methods: Some(Sourced::new(
                     vec![ForcedLoginMethod::Chatgpt],
                     source.clone(),
@@ -3804,6 +3847,9 @@ allowed_approvals_reviewers = ["user"]
 
     #[test]
     fn deserialize_allowed_windows_sandbox_implementations() -> Result<()> {
+        let requirements: ConfigRequirementsToml = from_str("[windows]\nrequire_mxc = true")?;
+        assert!(!requirements.is_empty());
+
         let toml_str = r#"
             [windows]
             allowed_sandbox_implementations = ["elevated"]
@@ -4396,7 +4442,7 @@ command = "python3 /enterprise/hooks/pre.py"
             .set(ManagedHooksRequirementsToml {
                 managed_dir: Some(std::path::PathBuf::from("/other/hooks")),
                 windows_managed_dir: None,
-                hooks: HookEventsToml::default(),
+                hooks: Default::default(),
             })
             .expect_err("managed hooks should reject drift");
 
