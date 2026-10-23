@@ -3189,6 +3189,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-direct-tool-timing"
+version = "0.164.0"
+dependencies = [
+ "codex-utils-critical-path",
+ "pretty_assertions",
+]
+
+[[package]]
 name = "codex-directory-watcher"
 version = "0.164.0"
 dependencies = [
@@ -3217,14 +3225,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "codex-direct-tool-timing"
-version = "0.164.0"
-dependencies = [
- "codex-utils-critical-path",
- "pretty_assertions",
 ]
 
 [[package]]
