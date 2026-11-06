@@ -3213,6 +3213,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-directory-watcher"
+version = "0.167.0"
+dependencies = [
+ "chrono",
+ "glob",
+ "notify",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
+name = "codex-embeddings"
+version = "0.167.0"
+dependencies = [
+ "codex-http-client",
+ "http 1.4.0",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "codex-exec"
 version = "0.167.0"
 dependencies = [
