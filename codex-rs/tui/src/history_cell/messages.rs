@@ -632,6 +632,7 @@ impl AgentMarkdownCell {
             crate::markdown_render::ListSpacing::AfterMultiline,
         )
     }
+
     pub(crate) fn with_questions(
         mut self,
         questions: &[codex_protocol::items::AsyncUserInputQuestion],

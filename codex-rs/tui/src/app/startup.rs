@@ -1438,7 +1438,8 @@ See the Codex keymap documentation for supported actions and examples."
                         clipboard_repair.poll(|| {
                             crate::clipboard_repair::documents_from_history(&app.transcript_cells)
                         });
-    }
+                        AppRunControl::Continue
+                    }
                     result = async {
                         match app.daemon_restart.as_mut() {
                             Some(task) => task.await,
