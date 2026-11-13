@@ -12,7 +12,7 @@ fn mermaid_stream_closes_resizes_and_preserves_raw_source() {
     let mut stages = Vec::new();
     for chunk in [
         "Before.\n\n```mermaid\n",
-        "flowchart LR\nA[Request] --> B[Reply]\n",
+        "flowchart LR\nA[\"Codex reply<br/>completed\"] --> B[\"Rendered in Ghostty\"]\n",
         "```\n",
         "\nAfter.\n",
     ] {
@@ -142,7 +142,7 @@ fn mermaid_holdback_tracks_nested_blocks_after_normalized_markdown() {
 fn mermaid_controller_keeps_diagram_mutable_and_returns_original_source() {
     let mut controller =
         StreamController::new(Some(80), &std::env::temp_dir(), HistoryRenderMode::Rich);
-    let source = "```mermaid\nflowchart LR\nA[Request] --> B[Reply]\n```\n";
+    let source = "```mermaid\nflowchart LR\nA[Request<br />completed] --> B[Reply]\n```\n";
     for chunk in source.split_inclusive('\n') {
         controller.push(chunk);
         assert!(
@@ -161,7 +161,7 @@ fn mermaid_controller_keeps_diagram_mutable_and_returns_original_source() {
         controller
             .current_tail_lines()
             .iter()
-            .any(|line| line.line.to_string().contains("A[Request]"))
+            .any(|line| line.line.to_string().contains("A[Request<br />completed]"))
     );
     controller.set_width(Some(80));
     assert_eq!(controller.current_tail_lines(), diagram);
@@ -169,7 +169,7 @@ fn mermaid_controller_keeps_diagram_mutable_and_returns_original_source() {
         crate::markdown::extract_copy_targets(source),
         vec![crate::markdown::CopyTarget::Code {
             language: Some("mermaid".to_owned()),
-            content: std::sync::Arc::from("flowchart LR\nA[Request] --> B[Reply]\n"),
+            content: std::sync::Arc::from("flowchart LR\nA[Request<br />completed] --> B[Reply]\n"),
         }],
     );
     let mut full_source = source.to_owned();
@@ -199,18 +199,10 @@ fn mermaid_controller_keeps_diagram_mutable_and_returns_original_source() {
         controller
             .current_tail_lines()
             .iter()
-            .any(|line| line.line.to_string().contains("A[Request]"))
+            .any(|line| line.line.to_string().contains("A[Request<br />completed]"))
     );
     controller.set_width(Some(80));
     assert_eq!(controller.current_tail_lines(), second_diagram);
-    controller.set_render_mode(HistoryRenderMode::Raw);
-    assert_eq!(controller.queued_lines(), source.lines().count());
-    controller.set_render_mode(HistoryRenderMode::Rich);
-    assert_eq!(controller.current_tail_lines(), second_diagram);
-    controller.set_render_mode(HistoryRenderMode::Raw);
-    assert!(controller.on_commit_tick_batch(/*max_lines*/ 1).0.is_some());
-    controller.set_render_mode(HistoryRenderMode::Rich);
-    assert_eq!(controller.current_tail_lines(), second_diagram[1..]);
     assert_eq!(
         controller.finalize().1.as_deref(),
         Some(full_source.as_str())

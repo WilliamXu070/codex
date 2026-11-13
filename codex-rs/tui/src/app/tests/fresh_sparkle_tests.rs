@@ -65,6 +65,7 @@ async fn choose_model(
             &event,
             AppEvent::OpenReasoningPopup { .. }
                 | AppEvent::UpdateModel(_)
+                | AppEvent::ApplyModelSelection { .. }
                 | AppEvent::SelectSessionModel { .. }
                 | AppEvent::AstraSelectedFromModelPicker { .. }
         ) {
@@ -278,70 +279,6 @@ async fn commands_can_precede_the_sparkle_but_inserted_or_typed_drafts_cannot() 
 }
 
 #[tokio::test]
-async fn overlays_shortcuts_and_key_chords_leave_the_main_sparkle_untouched() -> Result<()> {
-    let (mut app, _events, _ops) = make_test_app_with_channels().await;
-    app.local_settings.tui.animations = true;
-    app.local_settings.tui.effects.starfield = true;
-    let mut server = start_config_write_test_app_server(&app).await?;
-    let mut tui = crate::tui::test_support::make_test_tui()?;
-    app.replace_chat_widget_with_app_server_thread(
-        &mut tui,
-        started("gpt-6-astra"),
-        ThreadAttachPresentation::Fresh,
-        /*initial_user_message*/ None,
-    )
-    .await?;
-    let keymap_config = toml::from_str("[global]\ntoggle_raw_output = [\"ctrl-x r\"]")?;
-    app.keymap = RuntimeKeymap::from_config(&keymap_config).expect("valid app chord");
-    app.chat_widget
-        .apply_keymap_update(keymap_config, &app.keymap);
-    assert!(visible(&app.chat_widget));
-
-    let ctrl = |ch| KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL);
-    for (event, pending, raw) in [
-        (ctrl('x'), true, false),
-        (KeyCode::Char('r').into(), false, true),
-        (ctrl('x'), true, true),
-        (KeyCode::Esc.into(), false, true),
-    ] {
-        app.handle_tui_event(&mut tui, &mut server, TuiEvent::Key(event))
-            .await?;
-        assert_eq!(
-            (
-                app.key_chord_matcher.is_pending(),
-                app.chat_widget.raw_output_mode(),
-                visible(&app.chat_widget)
-            ),
-            (pending, raw, true)
-        );
-    }
-
-    app.handle_tui_event(&mut tui, &mut server, TuiEvent::Key(ctrl('t')))
-        .await?;
-    assert!(app.overlay.is_some());
-    for event in [
-        TuiEvent::Key(KeyCode::Char('j').into()),
-        TuiEvent::Paste("overlay input".into()),
-        TuiEvent::Key(ctrl('t')),
-    ] {
-        app.handle_tui_event(&mut tui, &mut server, event).await?;
-    }
-    assert!(app.overlay.is_none());
-    assert_eq!(
-        (
-            app.chat_widget.composer_is_empty(),
-            visible(&app.chat_widget)
-        ),
-        (true, true)
-    );
-
-    app.handle_tui_event(&mut tui, &mut server, TuiEvent::Key(KeyCode::Esc.into()))
-        .await?;
-    assert!(!visible(&app.chat_widget));
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_command_pending_on_fresh_astra_start_can_finish_before_the_sparkle() -> Result<()> {
     for (command, visible_after) in [("/status", true), ("/mention", false)] {
         let (mut app, _events, _ops) = make_test_app_with_channels().await;
@@ -544,6 +481,7 @@ async fn astra_picker_confirms_the_model_at_application_after_an_automatic_updat
             if matches!(
                 &event,
                 AppEvent::UpdateModel(_)
+                    | AppEvent::ApplyModelSelection { .. }
                     | AppEvent::UpdateReasoningEffort(_)
                     | AppEvent::SelectSessionModel { .. }
                     | AppEvent::ApplyAdvancedReasoning { .. }
@@ -621,6 +559,7 @@ fn astra_picker_xhigh_applies_on_a_bounded_stack() -> Result<()> {
                     if matches!(
                         &event,
                         AppEvent::AstraSelectedFromModelPicker { .. }
+                            | AppEvent::ApplyModelSelection { .. }
                             | AppEvent::UpdateReasoningEffort(_)
                             | AppEvent::PersistModelSelection { .. }
                     ) {
@@ -803,5 +742,46 @@ async fn early_input_and_real_work_consume_the_sparkle() -> Result<()> {
             "{scenario}"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn overlays_leave_the_main_sparkle_untouched() -> Result<()> {
+    let (mut app, _events, _ops) = make_test_app_with_channels().await;
+    app.local_settings.tui.animations = true;
+    app.local_settings.tui.effects.starfield = true;
+    let mut server = start_config_write_test_app_server(&app).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    app.replace_chat_widget_with_app_server_thread(
+        &mut tui,
+        started("gpt-6-astra"),
+        ThreadAttachPresentation::Fresh,
+        /*initial_user_message*/ None,
+    )
+    .await?;
+    assert!(visible(&app.chat_widget));
+    let ctrl = |ch| KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL);
+    app.handle_tui_event(&mut tui, &mut server, TuiEvent::Key(ctrl('t')))
+        .await?;
+    assert!(app.overlay.is_some());
+    for event in [
+        TuiEvent::Key(KeyCode::Char('j').into()),
+        TuiEvent::Paste("overlay input".into()),
+        TuiEvent::Key(ctrl('t')),
+    ] {
+        app.handle_tui_event(&mut tui, &mut server, event).await?;
+    }
+    assert!(app.overlay.is_none());
+    assert_eq!(
+        (
+            app.chat_widget.composer_is_empty(),
+            visible(&app.chat_widget)
+        ),
+        (true, true)
+    );
+
+    app.handle_tui_event(&mut tui, &mut server, TuiEvent::Key(KeyCode::Esc.into()))
+        .await?;
+    assert!(!visible(&app.chat_widget));
     Ok(())
 }

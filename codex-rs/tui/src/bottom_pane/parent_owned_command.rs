@@ -1,7 +1,10 @@
 use crate::slash_command::SlashCommand;
 
 pub(super) fn parent_owned_command_is_allowed(command: SlashCommand, args: &str) -> bool {
-    if command == SlashCommand::Export {
+    if matches!(
+        command,
+        SlashCommand::Export | SlashCommand::Title | SlashCommand::Statusline
+    ) {
         return true;
     }
 
@@ -18,6 +21,7 @@ pub(super) fn parent_owned_command_is_allowed(command: SlashCommand, args: &str)
                 | SlashCommand::Agents
                 | SlashCommand::MultiAgents
                 | SlashCommand::Vim
+                | SlashCommand::Config
                 | SlashCommand::Keymap
                 | SlashCommand::ElevateSandbox
                 | SlashCommand::Experimental
@@ -25,7 +29,6 @@ pub(super) fn parent_owned_command_is_allowed(command: SlashCommand, args: &str)
                 | SlashCommand::Quit
                 | SlashCommand::Exit
                 | SlashCommand::Logout
-                | SlashCommand::Raw
                 | SlashCommand::Warnings
                 | SlashCommand::Daemon
                 | SlashCommand::Copy

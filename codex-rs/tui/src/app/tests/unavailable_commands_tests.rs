@@ -44,7 +44,6 @@ async fn unavailable_thread_routes_local_and_recovery_commands() -> Result<()> {
         "/resume",
         "/agents",
         "/subagents",
-        "/raw on",
         "/warnings",
         "/quit",
         "/exit",
@@ -64,7 +63,6 @@ async fn unavailable_thread_routes_local_and_recovery_commands() -> Result<()> {
                     | ("/resume", AppEvent::OpenResumePicker)
                     | ("/agents", AppEvent::OpenAgentsOverview)
                     | ("/subagents", AppEvent::OpenAgentPicker)
-                    | ("/raw on", AppEvent::RawOutputModeChanged { enabled: true })
                     | ("/warnings", AppEvent::OpenWarnings)
                     | ("/quit" | "/exit", AppEvent::Exit(_))
             );
@@ -154,7 +152,7 @@ async fn unavailable_thread_new_and_clear_start_a_writable_session() -> Result<(
                 vec![test_turn(
                     "review",
                     TurnStatus::InProgress,
-                    vec![ThreadItem::EnteredReviewMode {
+                    vec![ThreadItemPayload::EnteredReviewMode {
                         id: "review-start".into(),
                         review: "changes against main".into(),
                     }],

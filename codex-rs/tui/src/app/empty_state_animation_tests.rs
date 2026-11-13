@@ -70,11 +70,6 @@ async fn fresh_logo_returns_only_to_the_ordinary_composer() -> Result<()> {
     draw(&mut app, &mut tui, size)?;
     assert!(has_blossom(&tui));
 
-    for enabled in [true, false] {
-        app.apply_raw_output_mode(&mut tui, enabled, /*notify*/ false);
-        draw(&mut app, &mut tui, size)?;
-        assert_eq!(has_blossom(&tui), !enabled);
-    }
     app.chat_widget.apply_external_edit(String::new());
     for (key, visible) in [(KeyCode::Char('?'), false), (KeyCode::Right, true)] {
         app.chat_widget

@@ -13,6 +13,7 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     Model,
+    Presets,
     Daybreak,
     Ide,
     Permissions,
@@ -38,6 +39,7 @@ pub enum SlashCommand {
     App,
     Init,
     Compact,
+    Config,
     Recap,
     Plan,
     Voice,
@@ -47,7 +49,6 @@ pub enum SlashCommand {
     Btw,
     Copy,
     Export,
-    Raw,
     Tui,
     Diff,
     Mention,
@@ -91,6 +92,7 @@ impl SlashCommand {
     /// User-visible description shown in the popup.
     pub fn description(self) -> &'static str {
         match self {
+            SlashCommand::Config => "configure Codex preferences",
             SlashCommand::Feedback => "send logs to maintainers",
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
@@ -108,7 +110,6 @@ impl SlashCommand {
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy the last response or part of it",
             SlashCommand::Export => "export the conversation as markdown",
-            SlashCommand::Raw => "toggle raw scrollback mode for copy-friendly terminal selection",
             SlashCommand::Tui => "choose the TUI mode for the next launch",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
@@ -132,6 +133,7 @@ impl SlashCommand {
             SlashCommand::MemoryDrop => "DO NOT USE",
             SlashCommand::MemoryUpdate => "DO NOT USE",
             SlashCommand::Model => "choose what model and reasoning effort to use",
+            SlashCommand::Presets => "run or save reusable prompts and slash commands",
             SlashCommand::Daybreak => "turn Daybreak on or off",
             SlashCommand::Ide => {
                 "include current selection, open files, and other context from your IDE"
@@ -171,6 +173,10 @@ impl SlashCommand {
         matches!(
             self,
             SlashCommand::Review
+                | SlashCommand::Model
+                | SlashCommand::Permissions
+                | SlashCommand::Title
+                | SlashCommand::Statusline
                 | SlashCommand::Rename
                 | SlashCommand::New
                 | SlashCommand::Clear
@@ -182,7 +188,6 @@ impl SlashCommand {
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
                 | SlashCommand::Export
-                | SlashCommand::Raw
                 | SlashCommand::Cd
                 | SlashCommand::Pwd
                 | SlashCommand::Usage
@@ -200,7 +205,6 @@ impl SlashCommand {
             SlashCommand::Copy
                 | SlashCommand::Agents
                 | SlashCommand::Export
-                | SlashCommand::Raw
                 | SlashCommand::Diff
                 | SlashCommand::Mention
                 | SlashCommand::Status
@@ -215,7 +219,7 @@ impl SlashCommand {
     /// Whether dispatch needs thread state to validate this command before consuming its draft.
     /// The composer must defer busy-state rejection and draft clearing for these commands.
     pub(crate) fn requires_dispatch_validation(self) -> bool {
-        matches!(self, SlashCommand::Review)
+        matches!(self, SlashCommand::Fork | SlashCommand::Review)
     }
 
     /// Commands that do not require a writable current thread. The server must still be connected.
@@ -235,7 +239,6 @@ impl SlashCommand {
                 | SlashCommand::Pwd
                 | SlashCommand::Rollout
                 | SlashCommand::Copy
-                | SlashCommand::Raw
         )
     }
 
@@ -268,10 +271,10 @@ impl SlashCommand {
             | SlashCommand::Archive
             | SlashCommand::Resume
             | SlashCommand::Model
+            | SlashCommand::Presets
             | SlashCommand::Daybreak
             | SlashCommand::Permissions
             | SlashCommand::Copy
-            | SlashCommand::Raw
             | SlashCommand::Rename
             | SlashCommand::Mention
             | SlashCommand::Skills
@@ -303,7 +306,7 @@ impl SlashCommand {
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Agents | SlashCommand::MultiAgents => true,
-            SlashCommand::Theme | SlashCommand::Pets => false,
+            SlashCommand::Config | SlashCommand::Theme | SlashCommand::Pets => false,
         }
     }
 
@@ -355,9 +358,6 @@ mod tests {
         assert!(SlashCommand::Ide.available_during_task());
         assert!(SlashCommand::Title.available_during_task());
         assert!(SlashCommand::Statusline.available_during_task());
-        assert!(SlashCommand::Raw.available_during_task());
-        assert!(SlashCommand::Raw.available_in_side_conversation());
-        assert!(SlashCommand::Raw.supports_inline_args());
         assert!(SlashCommand::App.available_during_task());
     }
 

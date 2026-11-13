@@ -340,38 +340,6 @@ impl StreamCore {
         self.holdback_scanner.reset();
     }
 
-    fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
-        if self.render_mode == render_mode {
-            return;
-        }
-
-        let had_pending_queue = self.state.queued_len() > 0;
-        let had_live_tail = self.has_tail();
-        let previous_render_mode = self.render_mode;
-        self.render_mode = render_mode;
-        let source = self.state.collector.committed_source();
-        if source.is_empty() {
-            self.refresh_preview();
-            return;
-        }
-
-        self.recompute_render(self.width, previous_render_mode);
-        self.refresh_preview();
-        if had_pending_queue
-            && self.emitted_stable_len == self.render.lines.len()
-            && self.emitted_stable_len > 0
-        {
-            self.emitted_stable_len -= 1;
-        }
-        self.state.clear_queue();
-        if self.emitted_stable_len > 0 && !had_pending_queue && !had_live_tail {
-            self.emitted_stable_len = self.render.lines.len();
-            self.enqueued_stable_len = self.render.lines.len();
-            return;
-        }
-        self.rebuild_stable_queue_from_render();
-    }
-
     /// Preserve an emitted source prefix when resizing changes earlier diagrams' heights.
     fn recompute_render(
         &mut self,
@@ -684,6 +652,16 @@ impl StreamController {
         self.core.has_tail()
     }
 
+    /// Include the unterminated line when handing an in-flight answer to another view.
+    pub(crate) fn source_snapshot(&self) -> String {
+        let collector = &self.core.state.collector;
+        format!(
+            "{}{}",
+            collector.committed_source(),
+            collector.pending_source()
+        )
+    }
+
     /// Completion must repair emitted rows when reference definitions can change earlier blocks.
     pub(crate) fn needs_scrollback_reflow(&self) -> bool {
         if self.has_live_tail() || self.core.render.has_reference_link_definition {
@@ -694,11 +672,7 @@ impl StreamController {
         {
             return false;
         }
-        let source = format!(
-            "{}{}",
-            self.core.state.collector.committed_source(),
-            self.core.state.collector.pending_source(),
-        );
+        let source = self.source_snapshot();
         pulldown_cmark::Parser::new(&source)
             .reference_definitions()
             .iter()
@@ -713,10 +687,6 @@ impl StreamController {
 
     pub(crate) fn set_width(&mut self, width: Option<usize>) {
         self.core.set_width(width);
-    }
-
-    pub(crate) fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
-        self.core.set_render_mode(render_mode);
     }
 
     fn emit(&mut self, lines: Vec<HyperlinkLine>) -> Option<Box<dyn HistoryCell>> {
@@ -849,10 +819,6 @@ impl PlanStreamController {
         self.core.set_width(width);
     }
 
-    pub(crate) fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
-        self.core.set_render_mode(render_mode);
-    }
-
     fn emit(
         &mut self,
         lines: Vec<HyperlinkLine>,
@@ -898,7 +864,7 @@ impl PlanStreamController {
         let plan_style = proposed_plan_style();
         let plan_lines = prefix_hyperlink_lines(plan_lines, "  ".into(), "  ".into())
             .into_iter()
-            .map(|line| line.style(plan_style))
+            .map(|line| history_cell::style_proposed_plan_line(line, plan_style))
             .collect::<Vec<_>>();
         out_lines.extend(plan_lines);
         out_lines
@@ -1952,30 +1918,41 @@ mod tests {
 
     #[test]
     fn finalized_plan_stream_preserves_semantic_url_fragments() {
-        let destination = "https://example.com/a/very/long/path/to/a/table/artifact";
-        let source = format!("| Step | URL |\n| --- | --- |\n| Verify | {destination} |\n");
-        let mut ctrl = PlanStreamController::new(
-            /*width*/ Some(32),
-            &test_cwd(),
-            HistoryRenderMode::Rich,
+        crate::terminal_palette::with_test_default_colors(
+            crate::terminal_probe::DefaultColors {
+                fg: (30, 30, 30),
+                bg: (255, 255, 255),
+            },
+            || {
+                let destination = "https://example.com/a/very/long/path/to/a/table/artifact";
+                let source = format!(
+                    "# Plan\n\n> Quote\n\n| Step | URL |\n| --- | --- |\n| Verify | {destination} |\n"
+                );
+                let mut ctrl = PlanStreamController::new(
+                    /*width*/ Some(32),
+                    &test_cwd(),
+                    HistoryRenderMode::Rich,
+                );
+                ctrl.push(&source);
+
+                let (cell, _) = ctrl.finalize();
+                let lines = cell
+                    .expect("final plan stream table cell")
+                    .display_hyperlink_lines(/*width*/ 32);
+                insta::assert_debug_snapshot!(lines);
+                let linked_rows = lines
+                    .iter()
+                    .filter(|line| !line.hyperlinks.is_empty())
+                    .collect::<Vec<_>>();
+
+                assert!(linked_rows.len() > 1);
+                assert!(linked_rows.iter().all(|line| {
+                    line.hyperlinks
+                        .iter()
+                        .all(|link| link.destination == destination)
+                }));
+            },
         );
-        ctrl.push(&source);
-
-        let (cell, _) = ctrl.finalize();
-        let lines = cell
-            .expect("final plan stream table cell")
-            .display_hyperlink_lines(/*width*/ 32);
-        let linked_rows = lines
-            .iter()
-            .filter(|line| !line.hyperlinks.is_empty())
-            .collect::<Vec<_>>();
-
-        assert!(linked_rows.len() > 1);
-        assert!(linked_rows.iter().all(|line| {
-            line.hyperlinks
-                .iter()
-                .all(|link| link.destination == destination)
-        }));
     }
 
     #[test]
