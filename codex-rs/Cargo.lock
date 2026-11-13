@@ -3267,6 +3267,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-direct-tool-timing"
+version = "0.168.0"
+dependencies = [
+ "codex-utils-critical-path",
+ "pretty_assertions",
+ "test-case",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "codex-directory-watcher"
 version = "0.168.0"
 dependencies = [
@@ -3295,17 +3306,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "codex-direct-tool-timing"
-version = "0.168.0"
-dependencies = [
- "codex-utils-critical-path",
- "pretty_assertions",
- "test-case",
- "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -5010,26 +5010,6 @@ dependencies = [
  "tree-sitter-powershell",
  "url",
  "which 8.0.0",
-]
-
-[[package]]
-name = "codex-shell-escalation"
-version = "0.168.0"
-dependencies = [
- "anyhow",
- "clap",
- "codex-protocol",
- "codex-utils-absolute-path",
- "libc",
- "pretty_assertions",
- "serde",
- "serde_json",
- "socket2 0.6.3",
- "tempfile",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
