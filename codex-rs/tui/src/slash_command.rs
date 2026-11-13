@@ -49,7 +49,6 @@ pub enum SlashCommand {
     Btw,
     Copy,
     Export,
-    Raw,
     Tui,
     Diff,
     Mention,
@@ -111,7 +110,6 @@ impl SlashCommand {
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy the last response or part of it",
             SlashCommand::Export => "export the conversation as markdown",
-            SlashCommand::Raw => "toggle raw scrollback mode for copy-friendly terminal selection",
             SlashCommand::Tui => "choose the TUI mode for the next launch",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
@@ -190,7 +188,6 @@ impl SlashCommand {
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
                 | SlashCommand::Export
-                | SlashCommand::Raw
                 | SlashCommand::Cd
                 | SlashCommand::Pwd
                 | SlashCommand::Usage
@@ -208,7 +205,6 @@ impl SlashCommand {
             SlashCommand::Copy
                 | SlashCommand::Agents
                 | SlashCommand::Export
-                | SlashCommand::Raw
                 | SlashCommand::Diff
                 | SlashCommand::Mention
                 | SlashCommand::Status
@@ -243,7 +239,6 @@ impl SlashCommand {
                 | SlashCommand::Pwd
                 | SlashCommand::Rollout
                 | SlashCommand::Copy
-                | SlashCommand::Raw
         )
     }
 
@@ -280,7 +275,6 @@ impl SlashCommand {
             | SlashCommand::Daybreak
             | SlashCommand::Permissions
             | SlashCommand::Copy
-            | SlashCommand::Raw
             | SlashCommand::Rename
             | SlashCommand::Mention
             | SlashCommand::Skills
@@ -364,9 +358,6 @@ mod tests {
         assert!(SlashCommand::Ide.available_during_task());
         assert!(SlashCommand::Title.available_during_task());
         assert!(SlashCommand::Statusline.available_during_task());
-        assert!(SlashCommand::Raw.available_during_task());
-        assert!(SlashCommand::Raw.available_in_side_conversation());
-        assert!(SlashCommand::Raw.supports_inline_args());
         assert!(SlashCommand::App.available_during_task());
     }
 

@@ -83,7 +83,6 @@ async fn owned_startup_hides_tip_in_transcript() -> Result<()> {
     app.open_transcript_overlay(&mut tui);
     app.render_owned_transcript(&mut tui, Size::new(/*width*/ 80, /*height*/ 20))?;
     assert!(!frame_text(&tui).contains("Use /mcp"));
-    app.apply_raw_output_mode(&mut tui, /*enabled*/ true, /*notify*/ false);
     app.render_owned_transcript(&mut tui, Size::new(/*width*/ 80, /*height*/ 20))?;
     assert!(!frame_text(&tui).contains("Use /mcp"));
     tui.set_owned_screen(/*owned*/ false)?;

@@ -328,19 +328,6 @@ fn link_holdback_stays_rich_only_when_a_pipe_freezes_the_preview() {
     let label = controller.current_tail_lines();
     controller.push("|suffix)");
     assert_eq!(controller.current_tail_lines(), label);
-    controller.set_render_mode(HistoryRenderMode::Raw);
-    assert_eq!(
-        controller.current_tail_lines(),
-        render_source(
-            source,
-            Some(40),
-            &cwd,
-            HistoryRenderMode::Raw,
-            /*inline_visualization_context*/ None,
-        ),
-    );
-    controller.set_render_mode(HistoryRenderMode::Rich);
-    assert_eq!(controller.current_tail_lines(), label);
 }
 
 #[test]

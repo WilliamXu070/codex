@@ -340,38 +340,6 @@ impl StreamCore {
         self.holdback_scanner.reset();
     }
 
-    fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
-        if self.render_mode == render_mode {
-            return;
-        }
-
-        let had_pending_queue = self.state.queued_len() > 0;
-        let had_live_tail = self.has_tail();
-        let previous_render_mode = self.render_mode;
-        self.render_mode = render_mode;
-        let source = self.state.collector.committed_source();
-        if source.is_empty() {
-            self.refresh_preview();
-            return;
-        }
-
-        self.recompute_render(self.width, previous_render_mode);
-        self.refresh_preview();
-        if had_pending_queue
-            && self.emitted_stable_len == self.render.lines.len()
-            && self.emitted_stable_len > 0
-        {
-            self.emitted_stable_len -= 1;
-        }
-        self.state.clear_queue();
-        if self.emitted_stable_len > 0 && !had_pending_queue && !had_live_tail {
-            self.emitted_stable_len = self.render.lines.len();
-            self.enqueued_stable_len = self.render.lines.len();
-            return;
-        }
-        self.rebuild_stable_queue_from_render();
-    }
-
     /// Preserve an emitted source prefix when resizing changes earlier diagrams' heights.
     fn recompute_render(
         &mut self,
@@ -721,10 +689,6 @@ impl StreamController {
         self.core.set_width(width);
     }
 
-    pub(crate) fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
-        self.core.set_render_mode(render_mode);
-    }
-
     fn emit(&mut self, lines: Vec<HyperlinkLine>) -> Option<Box<dyn HistoryCell>> {
         if lines.is_empty() {
             return None;
@@ -853,10 +817,6 @@ impl PlanStreamController {
 
     pub(crate) fn set_width(&mut self, width: Option<usize>) {
         self.core.set_width(width);
-    }
-
-    pub(crate) fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
-        self.core.set_render_mode(render_mode);
     }
 
     fn emit(

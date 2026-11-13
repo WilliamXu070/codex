@@ -143,20 +143,12 @@ async fn owned_live_history_keeps_all_sources_in_each_presentation() {
             .join("\n")
     };
     let compact = text(widget.active_cell_display_hyperlink_lines(/*width*/ 80));
-    widget.set_raw_output_mode(/*enabled*/ true);
-    let raw = text(widget.active_cell_display_hyperlink_lines(/*width*/ 80));
     let detailed = text(widget.active_cell_transcript_hyperlink_lines(/*width*/ 80));
 
-    insta::assert_snapshot!(format!("{compact}\n---\n{raw}\n---\n{detailed}"), @"
+    insta::assert_snapshot!(format!("{compact}\n---\n{detailed}"), @"
     compact active
 
     compact voice
-
-    rate limit hint
-    ---
-    raw active
-
-    raw voice
 
     rate limit hint
     ---
@@ -189,7 +181,6 @@ async fn owned_live_history_keeps_all_sources_in_each_presentation() {
 
     for latest_speaker in ["assistant", "user"] {
         widget.on_realtime_transcript_delta(latest_speaker.into(), String::new());
-        widget.set_raw_output_mode(/*enabled*/ false);
         let compact = text(widget.active_cell_display_hyperlink_lines(/*width*/ 80));
         let frame = render_frame(&widget, /*width*/ 80);
         let inline = frame
@@ -202,13 +193,10 @@ async fn owned_live_history_keeps_all_sources_in_each_presentation() {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        widget.set_raw_output_mode(/*enabled*/ true);
-        let raw = text(widget.active_cell_display_hyperlink_lines(/*width*/ 80));
         let detailed = text(widget.active_cell_transcript_hyperlink_lines(/*width*/ 80));
         for (presentation, rendered) in [
             ("compact", compact),
             ("inline", inline),
-            ("raw", raw),
             ("detailed", detailed),
         ] {
             let actual = rendered
@@ -463,7 +451,7 @@ async fn active_cell_layout_preserves_custom_height_and_bottom_scroll() {
 }
 
 #[tokio::test]
-async fn active_cell_layout_invalidates_width_revision_mode_theme_and_identity() {
+async fn active_cell_layout_invalidates_width_revision_theme_and_identity() {
     let (mut widget, desired_height_calls, _display_lines_calls) = widget_with_counting_cell(
         /*desired_height*/ 1, /*line_count*/ 1, /*stable_height*/ true,
     )
@@ -480,10 +468,6 @@ async fn active_cell_layout_invalidates_width_revision_mode_theme_and_identity()
     render_frame(&widget, /*width*/ 81);
     assert_eq!(desired_height_calls.load(Ordering::Relaxed), 3);
 
-    widget.raw_output_mode = true;
-    render_frame(&widget, /*width*/ 81);
-    assert_eq!(desired_height_calls.load(Ordering::Relaxed), 4);
-
     let mut cached = widget
         .transcript
         .active_cell_layout
@@ -492,7 +476,7 @@ async fn active_cell_layout_invalidates_width_revision_mode_theme_and_identity()
     cached.key.syntax_theme_revision = cached.key.syntax_theme_revision.wrapping_sub(1);
     widget.transcript.active_cell_layout.set(Some(cached));
     render_frame(&widget, /*width*/ 81);
-    assert_eq!(desired_height_calls.load(Ordering::Relaxed), 5);
+    assert_eq!(desired_height_calls.load(Ordering::Relaxed), 4);
 
     let replacement_height_calls = Arc::new(AtomicUsize::new(0));
     widget.transcript.active_cell = Some(Box::new(CountingHistoryCell {

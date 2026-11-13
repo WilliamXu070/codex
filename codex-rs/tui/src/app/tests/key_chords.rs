@@ -184,54 +184,6 @@ async fn global_chord_keeps_hints_and_completes_before_deadline() -> Result<()> 
 }
 
 #[tokio::test]
-async fn completed_global_chords_toggle_output_and_request_external_editor() -> Result<()> {
-    let (mut app, mut tui, mut app_server) = chord_app().await?;
-    let config = toml::from_str(
-        "[global]\ntoggle_raw_output = [\"ctrl-x r\", \"pageup\"]\nopen_external_editor = [\"ctrl-x e\"]",
-    )?;
-    app.keymap = RuntimeKeymap::from_config(&config).expect("valid global chords");
-    app.chat_widget.apply_keymap_update(config, &app.keymap);
-
-    for key in [ctrl('x'), KeyCode::Char('r').into()] {
-        press(&mut app, &mut tui, &mut app_server, key).await?;
-    }
-    assert!(app.chat_widget.raw_output_mode());
-    tui.set_owned_screen(/*owned*/ true)?;
-    press(&mut app, &mut tui, &mut app_server, KeyCode::PageUp.into()).await?;
-    assert!(!app.chat_widget.raw_output_mode());
-    let config = toml::from_str(
-        "[composer]\nsubmit = 'pageup'\n[editor]\nmove_line_start = 'pagedown'\n[global]\nopen_external_editor = 'ctrl-x e'",
-    )?;
-    app.keymap = RuntimeKeymap::from_config(&config).expect("valid composer and editor bindings");
-    app.chat_widget.apply_keymap_update(config, &app.keymap);
-    app.chat_widget.apply_external_edit("draft".to_string());
-    assert!(!app.handle_owned_transcript_event(
-        &mut tui,
-        &mut app_server,
-        &TuiEvent::Key(KeyCode::PageUp.into()),
-    )?);
-    press(
-        &mut app,
-        &mut tui,
-        &mut app_server,
-        KeyCode::PageDown.into(),
-    )
-    .await?;
-    app.chat_widget.insert_str("X");
-    assert_eq!(app.chat_widget.composer_text_with_pending(), "Xdraft");
-    tui.set_owned_screen(/*owned*/ false)?;
-
-    for key in [ctrl('x'), KeyCode::Char('e').into()] {
-        press(&mut app, &mut tui, &mut app_server, key).await?;
-    }
-    assert_eq!(
-        app.chat_widget.external_editor_state(),
-        super::ExternalEditorState::Requested
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn wrong_second_stroke_passes_through_but_escape_is_consumed() -> Result<()> {
     let (mut app, mut tui, mut app_server) = chord_app().await?;
 
@@ -427,35 +379,6 @@ async fn legacy_terminal_preserves_default_and_configured_editor_alt_bindings() 
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn legacy_terminal_preserves_active_global_alt_shortcuts() -> Result<()> {
-    let (mut app, mut tui, mut app_server) = chord_app().await?;
-    app.chat_widget.toggle_vim_mode_and_notify();
-    app.chat_widget.insert_str("abc");
-    press(
-        &mut app,
-        &mut tui,
-        &mut app_server,
-        KeyCode::Char('i').into(),
-    )
-    .await?;
-
-    press(
-        &mut app,
-        &mut tui,
-        &mut app_server,
-        KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT),
-    )
-    .await?;
-
-    assert!(app.chat_widget.raw_output_mode());
-    assert!(
-        app.chat_widget
-            .should_handle_vim_insert_escape(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
-    );
-    Ok(())
-}
-
 #[cfg(unix)]
 #[tokio::test]
 async fn owned_transcript_alt_jumps_preserve_legacy_vim_insert_and_draft() -> Result<()> {
@@ -549,48 +472,6 @@ async fn legacy_terminal_preserves_configured_composer_alt_shortcuts() -> Result
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn legacy_terminal_preserves_active_alt_chords() -> Result<()> {
-    for (binding, prefix, completion) in [
-        (
-            "alt-q r",
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::ALT),
-            KeyCode::Char('r').into(),
-        ),
-        (
-            "ctrl-x alt-h",
-            ctrl('x'),
-            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT),
-        ),
-    ] {
-        let (mut app, mut tui, mut app_server) = chord_app().await?;
-        let mut config = TuiKeymap::default();
-        config.global.toggle_raw_output =
-            Some(KeybindingsSpec::One(KeybindingSpec(binding.to_string())));
-        let runtime =
-            RuntimeKeymap::from_config(&config).map_err(|error| color_eyre::eyre::eyre!(error))?;
-        app.chat_widget.apply_keymap_update(config, &runtime);
-        app.keymap = runtime;
-        app.chat_widget.toggle_vim_mode_and_notify();
-        app.chat_widget.insert_str("abc");
-        press(
-            &mut app,
-            &mut tui,
-            &mut app_server,
-            KeyCode::Char('i').into(),
-        )
-        .await?;
-
-        press(&mut app, &mut tui, &mut app_server, prefix).await?;
-        assert!(app.key_chord_matcher.is_pending());
-        press(&mut app, &mut tui, &mut app_server, completion).await?;
-
-        assert!(app.chat_widget.raw_output_mode());
-        assert!(!app.key_chord_matcher.is_pending());
-    }
-    Ok(())
-}
-
 #[cfg(unix)]
 #[tokio::test]
 async fn legacy_terminal_preserves_image_paste_without_reading_clipboard() -> Result<()> {
@@ -1287,5 +1168,41 @@ async fn key_capture_receives_voice_shortcut_and_chord_prefix() -> Result<()> {
         press(&mut app, &mut tui, &mut stopped, key.into()).await?;
     }
     assert_eq!(app.chat_widget.composer_text_with_pending(), "draft!%lh!");
+    Ok(())
+}
+
+#[tokio::test]
+async fn completed_global_chords_request_external_editor() -> Result<()> {
+    let (mut app, mut tui, mut app_server) = chord_app().await?;
+    tui.set_owned_screen(/*owned*/ true)?;
+    let config = toml::from_str(
+        "[composer]\nsubmit = 'pageup'\n[editor]\nmove_line_start = 'pagedown'\n[global]\nopen_external_editor = 'ctrl-x e'",
+    )?;
+    app.keymap = RuntimeKeymap::from_config(&config).expect("valid composer and editor bindings");
+    app.chat_widget.apply_keymap_update(config, &app.keymap);
+    app.chat_widget.apply_external_edit("draft".to_string());
+    assert!(!app.handle_owned_transcript_event(
+        &mut tui,
+        &mut app_server,
+        &TuiEvent::Key(KeyCode::PageUp.into()),
+    )?);
+    press(
+        &mut app,
+        &mut tui,
+        &mut app_server,
+        KeyCode::PageDown.into(),
+    )
+    .await?;
+    app.chat_widget.insert_str("X");
+    assert_eq!(app.chat_widget.composer_text_with_pending(), "Xdraft");
+    tui.set_owned_screen(/*owned*/ false)?;
+
+    for key in [ctrl('x'), KeyCode::Char('e').into()] {
+        press(&mut app, &mut tui, &mut app_server, key).await?;
+    }
+    assert_eq!(
+        app.chat_widget.external_editor_state(),
+        super::ExternalEditorState::Requested
+    );
     Ok(())
 }

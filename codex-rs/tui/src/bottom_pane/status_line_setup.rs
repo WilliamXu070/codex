@@ -145,9 +145,6 @@ pub(crate) enum StatusLineItem {
     /// Whether Daybreak is enabled for this thread.
     Daybreak,
 
-    /// Whether raw scrollback mode is currently active.
-    RawOutput,
-
     /// Current thread name, omitted when unnamed.
     ThreadName,
 
@@ -220,7 +217,6 @@ impl StatusLineItem {
             StatusLineItem::SessionId => "Current thread identifier (omitted until thread starts)",
             StatusLineItem::FastMode => "Effective processing tier for the current model",
             StatusLineItem::Daybreak => "Whether Daybreak is enabled for this thread",
-            StatusLineItem::RawOutput => "Whether raw scrollback mode is active",
             StatusLineItem::ThreadName => "Current thread name (omitted when unnamed)",
             StatusLineItem::ThreadTitle => {
                 "Current thread title, or thread identifier when unnamed"
@@ -264,7 +260,6 @@ impl StatusLineItem {
             StatusLineItem::SessionId => StatusSurfacePreviewItem::SessionId,
             StatusLineItem::FastMode => StatusSurfacePreviewItem::FastMode,
             StatusLineItem::Daybreak => StatusSurfacePreviewItem::Daybreak,
-            StatusLineItem::RawOutput => StatusSurfacePreviewItem::RawOutput,
             StatusLineItem::ThreadName => StatusSurfacePreviewItem::ThreadName,
             StatusLineItem::ThreadTitle => StatusSurfacePreviewItem::ThreadTitle,
             StatusLineItem::WorkspaceHeadline => StatusSurfacePreviewItem::WorkspaceHeadline,

@@ -322,7 +322,7 @@ async fn assert_transcript_close_repaints_inline_draft(mut app: Box<App>) -> Res
     );
     let deferred_history = app.deferred_history_lines.clone();
     assert!(!deferred_history.is_empty());
-    app.apply_raw_output_mode(&mut tui, /*enabled*/ true, /*notify*/ false);
+    app.reflow_transcript_now(&mut tui)?;
     app.handle_tui_event(&mut tui, &mut app_server, TuiEvent::Draw)
         .await?;
     assert_eq!(app.deferred_history_lines, deferred_history);

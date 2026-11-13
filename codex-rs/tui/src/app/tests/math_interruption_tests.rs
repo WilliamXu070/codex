@@ -2,7 +2,7 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
-async fn unicode_math_termination_preserves_source_through_mode_and_resize() -> Result<()> {
+async fn unicode_math_termination_preserves_source_through_resize() -> Result<()> {
     for (kind, status) in [
         ("answer", TurnStatus::Interrupted),
         ("plan", TurnStatus::Interrupted),
@@ -85,25 +85,19 @@ async fn unicode_math_termination_preserves_source_through_mode_and_resize() -> 
                 }
             }
             assert_eq!(saved, vec![source.trim_end_matches('\n').to_owned()]);
-            let mut expected = [None, None];
-            for raw in [false, true, false] {
-                app.chat_widget.set_raw_output_mode(raw);
-                for width in [80, 20, 80] {
-                    let rendered = app
-                        .render_transcript_lines_for_reflow(width)
-                        .lines
-                        .iter()
-                        .map(rendered_line_text)
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let content = rendered.split_whitespace().collect::<String>();
-                    assert_eq!(
-                        expected[usize::from(raw)].get_or_insert_with(|| content.clone()),
-                        &content
-                    );
-                    if !raw && width == 20 && !ending.is_empty() && kind != "plan_policy" {
-                        insta::assert_snapshot!(format!("{kind}_math_narrow"), rendered);
-                    }
+            let mut expected = None;
+            for width in [80, 20, 80] {
+                let rendered = app
+                    .render_transcript_lines_for_reflow(width)
+                    .lines
+                    .iter()
+                    .map(rendered_line_text)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let content = rendered.split_whitespace().collect::<String>();
+                assert_eq!(expected.get_or_insert_with(|| content.clone()), &content);
+                if width == 20 && !ending.is_empty() && kind != "plan_policy" {
+                    insta::assert_snapshot!(format!("{kind}_math_narrow"), rendered);
                 }
             }
         }

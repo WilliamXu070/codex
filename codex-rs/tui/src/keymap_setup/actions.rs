@@ -141,7 +141,6 @@ define_keymap_actions! {
         clear_terminal => "Clear the terminal UI.",
         toggle_vim_mode => "Turn Vim composer mode on or off.",
         toggle_fast_mode [FastMode] => "Turn Fast mode on or off.",
-        toggle_raw_output => "Toggle raw scrollback mode.",
         toggle_side_conversation => "Switch between a side conversation and its parent.",
         leader => "Set the prefix used by shared leader shortcuts.",
     }

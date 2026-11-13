@@ -203,14 +203,6 @@ fn mermaid_controller_keeps_diagram_mutable_and_returns_original_source() {
     );
     controller.set_width(Some(80));
     assert_eq!(controller.current_tail_lines(), second_diagram);
-    controller.set_render_mode(HistoryRenderMode::Raw);
-    assert_eq!(controller.queued_lines(), source.lines().count());
-    controller.set_render_mode(HistoryRenderMode::Rich);
-    assert_eq!(controller.current_tail_lines(), second_diagram);
-    controller.set_render_mode(HistoryRenderMode::Raw);
-    assert!(controller.on_commit_tick_batch(/*max_lines*/ 1).0.is_some());
-    controller.set_render_mode(HistoryRenderMode::Rich);
-    assert_eq!(controller.current_tail_lines(), second_diagram[1..]);
     assert_eq!(
         controller.finalize().1.as_deref(),
         Some(full_source.as_str())
